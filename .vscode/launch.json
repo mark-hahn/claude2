@@ -5,9 +5,25 @@
       "name": "Run Extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
       "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
+      "name": "Run Extension (compile once, no watch)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
+      "preLaunchTask": "npm: compile"
     },
     {
       "name": "Extension Tests",
@@ -17,7 +33,10 @@
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--extensionTestsPath=${workspaceFolder}/out/test"
       ],
-      "outFiles": ["${workspaceFolder}/out/**/*.js", "${workspaceFolder}/dist/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js",
+        "${workspaceFolder}/dist/**/*.js"
+      ],
       "preLaunchTask": "tasks: watch-tests"
     }
   ]

@@ -3,18 +3,64 @@
   "tasks": [
     {
       "label": "watch",
-      "dependsOn": ["npm: watch:tsc", "npm: watch:esbuild"],
-      "presentation": { "reveal": "never" },
-      "group": { "kind": "build", "isDefault": true }
+      "dependsOn": [
+        "npm: watch:tsc",
+        "npm: watch:esbuild"
+      ],
+      "presentation": {
+        "reveal": "never"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "type": "npm",
+      "script": "compile",
+      "label": "npm: compile",
+      "group": "build",
+      "problemMatcher": [
+        "$tsc"
+      ],
+      "presentation": {
+        "reveal": "silent"
+      }
     },
     {
       "type": "npm",
       "script": "watch:esbuild",
       "group": "build",
-      "problemMatcher": "$esbuild-watch",
       "isBackground": true,
       "label": "npm: watch:esbuild",
-      "presentation": { "group": "watch", "reveal": "never" }
+      "presentation": {
+        "group": "watch",
+        "reveal": "never"
+      },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": [
+          {
+            "regexp": "^\u2718 \\[ERROR\\] (.+)$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s+(.+):(\\d+):(\\d+):$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[watch\\] build started",
+          "endsPattern": "^\\[watch\\] build finished"
+        }
+      }
     },
     {
       "type": "npm",
@@ -23,19 +69,28 @@
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
       "label": "npm: watch:tsc",
-      "presentation": { "group": "watch", "reveal": "never" }
+      "presentation": {
+        "group": "watch",
+        "reveal": "never"
+      }
     },
     {
       "type": "npm",
       "script": "watch-tests",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
-      "presentation": { "reveal": "never", "group": "watchers" },
+      "presentation": {
+        "reveal": "never",
+        "group": "watchers"
+      },
       "group": "build"
     },
     {
       "label": "tasks: watch-tests",
-      "dependsOn": ["npm: watch", "npm: watch-tests"],
+      "dependsOn": [
+        "watch",
+        "npm: watch-tests"
+      ],
       "problemMatcher": []
     }
   ]
