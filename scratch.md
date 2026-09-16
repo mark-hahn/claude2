@@ -1,8 +1,7 @@
 
-when hovering over a prompt card show a trash can icon in bottom right -- it should move that conversation into persistent trash storage -- add a button to the right of the $ called `Trash` that shows only sessions in the trash -- the trash button should toggle -- it should have a light-red background when trash is showing --  in each trash card show a button `Restore` in bottom right that moves that session out of trash 
 
 
-when the Plan quota over time pane is opened i get:
+when i click $ and the `Plan quota over time` pane is opened i get:
 `Parse Error: JS Exception
 Nothing recorded yet...`
 
@@ -12,6 +11,8 @@ add a button to top footer row `Graft` that opens a management pane with the gra
 # showing tool/mcp/subagent comm in response text
 
 ======================
+
+when hovering over a prompt card show a trash can icon in bottom right -- it should move that conversation into persistent trash storage -- add a button to the right of the $ called `Trash` that shows only sessions in the trash -- the trash button should toggle -- it should have a light-red background when trash is showing --  in each trash card show a button `Restore` in bottom right that moves that session out of trash 
 
 add `Close All` and `Open All`buttons to the right of the next button that close and open text for all bars
 

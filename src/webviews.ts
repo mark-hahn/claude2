@@ -7,6 +7,7 @@ export interface ConversationDefaults {
   model: string;
   effort: string;
   contextWindow: number;
+  maxTurns: number;
 }
 
 export function sidebarHtml(webview: vscode.Webview): string {
@@ -166,6 +167,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const defaultModel = JSON.stringify(defaults.model || DEFAULT_MODEL);
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
   const contextWindow = JSON.stringify(defaults.contextWindow);
+  const maxTurns = JSON.stringify(defaults.maxTurns);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -185,7 +187,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .response.error { border-left-color: #c62828; background: #fdecec; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid #111; outline-offset: -1px; border-color: transparent; }
-    .bar { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
+    .bar { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
@@ -207,6 +209,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
       <div class="status" id="tokens"></div>
       <div class="status" id="context"></div>
+      <div class="status" id="turns"></div>
     </div>
     <div class="footer">
       <div id="finish" class="indicator">Ready</div>
@@ -221,6 +224,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
+    const maxTurns = ${maxTurns};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     let expanded = new Set();
@@ -357,6 +361,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       document.getElementById('tokens').textContent = 'tokens ' + inTokens.toLocaleString() + ' in / ' + outTokens.toLocaleString() + ' out';
       const used = active ? status.contextTokens : (latest ? latest.contextUsed || 0 : 0);
       document.getElementById('context').textContent = 'context ' + used.toLocaleString() + ' / ' + contextWindow.toLocaleString();
+      const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
+      const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
+      document.getElementById('turns').textContent = 'turns ' + turnsSoFar + '/' + turnLimit;
       if (active) {
         finish.className = 'indicator active';
         finish.textContent = status.phase || 'working';

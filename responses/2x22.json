@@ -1,0 +1,91 @@
+{"type":"system","subtype":"hook_started","hook_id":"8aec7da1-c441-450c-91b0-221f6fe33453","hook_name":"SessionStart:resume","hook_event":"SessionStart","uuid":"56050627-af1d-4a85-bd04-1c90d63de29e","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74"}
+
+{"type":"system","subtype":"hook_response","hook_id":"8aec7da1-c441-450c-91b0-221f6fe33453","hook_name":"SessionStart:resume","hook_event":"SessionStart","output":"{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[graft] This repo is indexed by graft. To find, understand, or change code, reach for graft first; it answers from a prebuilt graph with exact file:line, faster than grep/read. Pick the ONE tool that fits and act on its answer. Most tasks need a single call. If one isn't enough, switch to the tool that fits the next need; don't call the same tool again and again or re-ask a question reworded:
+  • graft ask \\\"<task>\\\" --source: locate + understand. Ranked nodes with the code inlined at each file:line (the ≤8-line crux; add --full for the whole span). The default for \\\"how does X work\\\" / \\\"where is Y\\\".
+  • graft grep \\\"<literal>\\\": exhaustive find. Every occurrence, grouped by enclosing symbol; use when you need them ALL (ask is ranked top-N and misses instances).
+  • graft skeleton <file>: a file's whole API in ~200 tokens, every signature + span, ~10x cheaper than reading the file.
+  • graft callers <sym> [--direction out] [--depth N|all]: exact edges. Who calls it (default), what it calls (--direction out), or the full blast radius (--depth 2, or --depth all for every connected source). Run before you change a symbol.
+  • graft map: orientation for an unfamiliar repo, directory clusters, hubs, hotspots. map alone is the answer; don't then skeleton every subsystem it names.
+  In a monorepo, add --in <path>/ to ask/grep/callers to scope to one sub-project; hits are labeled [scope/].
+  Already know the file or symbol to change? Go straight to it: graft grep \\\"<symbol>\\\", read the span, edit. Save ask for when you don't yet know where the code lives.
+  Refactor, rename, or multi-file change? Run graft callers <sym> --depth all FIRST to map every connected file; editing the primary file and stopping is the classic miss (platform siblings, a new file to extract).
+Each tool opens its output with a \\\"[graft] tokens saved ≈ N\\\" line, sometimes with its dollar value; when you used graft this turn, close your reply with a one-line tally of the total saved, dollars included when given (e.g. 🌱 graft saved ~12k tokens (~$0.04) this turn, 3 calls). Never price tokens yourself; never pipe graft through head/tail — it is already capped, and clipping drops that line.
+
+repo map (graft/INDEX.md):
+# graft — repo map
+
+Small markdown nodes summarising this repo. `grep` any term, symbol, or
+filename here, or run `graft ask \\\"<task>\\\"`. Each node carries prose plus exact
+`file:line`; open a source file only to edit the named span.
+
+The same graph is queryable as MCP tools (`graft_find_code`, `graft_find_all`,
+`graft_trace_calls`, `graft_file_api`, `graft_repo_map`) where a host exposes them, and
+as the `graft` CLI everywhere else. Edges — who calls what — live only in the
+graph, not in these files: `graft callers <symbol>` is the only way to read them.
+
+## Files
+
+1 per-file wiring cards mirror the source tree under `graft/` (0 carry extracted symbols). They are deliberately not enumerated here —
+`grep` a symbol or `find`/`ls` a filename under `graft/` to land on the card for that file.
+\"}}","stdout":"{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"[graft] This repo is indexed by graft. To find, understand, or change code, reach for graft first; it answers from a prebuilt graph with exact file:line, faster than grep/read. Pick the ONE tool that fits and act on its answer. Most tasks need a single call. If one isn't enough, switch to the tool that fits the next need; don't call the same tool again and again or re-ask a question reworded:
+  • graft ask \\\"<task>\\\" --source: locate + understand. Ranked nodes with the code inlined at each file:line (the ≤8-line crux; add --full for the whole span). The default for \\\"how does X work\\\" / \\\"where is Y\\\".
+  • graft grep \\\"<literal>\\\": exhaustive find. Every occurrence, grouped by enclosing symbol; use when you need them ALL (ask is ranked top-N and misses instances).
+  • graft skeleton <file>: a file's whole API in ~200 tokens, every signature + span, ~10x cheaper than reading the file.
+  • graft callers <sym> [--direction out] [--depth N|all]: exact edges. Who calls it (default), what it calls (--direction out), or the full blast radius (--depth 2, or --depth all for every connected source). Run before you change a symbol.
+  • graft map: orientation for an unfamiliar repo, directory clusters, hubs, hotspots. map alone is the answer; don't then skeleton every subsystem it names.
+  In a monorepo, add --in <path>/ to ask/grep/callers to scope to one sub-project; hits are labeled [scope/].
+  Already know the file or symbol to change? Go straight to it: graft grep \\\"<symbol>\\\", read the span, edit. Save ask for when you don't yet know where the code lives.
+  Refactor, rename, or multi-file change? Run graft callers <sym> --depth all FIRST to map every connected file; editing the primary file and stopping is the classic miss (platform siblings, a new file to extract).
+Each tool opens its output with a \\\"[graft] tokens saved ≈ N\\\" line, sometimes with its dollar value; when you used graft this turn, close your reply with a one-line tally of the total saved, dollars included when given (e.g. 🌱 graft saved ~12k tokens (~$0.04) this turn, 3 calls). Never price tokens yourself; never pipe graft through head/tail — it is already capped, and clipping drops that line.
+
+repo map (graft/INDEX.md):
+# graft — repo map
+
+Small markdown nodes summarising this repo. `grep` any term, symbol, or
+filename here, or run `graft ask \\\"<task>\\\"`. Each node carries prose plus exact
+`file:line`; open a source file only to edit the named span.
+
+The same graph is queryable as MCP tools (`graft_find_code`, `graft_find_all`,
+`graft_trace_calls`, `graft_file_api`, `graft_repo_map`) where a host exposes them, and
+as the `graft` CLI everywhere else. Edges — who calls what — live only in the
+graph, not in these files: `graft callers <symbol>` is the only way to read them.
+
+## Files
+
+1 per-file wiring cards mirror the source tree under `graft/` (0 carry extracted symbols). They are deliberately not enumerated here —
+`grep` a symbol or `find`/`ls` a filename under `graft/` to land on the card for that file.
+\"}}","stderr":"","exit_code":0,"outcome":"success","uuid":"7efcf4b5-a36a-4c34-87ff-b17956c00b82","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74"}
+
+{"type":"system","subtype":"init","cwd":"/root/wsl-apps/test","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","tools":["Task","Bash","CronCreate","CronDelete","CronList","DesignSync","Edit","EnterWorktree","ExitWorktree","Monitor","NotebookEdit","PushNotification","Read","RemoteTrigger","ReportFindings","ScheduleWakeup","SendMessage","Skill","TaskCreate","TaskGet","TaskList","TaskOutput","TaskStop","TaskUpdate","ToolSearch","WebFetch","WebSearch","Workflow","Write"],"mcp_servers":[{"name":"graft","status":"pending"},{"name":"claude.ai Gmail","status":"needs-auth"},{"name":"claude.ai Google Calendar","status":"needs-auth"},{"name":"claude.ai Google Drive","status":"needs-auth"}],"model":"claude-fable-5","permissionMode":"auto","slash_commands":["deep-research","design-sync","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","schedule","claude-api","run","run-skill-generator","agents","clear","color","compact","config","context","effort","fast","heapdump","init","mcp","import","model","__remote-workflow","workflow-launch-exec","reload-skills","rename","review","ultrareview","security-review","usage-credits","extra-usage","usage","insights","recap","goal","design","design-consent","design-revoke","team-onboarding"],"apiKeySource":"none","claude_code_version":"2.1.220","output_style":"default","agents":["claude","Explore","general-purpose","Plan","statusline-setup"],"skills":["deep-research","design-sync","dataviz","update-config","verify","debug","code-review","simplify","batch","fewer-permission-prompts","doctor","loop","schedule","claude-api","run","run-skill-generator"],"plugins":[],"capabilities":["interrupt_receipt_v1","interrupt_cancel_queued_v1","msg_lifecycle_v1"],"analytics_disabled":false,"product_feedback_disabled":false,"uuid":"8b8c01cd-ab88-45d2-88b9-82027ce73dab","memory_paths":{"auto":"/root/.claude/projects/-root-wsl-apps-test/memory/"},"fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required"}
+
+{"type":"system","subtype":"status","status":"requesting","uuid":"655f0738-f05f-4599-980b-f6b90b12763e","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74"}
+
+{"type":"stream_event","event":{"type":"message_start","message":{"model":"claude-fable-5","id":"msg_011Cf6Wj6sA65svAVsA54oSg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":38,"cache_read_input_tokens":24075,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null,"context_management":null}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"ae79db44-ce08-4818-b70c-fab1f393745b","ttft_ms":933}
+
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"c604f294-4360-4afd-a264-c52164accd78"}
+
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":null}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"122b3d49-4416-4123-922c-459601d8aca4"}
+
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISlQIKpwEIERgCKkBjyAotRSnJK+2/mwq56UrB8PqUyVLT6SeqZL6yOpCZ9tWhv45oX3DIT5wyUxP6MpGI+fs2Ht5H8asiS3Zp4TOIMg5jbGF1ZGUtZmFibGUtNTgBQgh0aGlua2luZ1okOTNmMzQyNGEtM2I4Mi00YWY3LTg5YzYtYzJiODM4MzY1NGRichCuk8NquJFfGQAzH3NAfYZDiAEBqAGNv6jVBrABAhIMojTPxNv73wI7HoObGgyE3C2qg/qMoU1SqXgiMNoTRrI+eAaaZ76lS+qEjFhJ3ZM7z3vGkwJBQs6JzRprFr/RkH/HNMsO+M524adBriobgjdS2LctMaQuNgomq/p023TQalyK3xEnMGPkGAE="}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"caa46a0f-c0f7-495e-95c1-3c6163a010cf"}
+
+{"type":"assistant","message":{"model":"claude-fable-5","id":"msg_011Cf6Wj6sA65svAVsA54oSg","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"CAISlQIKpwEIERgCKkBjyAotRSnJK+2/mwq56UrB8PqUyVLT6SeqZL6yOpCZ9tWhv45oX3DIT5wyUxP6MpGI+fs2Ht5H8asiS3Zp4TOIMg5jbGF1ZGUtZmFibGUtNTgBQgh0aGlua2luZ1okOTNmMzQyNGEtM2I4Mi00YWY3LTg5YzYtYzJiODM4MzY1NGRichCuk8NquJFfGQAzH3NAfYZDiAEBqAGNv6jVBrABAhIMojTPxNv73wI7HoObGgyE3C2qg/qMoU1SqXgiMNoTRrI+eAaaZ76lS+qEjFhJ3ZM7z3vGkwJBQs6JzRprFr/RkH/HNMsO+M524adBriobgjdS2LctMaQuNgomq/p023TQalyK3xEnMGPkGAE="}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":38,"cache_read_input_tokens":24075,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","uuid":"561cc8ec-36cd-474d-9cb3-e6ee2b9ec448","timestamp":"2026-09-16T04:48:13.171Z","request_id":"req_011Cf6Wj6HBkPfrYXDN6ozpM"}
+
+{"type":"stream_event","event":{"type":"content_block_stop","index":0},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"fff4e8a0-06a4-42f1-a54e-0e6e48244d0f"}
+
+{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"0a876049-0c93-4925-a024-f6523c775c4c"}
+
+{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"44"}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"a1d82110-7f75-478d-b048-40aed2db73d1"}
+
+44
+
+{"type":"assistant","message":{"model":"claude-fable-5","id":"msg_011Cf6Wj6sA65svAVsA54oSg","type":"message","role":"assistant","content":[{"type":"text","text":"44"}],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":38,"cache_read_input_tokens":24075,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null,"context_management":null},"parent_tool_use_id":null,"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","uuid":"7b87b4c1-6135-418b-96cc-6f85e14c1815","timestamp":"2026-09-16T04:48:13.650Z","request_id":"req_011Cf6Wj6HBkPfrYXDN6ozpM"}
+
+{"type":"stream_event","event":{"type":"content_block_stop","index":1},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"181139a8-7c06-445f-8273-6c8213f7e480"}
+
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":38,"cache_read_input_tokens":24075,"output_tokens":11,"output_tokens_details":{"thinking_tokens":8},"iterations":[{"input_tokens":2,"output_tokens":11,"cache_read_input_tokens":24075,"cache_creation_input_tokens":38,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38},"type":"message"}]},"context_management":{"applied_edits":[]}},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"02650b46-6d8a-48a6-b692-1d6f7a01211a"}
+
+{"type":"stream_event","event":{"type":"message_stop"},"session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","parent_tool_use_id":null,"uuid":"1f9645e2-434b-46e3-9859-fcd6b5b73e5e"}
+
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1789536600,"rateLimitType":"five_hour","overageStatus":"allowed","overageResetsAt":1790812800,"isUsingOverage":false},"uuid":"3d71df04-17b5-401f-975a-59660d28767d","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74"}
+
+{"is_error":false,"duration_api_ms":1536,"num_turns":1,"stop_reason":"end_turn","session_id":"7d263473-ddd9-4a8e-a14c-3fb2c3954c74","total_cost_usd":0.025405,"usage":{"input_tokens":2,"cache_creation_input_tokens":38,"cache_read_input_tokens":24075,"output_tokens":11,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":38,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","iterations":[{"input_tokens":2,"output_tokens":11,"cache_read_input_tokens":24075,"cache_creation_input_tokens":38,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":38},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-fable-5":{"inputTokens":2,"outputTokens":11,"cacheReadInputTokens":24075,"cacheCreationInputTokens":38,"webSearchRequests":0,"costUSD":0.025405,"contextWindow":1000000,"maxOutputTokens":64000,"canonicalModel":"claude-fable-5","provider":"firstParty"}},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subtype":"success","api_error_status":null,"result":"44","ttft_ms":1489,"ttft_stream_ms":1393,"time_to_request_ms":460,"type":"result","duration_ms":2134,"uuid":"155f3f70-5c77-41e2-9a6b-77e7d9be4697"}

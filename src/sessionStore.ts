@@ -22,6 +22,8 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     error: typeof turn.error === "string" ? turn.error : null,
     costUsd: typeof turn.costUsd === "number" ? turn.costUsd : null,
     stopReason: typeof turn.stopReason === "string" ? turn.stopReason : null,
+    turns: typeof turn.turns === "number" ? turn.turns : 0,
+    maxTurns: typeof turn.maxTurns === "number" ? turn.maxTurns : 0,
   };
 }
 

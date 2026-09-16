@@ -1,7 +1,5 @@
 import { spawn } from "child_process";
 import * as fs from "fs/promises";
-import * as https from "https";
-import type { IncomingHttpHeaders } from "http";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -16,7 +14,7 @@ const fetchTimeoutMs = 5000;
 
 interface HttpJsonResponse {
   statusCode: number;
-  headers: IncomingHttpHeaders;
+  retryAfter: string | undefined;
   body: unknown;
   rawBody: string;
 }
@@ -115,7 +113,7 @@ export class QuotaService {
     const credentials = await this.credentials();
     const response = await getJson(credentials.accessToken);
     if (response.statusCode === 429) {
-      this.pausedUntil = retryAfterMs(response.headers["retry-after"]);
+      this.pausedUntil = retryAfterMs(response.retryAfter);
       throw new Error(`Claude usage endpoint is rate limited until ${new Date(this.pausedUntil).toLocaleTimeString()}.`);
     }
     if (response.statusCode === 401 && !retried) {
@@ -231,39 +229,34 @@ export class QuotaService {
   }
 }
 
-function getJson(accessToken: string): Promise<HttpJsonResponse> {
-  return new Promise((resolve, reject) => {
-    const request = https.get(
-      usageUrl,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "anthropic-beta": "oauth-2025-04-20",
-          "content-type": "application/json",
-        },
+async function getJson(accessToken: string): Promise<HttpJsonResponse> {
+  // Uses the global fetch instead of https.get: the VS Code extension host patches the
+  // https module and every request through it failed with "Parse Error: JS Exception".
+  let response: Response;
+  try {
+    response = await fetch(usageUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "content-type": "application/json",
       },
-      (response) => {
-        let rawBody = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk: string) => {
-          rawBody += chunk;
-        });
-        response.on("end", () => {
-          let body: unknown = null;
-          try {
-            body = rawBody ? JSON.parse(rawBody) : null;
-          } catch {
-            body = rawBody;
-          }
-          resolve({ statusCode: response.statusCode ?? 0, headers: response.headers, body, rawBody });
-        });
-      },
-    );
-    request.setTimeout(fetchTimeoutMs, () => {
-      request.destroy(new Error("Claude usage endpoint timed out."));
+      signal: AbortSignal.timeout(fetchTimeoutMs),
     });
-    request.on("error", reject);
-  });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("Claude usage endpoint timed out.");
+    }
+    throw error;
+  }
+  const rawBody = await response.text();
+  let body: unknown = null;
+  try {
+    body = rawBody ? JSON.parse(rawBody) : null;
+  } catch {
+    body = rawBody;
+  }
+  return { statusCode: response.status, retryAfter: response.headers.get("retry-after") ?? undefined, body, rawBody };
 }
 
 function reshapeUsage(body: unknown, at: number): QuotaState {
@@ -366,8 +359,7 @@ function emptyState(error: string | null): QuotaState {
   return { at: null, available: false, subscription: null, credits: null, windows: [], error, pausedUntil: null };
 }
 
-function retryAfterMs(value: string | string[] | undefined): number {
-  const firstValue = Array.isArray(value) ? value[0] : value;
+function retryAfterMs(firstValue: string | undefined): number {
   if (!firstValue) {
     return Date.now() + fifteenMinutesMs;
   }

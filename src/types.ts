@@ -24,6 +24,8 @@ export interface ClaudeTurn {
   error: string | null;
   costUsd: number | null;
   stopReason: string | null;
+  turns: number;
+  maxTurns: number;
 }
 
 export interface ClaudeSession {

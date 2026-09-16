@@ -184,6 +184,8 @@ class Claude2Controller implements vscode.Disposable {
       error: null,
       costUsd: null,
       stopReason: null,
+      turns: 0,
+      maxTurns: this.runLimits().maxTurns,
     };
     await this.store.appendTurn(sessionId, turn);
     this.postConversationState(sessionId);
@@ -220,6 +222,7 @@ class Claude2Controller implements vscode.Disposable {
         stopped: result.stopped,
         costUsd: result.costUsd,
         stopReason: result.stopReason,
+        turns: result.turns,
       }, true);
       await this.store.flush();
     } catch (error) {
@@ -375,6 +378,7 @@ class Claude2Controller implements vscode.Disposable {
       model: config.get<string>("model", DEFAULT_MODEL),
       effort: config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
+      maxTurns: config.get<number>("maxTurns", 200),
     };
   }
 

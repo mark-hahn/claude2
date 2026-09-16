@@ -4,6 +4,9 @@ import * as os from "os";
 import * as path from "path";
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
 
+// TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
+const DUMP_RAW_MESSAGES = true;
+
 const titleBudgetUsd = 0.25;
 const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
 
@@ -186,6 +189,9 @@ export class ClaudeCliRunner {
 
       child.stderr.on("data", (chunk: string) => {
         stderrText += chunk;
+        if (DUMP_RAW_MESSAGES) {
+          options.onText("[stderr] " + chunk + "\n\n");
+        }
       });
 
       child.on("error", (error) => {
@@ -232,6 +238,9 @@ export class ClaudeCliRunner {
       emitStatus();
 
       const handleClaudeLine = (line: string): void => {
+        if (DUMP_RAW_MESSAGES) {
+          options.onText(line + "\n\n");
+        }
         let message: unknown;
         try {
           message = JSON.parse(line);
@@ -262,15 +271,19 @@ export class ClaudeCliRunner {
             } else if (eventType === "content_block_start") {
               const block = recordOf(event.content_block);
               status.phase = phaseForBlock(stringOf(block?.type));
+              if (responseText && !responseText.endsWith("\n")) {
+                responseText += "\n";
+                options.onText(DUMP_RAW_MESSAGES ? "\n\n" : "\n");
+              }
             } else if (eventType === "content_block_stop") {
               status.phase = "working";
             } else if (eventType === "content_block_delta") {
               const delta = recordOf(event.delta);
-              const textDelta = stringOf(delta?.text) || stringOf(delta?.partial_json);
+              const textDelta = stringOf(delta?.text);
               if (textDelta) {
                 responseText += textDelta;
                 status.codeLines = countCodeLines(responseText);
-                options.onText(textDelta);
+                options.onText(DUMP_RAW_MESSAGES ? textDelta + "\n\n" : textDelta);
               }
             }
             emitStatus();
