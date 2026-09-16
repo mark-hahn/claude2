@@ -1,14 +1,18 @@
 
-when session has no submitted prompts (is empty) and the name is not `New session` and the prompt editor had a draft and the draft was cleared then delete the session
 
-add `Del all` button -- add trash can to session cards in trash that deletes that session
+when hovering add trash icon to session cards in trash that totally delete that session -- now all session cards have trash icons when hovered
 
-remember font sizes in management and conversation panes
 
 expand prompt bar in-place
 show response scrolling in a pane below it's prompt bar
 
 ======================
+
+remember font size for management and conversation panes
+
+management buttons should toggle between management pane and conversation pane
+
+when session has no submitted prompts (is empty) and the name is not `New session` and the prompt editor had a draft and the draft was cleared then delete the session
 
 when + button is clicked focus the prompt editor
 

@@ -231,8 +231,9 @@ export function sidebarHtml(webview: vscode.Webview): string {
 </html>`;
 }
 
-export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults): string {
+export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, zoom = 1): string {
   const nonce = getNonce();
+  const z = zoomFactor(zoom);
   const models = JSON.stringify(MODEL_OPTIONS);
   const efforts = JSON.stringify(EFFORT_OPTIONS);
   const safeSessionId = JSON.stringify(sessionId);
@@ -241,7 +242,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const maxTurns = JSON.stringify(defaults.maxTurns);
   return `<!doctype html>
-<html lang="en">
+<html lang="en" style="--z: ${z}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -292,7 +293,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-${zoomScript()}
+${zoomScript(z)}
     const sessionId = ${safeSessionId};
     const models = ${models};
     const efforts = ${efforts};
@@ -515,11 +516,11 @@ ${zoomScript()}
 </html>`;
 }
 
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, graftPage: string | null = null): string {
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, graftPage: string | null = null, zoom = 1): string {
   if (pane === "graft") {
     return graftPage ?? graftFailedHtml();
   }
-  return pane === "instructions" ? instructionsHtml(webview) : quotaHtml(webview, timezone);
+  return pane === "instructions" ? instructionsHtml(webview, zoom) : quotaHtml(webview, timezone, zoom);
 }
 
 // The Graft pane shows the self-contained page from `graft viz --export`, run by
@@ -538,10 +539,11 @@ function graftFailedHtml(): string {
 </html>`;
 }
 
-function instructionsHtml(webview: vscode.Webview): string {
+function instructionsHtml(webview: vscode.Webview, zoom: number): string {
   const nonce = getNonce();
+  const z = zoomFactor(zoom);
   return `<!doctype html>
-<html lang="en">
+<html lang="en" style="--z: ${z}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -575,7 +577,7 @@ function instructionsHtml(webview: vscode.Webview): string {
     // The pane saves as you type, like a VS Code editor with auto save: every edit is written to
     // CLAUDE.md after a short pause, Ctrl-S writes at once, and leaving the pane flushes first.
     const vscode = acquireVsCodeApi();
-${zoomScript()}
+${zoomScript(z)}
     const textBox = document.getElementById('text');
     const pathLabel = document.getElementById('path');
     const hint = document.getElementById('hint');
@@ -716,11 +718,12 @@ ${zoomScript()}
 </html>`;
 }
 
-function quotaHtml(webview: vscode.Webview, timezone: string): string {
+function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): string {
   const nonce = getNonce();
   const safeTimezone = JSON.stringify(timezone);
+  const z = zoomFactor(zoom);
   return `<!doctype html>
-<html lang="en">
+<html lang="en" style="--z: ${z}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -766,7 +769,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-${zoomScript()}
+${zoomScript(z)}
     const timeZone = ${safeTimezone};
     const pending = new Map();
     const backs = { five: 0, seven: 0, credits: 0 };
@@ -1103,20 +1106,21 @@ ${zoomScript()}
 }
 
 // Text zoom, shared by every pane that scripts its own HTML. Each pane multiplies its authored font
-// sizes by the --z factor this sets, so stepping the one value scales the whole pane; the level is
-// kept in webview state, which also carries it across a management pane switch. Requires the pane's
-// script to have already declared `vscode`; drop it in right after acquireVsCodeApi().
-function zoomScript(): string {
+// sizes by the --z factor this sets, so stepping the one value scales the whole pane. The level is
+// reported to the extension, which stores it and seeds `initial` here when the pane is rebuilt --
+// webview state alone would not survive a window reload, since the panels are not serialized.
+// Requires the pane's script to have already declared `vscode`; drop it in right after acquireVsCodeApi().
+function zoomScript(initial: number): string {
   return `
     const MIN_ZOOM = 0.8;
     const MAX_ZOOM = 2;
     const ZOOM_STEP = 0.1;
-    let zoom = 1;
+    let zoom = ${zoomFactor(initial)};
 
     function applyZoom(next) {
       zoom = Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next)) * 100) / 100;
       document.documentElement.style.setProperty('--z', String(zoom));
-      vscode.setState(Object.assign({}, vscode.getState(), { zoom }));
+      vscode.postMessage({ type: 'zoom', zoom });
     }
 
     window.addEventListener('wheel', (event) => {
@@ -1134,8 +1138,15 @@ function zoomScript(): string {
       applyZoom(step ? zoom + step : 1);
     });
 
-    applyZoom(Number((vscode.getState() || {}).zoom) || 1);
+    applyZoom(zoom);
 `;
+}
+
+// The stored level reaches the pane twice: as the `--z` seed on <html> (so the pane paints at the
+// right size instead of flashing at 1) and as the zoomScript starting value.
+export function zoomFactor(value: unknown): number {
+  const zoom = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(zoom) && zoom >= 0.8 && zoom <= 2 ? Math.round(zoom * 100) / 100 : 1;
 }
 
 function getNonce(): string {

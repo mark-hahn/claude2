@@ -8,7 +8,7 @@ import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn } from "./types";
-import { conversationHtml, managementHtml, sidebarHtml, type ConversationDefaults, type ManagementPane } from "./webviews";
+import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
 let controller: Claude2Controller | undefined;
@@ -42,6 +42,9 @@ class Claude2Controller implements vscode.Disposable {
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
+  // The conversation a management button toggles back to; the panels themselves are all
+  // inactive while a management pane is up front, so remember the last one focused.
+  private lastConversationId = "";
   private instructionsWatcher: vscode.FileSystemWatcher | null = null;
 
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
@@ -166,11 +169,22 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
-      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults());
+      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(), this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
-      panel.onDidDispose(() => this.conversationPanels.delete(sessionId));
+      panel.onDidChangeViewState(() => {
+        if (panel?.active) {
+          this.lastConversationId = sessionId;
+        }
+      });
+      panel.onDidDispose(() => {
+        this.conversationPanels.delete(sessionId);
+        if (this.lastConversationId === sessionId) {
+          this.lastConversationId = "";
+        }
+      });
       this.conversationPanels.set(sessionId, panel);
     }
+    this.lastConversationId = sessionId;
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
     this.postConversationState(sessionId);
@@ -193,6 +207,17 @@ class Claude2Controller implements vscode.Disposable {
     return "";
   }
 
+  // Bring the conversation back up front. False when there is no conversation tab to show,
+  // which leaves the management pane where it is rather than toggling to nothing.
+  private revealConversation(): boolean {
+    const panel = this.conversationPanels.get(this.lastConversationId) ?? [...this.conversationPanels.values()].pop();
+    if (!panel) {
+      return false;
+    }
+    panel.reveal(vscode.ViewColumn.One);
+    return true;
+  }
+
   private closeOtherSessions(keepId: string): void {
     for (const [sessionId, panel] of [...this.conversationPanels]) {
       if (sessionId !== keepId) {
@@ -205,7 +230,9 @@ class Claude2Controller implements vscode.Disposable {
     const record = recordOf(message);
     const type = stringOf(record?.type);
     const sessionId = stringOf(record?.sessionId);
-    if (type === "conversationReady") {
+    if (type === "zoom") {
+      await this.noteZoom("conversation", record?.zoom);
+    } else if (type === "conversationReady") {
       this.postConversationState(sessionId);
       if (this.pendingPromptFocus.delete(sessionId)) {
         void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
@@ -381,6 +408,10 @@ class Claude2Controller implements vscode.Disposable {
     if (!(await this.ensureEnabled()) || !(await this.mayLeaveManagement())) {
       return;
     }
+    // The button that opened the pane showing up front closes it again: back to the conversation.
+    if (this.managementPanel?.visible && this.managementPane === pane && this.revealConversation()) {
+      return;
+    }
     if (!this.managementPanel) {
       this.managementPanel = vscode.window.createWebviewPanel("claude2.management", "Claude2", vscode.ViewColumn.One, {
         enableScripts: true,
@@ -403,7 +434,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : "Graft";
-    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage);
+    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage, this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
   }
 
@@ -472,6 +503,10 @@ class Claude2Controller implements vscode.Disposable {
     const record = recordOf(message);
     const type = stringOf(record?.type);
     const requestId = stringOf(record?.requestId);
+    if (type === "zoom") {
+      await this.noteZoom("management", record?.zoom);
+      return;
+    }
     if (type === "leaveResponse") {
       this.leaveResolvers.get(requestId)?.(record?.go === true);
       return;
@@ -516,6 +551,17 @@ class Claude2Controller implements vscode.Disposable {
 
   private refreshSidebar(): void {
     this.sidebarProvider?.refresh();
+  }
+
+  // Ctrl-wheel / Ctrl-+ zoom is kept here rather than in webview state: nothing serializes these
+  // panels, so a window reload builds a fresh webview whose own state is empty. Conversation and
+  // management panes start from different font sizes, so each remembers its own factor.
+  private zoomOf(kind: "conversation" | "management"): number {
+    return zoomFactor(this.context.globalState.get<number>(`zoom.${kind}`, 1));
+  }
+
+  private async noteZoom(kind: "conversation" | "management", value: unknown): Promise<void> {
+    await this.context.globalState.update(`zoom.${kind}`, zoomFactor(value));
   }
 
   private conversationDefaults(): ConversationDefaults {
