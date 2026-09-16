@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { randomUUID } from "crypto";
-import { ClaudeCliRunner } from "./claudeCli";
+import { ClaudeCliRunner, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  controller?.dispose();
+  // The controller is in context.subscriptions, so VS Code disposes it; only log here.
   output?.appendLine("Claude2 deactivated");
 }
 
@@ -34,6 +34,7 @@ class Claude2Controller implements vscode.Disposable {
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
+  private instructionsWatcher: vscode.FileSystemWatcher | null = null;
 
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
     this.store = new SessionStore(context);
@@ -50,11 +51,13 @@ class Claude2Controller implements vscode.Disposable {
       vscode.commands.registerCommand("claude2.openQuota", () => void this.openManagement("quota")),
     );
     this.quota.start();
+    this.watchInstructions();
   }
 
   public dispose(): void {
     this.runner.dispose();
     this.quota.dispose();
+    this.instructionsWatcher?.dispose();
     for (const panel of this.conversationPanels.values()) {
       panel.dispose();
     }
@@ -192,6 +195,8 @@ class Claude2Controller implements vscode.Disposable {
         effort: selectedEffort,
         contextWindow: defaults.contextWindow,
         workspacePath: this.workspacePath(),
+        hasPriorTurns: !wasFirstPrompt,
+        limits: this.runLimits(),
         onText: (text) => {
           streamedResponse += text;
           this.store.patchTurn(sessionId, turn.id, { response: streamedResponse }, false);
@@ -263,6 +268,24 @@ class Claude2Controller implements vscode.Disposable {
     this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : "Claude2 Quota";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone());
     this.managementPanel.reveal(vscode.ViewColumn.One);
+  }
+
+  // The Instructions pane saves as you type, like a VS Code editor with auto save. When the file
+  // changes on disk the pane is told, and reloads unless it holds text not yet written.
+  private watchInstructions(): void {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      return;
+    }
+    this.instructionsWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, "CLAUDE.md"));
+    const notify = (): void => {
+      if (this.managementPanel && this.managementPane === "instructions") {
+        void this.managementPanel.webview.postMessage({ type: "instructionsChanged" });
+      }
+    };
+    this.instructionsWatcher.onDidChange(notify);
+    this.instructionsWatcher.onDidCreate(notify);
+    this.instructionsWatcher.onDidDelete(notify);
   }
 
   private async mayLeaveManagement(): Promise<boolean> {
@@ -346,6 +369,15 @@ class Claude2Controller implements vscode.Disposable {
       model: config.get<string>("model", DEFAULT_MODEL),
       effort: config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
+    };
+  }
+
+  private runLimits(): RunLimits {
+    const config = vscode.workspace.getConfiguration("claude2");
+    return {
+      maxTurns: config.get<number>("maxTurns", 200),
+      maxBudgetUsd: config.get<number>("maxBudgetUsd", 0),
+      permissionMode: config.get<string>("permissionMode", "auto"),
     };
   }
 

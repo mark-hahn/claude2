@@ -1,10 +1,17 @@
 import { spawn, type ChildProcess } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
 
-const maxTurns = 8;
-const maxBudgetUsd = 2;
 const titleBudgetUsd = 0.25;
-const compactWindow = "256k";
+const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
+
+export interface RunLimits {
+  maxTurns: number;
+  maxBudgetUsd: number;
+  permissionMode: string;
+}
 
 interface RunPromptOptions {
   sessionId: string;
@@ -14,9 +21,13 @@ interface RunPromptOptions {
   effort: string;
   contextWindow: number;
   workspacePath: string;
+  hasPriorTurns: boolean;
+  limits: RunLimits;
   onText: (text: string) => void;
   onStatus: (status: RunningStatus) => void;
 }
+
+type SessionMode = "new" | "resume";
 
 interface RunningProcess {
   child: ChildProcess;
@@ -60,13 +71,32 @@ export class ClaudeCliRunner {
     if (this.running.has(options.sessionId)) {
       throw new Error("A Claude response is already running for this session.");
     }
+    // The CLI refuses --session-id for a session it already stores and refuses --resume for one it
+    // does not, so pick by the transcript on disk and fall back once if the CLI disagrees.
+    const firstMode: SessionMode = options.hasPriorTurns && sessionTranscriptExists(options.workspacePath, options.sessionId) ? "resume" : "new";
+    try {
+      return await this.execute(options, firstMode);
+    } catch (error) {
+      const text = errorText(error);
+      if (firstMode === "new" && /already in use/i.test(text)) {
+        this.log(`Claude session ${options.sessionId} already exists; resuming instead.`);
+        return await this.execute(options, "resume");
+      }
+      if (firstMode === "resume" && /No conversation found/i.test(text)) {
+        this.log(`Claude session ${options.sessionId} could not be resumed; starting it fresh.`);
+        return await this.execute(options, "new");
+      }
+      throw error;
+    }
+  }
 
+  private async execute(options: RunPromptOptions, mode: SessionMode): Promise<ClaudeRunResult> {
     const status: RunningStatus = {
       active: true,
       sessionId: options.sessionId,
       turnId: options.turnId,
       turns: 0,
-      maxTurns,
+      maxTurns: options.limits.maxTurns,
       costUsd: null,
       contextTokens: 0,
       codeLines: 0,
@@ -75,9 +105,9 @@ export class ClaudeCliRunner {
       startedAt: Date.now(),
     };
 
+    // The prompt goes in on stdin so that text beginning with "-" is never parsed as a CLI option.
     const args = [
       "-p",
-      options.prompt,
       "--output-format",
       "stream-json",
       "--verbose",
@@ -86,27 +116,28 @@ export class ClaudeCliRunner {
       sanitizeModel(options.model),
       "--effort",
       sanitizeEffort(options.effort),
-      "--autocompact",
-      compactWindow,
-      "--max-budget-usd",
-      String(maxBudgetUsd),
       "--max-turns",
-      String(maxTurns),
-      "--session-id",
+      String(Math.max(1, Math.floor(options.limits.maxTurns) || 1)),
+      mode === "resume" ? "--resume" : "--session-id",
       options.sessionId,
       "--permission-mode",
-      "auto",
+      sanitizePermissionMode(options.limits.permissionMode),
       "--append-system-prompt",
       claude2SystemPrompt(options.contextWindow),
     ];
+    if (options.limits.maxBudgetUsd > 0) {
+      args.push("--max-budget-usd", String(options.limits.maxBudgetUsd));
+    }
 
     const child = spawn("claude", args, {
       cwd: options.workspacePath,
-      env: childEnv(),
-      stdio: ["ignore", "pipe", "pipe"],
+      env: childEnv(options.contextWindow),
+      stdio: ["pipe", "pipe", "pipe"],
     });
     const running: RunningProcess = { child, status, stopped: false };
     this.running.set(options.sessionId, running);
+    child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
+    child.stdin.end(options.prompt);
 
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
       let stdoutBuffer = "";
@@ -215,13 +246,15 @@ export class ClaudeCliRunner {
         if (messageType === "stream_event") {
           const event = recordOf(message.event);
           if (event) {
-            const usage = recordOf(recordOf(event.message)?.usage);
+            // message_start (and message_delta) carry this API turn's usage. Context used is the size of
+            // the latest turn, not a sum over turns, so keep the newest figure rather than a running max.
+            const usage = recordOf(recordOf(event.message)?.usage) ?? recordOf(event.usage);
             if (usage) {
               const totals = usageTotals(usage);
-              tokensIn = Math.max(tokensIn, totals.input);
-              tokensOut = Math.max(tokensOut, totals.output);
-              contextTokens = Math.max(contextTokens, totals.context);
-              status.contextTokens = contextTokens;
+              if (totals.context > 0) {
+                contextTokens = totals.context;
+                status.contextTokens = contextTokens;
+              }
             }
             const eventType = stringOf(event.type);
             if (eventType === "message_start") {
@@ -251,12 +284,15 @@ export class ClaudeCliRunner {
           status.phase = "working";
           emitStatus();
         } else if (messageType === "result") {
+          // The result usage is the whole run's total, which is what the in/out counters report.
           const usage = recordOf(message.usage);
           if (usage) {
             const totals = usageTotals(usage);
             tokensIn = Math.max(tokensIn, totals.input);
             tokensOut = Math.max(tokensOut, totals.output);
-            contextTokens = Math.max(contextTokens, totals.context);
+            if (!contextTokens) {
+              contextTokens = totals.context;
+            }
           }
           const resultText = stringOf(message.result);
           if (!responseText && resultText) {
@@ -281,7 +317,6 @@ export class ClaudeCliRunner {
     ].join("\n");
     const args = [
       "-p",
-      titlePrompt,
       "--output-format",
       "json",
       "--model",
@@ -299,7 +334,7 @@ export class ClaudeCliRunner {
       "You write concise conversation titles.",
     ];
 
-    const output = await collectProcess("claude", args, workspacePath, 25000);
+    const output = await collectProcess("claude", args, workspacePath, 25000, titlePrompt);
     try {
       const parsed = JSON.parse(output) as unknown;
       const result = isRecord(parsed) ? stringOf(parsed.result) : "";
@@ -323,11 +358,36 @@ function claude2SystemPrompt(contextWindow: number): string {
   ].join("\n");
 }
 
-function childEnv(): NodeJS.ProcessEnv {
+function childEnv(autoCompactWindow: number | null = null): NodeJS.ProcessEnv {
   const env = { ...process.env };
+  // A stray key would divert billing from the subscription to the API.
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  // This CLI build has no --autocompact flag; the auto-compact window is set through the environment
+  // (accepts 100k-1M tokens).
+  if (autoCompactWindow !== null) {
+    env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(Math.min(1000000, Math.max(100000, Math.floor(autoCompactWindow))));
+  }
   return env;
+}
+
+function sanitizePermissionMode(mode: string): string {
+  return permissionModes.includes(mode) ? mode : "auto";
+}
+
+// Claude Code stores transcripts under <config dir>/projects/<cwd with non-alphanumerics as "-">/<session id>.jsonl.
+function sessionTranscriptExists(workspacePath: string, sessionId: string): boolean {
+  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  const projectKey = workspacePath.replace(/[^a-zA-Z0-9]/g, "-");
+  try {
+    return fs.existsSync(path.join(configDir, "projects", projectKey, `${sessionId}.jsonl`));
+  } catch {
+    return false;
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function sanitizeModel(model: string): string {
@@ -364,9 +424,11 @@ function countCodeLines(text: string): number {
   return codeMatches.reduce((total, block) => total + block.split("\n").length - 2, 0);
 }
 
-function collectProcess(command: string, args: string[], workspacePath: string, timeoutMs: number): Promise<string> {
+function collectProcess(command: string, args: string[], workspacePath: string, timeoutMs: number, stdinText: string | null): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: workspacePath, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd: workspacePath, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(stdinText ?? "");
     let stdoutText = "";
     let stderrText = "";
     const timeout = setTimeout(() => {

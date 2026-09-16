@@ -34,6 +34,7 @@
     "views": {
       "claude2": [
         {
+          "type": "webview",
           "id": "claude2.sidebar",
           "name": "Claude2"
         }
@@ -79,6 +80,22 @@
           "type": "number",
           "default": 256000,
           "description": "Context window token count shown in Claude2 conversations."
+        },
+        "claude2.maxTurns": {
+          "type": "number",
+          "default": 200,
+          "description": "Maximum agentic turns per Claude2 prompt (passed to the Claude CLI as --max-turns)."
+        },
+        "claude2.maxBudgetUsd": {
+          "type": "number",
+          "default": 0,
+          "description": "Maximum notional spend per Claude2 prompt in USD (--max-budget-usd). 0 means no limit."
+        },
+        "claude2.permissionMode": {
+          "type": "string",
+          "enum": ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"],
+          "default": "auto",
+          "description": "Claude CLI permission mode used for Claude2 prompts."
         },
         "claude2.timezone": {
           "type": "string",

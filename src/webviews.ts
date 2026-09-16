@@ -176,6 +176,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     let expanded = new Set();
+    let shownActiveTurn = null;
     let navIndex = null;
     let anchorIndex = 0;
     const historyBox = document.getElementById('history');
@@ -236,6 +237,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
       navIndex = null;
+      // Older responses hide when a new prompt goes in; the new one shows while streaming and stays
+      // open when finished until the next prompt, so the answer never vanishes the moment it lands.
+      expanded = new Set();
       scrollBottom();
     }
 
@@ -252,6 +256,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       const active = status && status.active;
       stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
+      if (active && status.turnId !== shownActiveTurn) {
+        shownActiveTurn = status.turnId;
+        expanded.add(status.turnId);
+      }
       const nearBottom = historyBox.scrollHeight - historyBox.scrollTop - historyBox.clientHeight < 18;
       historyBox.replaceChildren();
       if (!turns.length) {
@@ -286,8 +294,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       }
       if (nearBottom || active) scrollBottom();
       const latest = turns[turns.length - 1];
-      const inTokens = latest ? latest.tokensIn || 0 : 0;
-      const outTokens = latest ? latest.tokensOut || 0 : 0;
+      // Totals for the whole conversation, not just the latest prompt.
+      const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
+      const outTokens = turns.reduce((sum, turn) => sum + (turn.tokensOut || 0), 0);
       document.getElementById('tokens').textContent = 'tokens ' + inTokens.toLocaleString() + ' in / ' + outTokens.toLocaleString() + ' out';
       const used = active ? status.contextTokens : (latest ? latest.contextUsed || 0 : 0);
       document.getElementById('context').textContent = 'context ' + used.toLocaleString() + ' / ' + contextWindow.toLocaleString();
@@ -350,29 +359,24 @@ function instructionsHtml(webview: vscode.Webview): string {
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { opacity: 0.4; cursor: default; }
     .error { background: var(--error); border: 1px solid var(--border); border-left: 3px solid #c62828; border-radius: 8px; margin: 16px 0 0; padding: 10px 14px; }
-    .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: grid; place-items: center; padding: 24px; }
-    .dialog { max-width: 380px; background: var(--page); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); padding: 22px 24px; }
-    .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-    .danger:hover:not(:disabled) { background: linear-gradient(rgba(0,0,0,0.18), rgba(0,0,0,0.18)), var(--surface); }
   </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Instructions</h1><div class="actions"><span id="hint" class="hint"></span><button id="save">Save</button><button id="bottom" title="Scroll to bottom" aria-label="Scroll to bottom">⇊</button><button id="close">Close</button></div></div>
+    <div class="title"><h1>Instructions</h1><div class="actions"><span id="hint" class="hint"></span><button id="bottom" title="Scroll to bottom" aria-label="Scroll to bottom">⇊</button><button id="close">Close</button></div></div>
     <label><span id="path" class="path">CLAUDE.md</span><textarea id="text" spellcheck="true" disabled></textarea></label>
     <p id="error" class="error" hidden></p>
   </div>
-  <div id="backdrop" class="backdrop" hidden><div class="dialog"><p id="dialogText"></p><div class="dialog-actions"><button id="cancel">Cancel</button><button id="discard" class="danger">Discard</button><button id="saveLeave">Save</button></div></div></div>
   <script nonce="${nonce}">
+    // The pane saves as you type, like a VS Code editor with auto save: every edit is written to
+    // CLAUDE.md after a short pause, Ctrl-S writes at once, and leaving the pane flushes first.
     const vscode = acquireVsCodeApi();
     const textBox = document.getElementById('text');
     const pathLabel = document.getElementById('path');
     const hint = document.getElementById('hint');
-    const saveButton = document.getElementById('save');
     const errorNode = document.getElementById('error');
-    const backdrop = document.getElementById('backdrop');
-    const dialogText = document.getElementById('dialogText');
     const pending = new Map();
+    const saveDelayMs = 400;
     let text = '';
     let settled = '';
     let version = '';
@@ -382,7 +386,7 @@ function instructionsHtml(webview: vscode.Webview): string {
     let error = null;
     let savedAt = null;
     let overwrote = false;
-    let answer = null;
+    let saveTimer = 0;
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -391,35 +395,24 @@ function instructionsHtml(webview: vscode.Webview): string {
         pending.delete(message.requestId);
         resolve(message);
       } else if (message.type === 'requestLeave') {
-        leave().then((go) => vscode.postMessage({ type: 'leaveResponse', requestId: message.requestId, go }));
+        flush().then((ok) => vscode.postMessage({ type: 'leaveResponse', requestId: message.requestId, go: ok }));
+      } else if (message.type === 'instructionsChanged') {
+        void reloadIfClean();
       }
     });
-    window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && answer) {
-        event.preventDefault();
-        decide(false);
-      }
+    textBox.addEventListener('input', () => {
+      text = textBox.value;
+      scheduleSave();
+      render();
     });
-    window.addEventListener('beforeunload', (event) => {
-      if (dirty()) {
-        event.preventDefault();
-        event.returnValue = '';
-      }
-    });
-    textBox.addEventListener('input', () => { text = textBox.value; render(); });
     textBox.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        void save();
+        void flush();
       }
     });
-    saveButton.addEventListener('click', () => void save());
     document.getElementById('bottom').addEventListener('click', scrollBottom);
-    document.getElementById('close').addEventListener('click', () => { leave().then((go) => { if (go) vscode.postMessage({ type: 'closeManagement' }); }); });
-    document.getElementById('cancel').addEventListener('click', () => decide(false));
-    document.getElementById('discard').addEventListener('click', () => { text = settled; textBox.value = text; decide(true); render(); });
-    document.getElementById('saveLeave').addEventListener('click', () => { void saveAndLeave(); });
-    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) decide(false); });
+    document.getElementById('close').addEventListener('click', () => { flush().then((ok) => { if (ok) vscode.postMessage({ type: 'closeManagement' }); }); });
 
     load();
 
@@ -442,6 +435,41 @@ function instructionsHtml(webview: vscode.Webview): string {
       render();
     }
 
+    // An outside edit (another editor, a git checkout) replaces the text unless there is unsaved
+    // typing here, which is what a VS Code editor does with a clean document.
+    async function reloadIfClean() {
+      if (loading || saving || dirty()) return;
+      const reply = await request('loadInstructions', {});
+      if (!reply.ok || dirty() || saving) return;
+      if ((reply.payload.version || '') === version) return;
+      const selectionStart = textBox.selectionStart;
+      const selectionEnd = textBox.selectionEnd;
+      const scrollTop = textBox.scrollTop;
+      text = reply.payload.text || '';
+      settled = text;
+      version = reply.payload.version || '';
+      textBox.value = text;
+      textBox.setSelectionRange(Math.min(selectionStart, text.length), Math.min(selectionEnd, text.length));
+      textBox.scrollTop = scrollTop;
+      overwrote = false;
+      render();
+    }
+
+    function scheduleSave() {
+      window.clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => { void save(); }, saveDelayMs);
+    }
+
+    // Writes now, waits for any write in flight, and writes again if typing continued meanwhile.
+    async function flush() {
+      window.clearTimeout(saveTimer);
+      while (dirty()) {
+        const ok = await save();
+        if (!ok && !saving) return false;
+      }
+      return !error;
+    }
+
     async function save() {
       if (!dirty()) return true;
       if (saving) return false;
@@ -457,30 +485,12 @@ function instructionsHtml(webview: vscode.Webview): string {
         overwrote = reply.payload.stale === true;
         error = null;
         render();
+        if (dirty()) scheduleSave();
         return true;
       }
       error = 'Could not save: ' + (reply.error || 'unknown error');
       render();
       return false;
-    }
-
-    function leave() {
-      if (!dirty()) return Promise.resolve(true);
-      decide(false);
-      backdrop.hidden = false;
-      dialogText.textContent = filePath + ' has unsaved changes. Save them, or throw them away?';
-      return new Promise((resolve) => { answer = resolve; });
-    }
-
-    function decide(go) {
-      backdrop.hidden = true;
-      const resolve = answer;
-      answer = null;
-      if (resolve) resolve(go);
-    }
-
-    async function saveAndLeave() {
-      decide(await save());
     }
 
     function dirty() { return !loading && text !== settled; }
@@ -492,9 +502,7 @@ function instructionsHtml(webview: vscode.Webview): string {
     function render() {
       textBox.disabled = loading;
       pathLabel.textContent = filePath;
-      saveButton.disabled = !dirty() || saving;
-      saveButton.textContent = saving ? 'Saving...' : 'Save';
-      if (loading) hint.textContent = ''; else if (dirty()) hint.textContent = 'Unsaved changes'; else if (overwrote) hint.textContent = 'Saved over a change made on disk'; else if (savedAt) hint.textContent = 'Saved to ' + filePath; else hint.textContent = '';
+      if (loading) hint.textContent = ''; else if (saving) hint.textContent = 'Saving...'; else if (dirty()) hint.textContent = 'Unsaved changes'; else if (overwrote) hint.textContent = 'Saved over a change made on disk'; else if (savedAt) hint.textContent = 'Saved to ' + filePath; else hint.textContent = '';
       errorNode.hidden = !error;
       errorNode.textContent = error || '';
     }
