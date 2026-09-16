@@ -1,12 +1,15 @@
+when removing the tool groups show the first line of text at the top of the results box and then only show single blank linesin text, not multiple lines
+
+- always show tool groups in active results for latest prompt even if tools are hidden in old results.
+  - this is to follow the session results better
+- when clicking on a bar that isn't the selected block bar then expand it in-place without changing selection.
+- 
+======================
 
 i gave the instructions in claude-results-instr.md to another llm and it made the changes detailed in claude2-results-changes.md
 -- check the work it did for correctness in following the instructions and look for bugs it created
 
 remove up/down buttons
-
-- always show tool groups in active results for latest prompt even if tools are hidden in old results.
-- when clicking on a bar that isn't the selected block bar then expand it in-place without changing selection.
-- 
 
 # new conversation results pane specs
 - the results pane has prompt/response block displays
@@ -61,8 +64,6 @@ remove up/down buttons
     - do not stop
     - document any judgements you aren't sure about in claude2-results-judgements.md
     - we can change implemention later if a judgement is overriden
-
-======================
 
 trash mode when hovering over session card add trash icon to session card that totally deletes that session -- now all session cards have trash icons when hovered
 

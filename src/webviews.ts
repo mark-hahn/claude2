@@ -266,8 +266,6 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; background: #fdecec; }
-    .tool-group { display: inline; }
-    .tool-group.hidden { display: none; }
     .bottom-spacer { flex: none; height: 0; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
@@ -320,6 +318,7 @@ ${zoomScript(z)}
     let shownActiveTurn = null;
     let anchorIndex = 0;
     let selectedResponseToBottom = false;
+    let selectedResponseToTop = false;
     let initializedSelection = false;
     let pendingTurnCount = 0;
     let programmaticScroll = false;
@@ -423,25 +422,23 @@ ${zoomScript(z)}
 
     // Response text is plain, except for a leading **bold** run on a line, which tool-call lines use
     // for the tool name. Built as text nodes so nothing else in the response is treated as markup.
+    // A toggle re-renders every response, so hiding tool groups drops those lines at build time:
+    // no leading blanks, and runs of blank lines collapse to a single one.
     function fillResponse(box, text) {
-      let toolGroup = null;
-      let groupAtStart = false;
-      text.split('\\n').forEach((line, index) => {
-        const isTool = isToolLine(line);
-        if (isTool && !toolGroup) {
-          toolGroup = document.createElement('span');
-          toolGroup.className = 'tool-group' + (toolGroupsVisible ? '' : ' hidden');
-          box.appendChild(toolGroup);
-          groupAtStart = index === 0;
+      let lines = text.split('\\n');
+      if (!toolGroupsVisible) {
+        const kept = [];
+        for (const line of lines) {
+          if (isToolLine(line)) continue;
+          if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) continue;
+          kept.push(line);
         }
-        // A hidden group must swallow one adjacent newline or a blank line marks where it was:
-        // the separator before it, or the one after it when the group opens the response.
-        if (index) {
-          const target = isTool || (toolGroup && groupAtStart) ? toolGroup : box;
-          target.appendChild(document.createTextNode('\\n'));
-        }
-        if (!isTool) toolGroup = null;
-        appendFormattedLine(isTool ? toolGroup : box, line);
+        while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+        lines = kept;
+      }
+      lines.forEach((line, index) => {
+        if (index) box.appendChild(document.createTextNode('\\n'));
+        appendFormattedLine(box, line);
       });
     }
 
@@ -531,6 +528,9 @@ ${zoomScript(z)}
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
               toolGroupsVisible = !toolGroupsVisible;
+              // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
+              // start the condensed prose from its first line.
+              if (!toolGroupsVisible) selectedResponseToTop = true;
               render();
             });
             wrapper.appendChild(response);
@@ -541,9 +541,11 @@ ${zoomScript(z)}
         spacer.className = 'bottom-spacer';
         historyBox.appendChild(spacer);
       }
-      const responseToBottom = selectedResponseToBottom || selectedResponseAtBottom || newActiveTurn;
+      const responseToTop = selectedResponseToTop;
+      selectedResponseToTop = false;
+      const responseToBottom = !responseToTop && (selectedResponseToBottom || selectedResponseAtBottom || newActiveTurn);
       selectedResponseToBottom = false;
-      requestAnimationFrame(() => syncSelectedBlock(true, responseToBottom, selectedResponseTop));
+      requestAnimationFrame(() => syncSelectedBlock(true, responseToBottom, responseToTop ? 0 : selectedResponseTop));
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
