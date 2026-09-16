@@ -17,13 +17,42 @@
     "AI",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claude2",
+          "title": "Claude2",
+          "icon": "resources/claude2.svg"
+        }
+      ]
+    },
+    "views": {
+      "claude2": [
+        {
+          "id": "claude2.sidebar",
+          "name": "Claude2"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "claude2.helloWorld",
-        "title": "Hello World",
+        "command": "claude2.newSession",
+        "title": "New Session",
+        "category": "Claude2"
+      },
+      {
+        "command": "claude2.openInstructions",
+        "title": "Open Instructions",
+        "category": "Claude2"
+      },
+      {
+        "command": "claude2.openQuota",
+        "title": "Open Quota",
         "category": "Claude2"
       }
     ],
@@ -34,6 +63,27 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the Claude2 extension."
+        },
+        "claude2.model": {
+          "type": "string",
+          "default": "fable",
+          "description": "Default Claude model for new Claude2 prompts."
+        },
+        "claude2.effort": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "default": "xhigh",
+          "description": "Default Claude effort level for new Claude2 prompts."
+        },
+        "claude2.contextWindowTokens": {
+          "type": "number",
+          "default": 256000,
+          "description": "Context window token count shown in Claude2 conversations."
+        },
+        "claude2.timezone": {
+          "type": "string",
+          "default": "America/Los_Angeles",
+          "description": "IANA timezone used by the Claude quota pane."
         }
       }
     }
