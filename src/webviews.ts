@@ -19,13 +19,16 @@ export function sidebarHtml(webview: vscode.Webview): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #111; --muted: #666; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.07); }
-    body { margin: 0; min-height: 100vh; background: var(--page); color: var(--ink); font: 13px/1.35 Aptos, "Segoe UI", sans-serif; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.07); }
+    body { margin: 0; min-height: 100vh; background: var(--page); color: var(--ink); font: 14px/1.35 Aptos, "Segoe UI", sans-serif; }
     .shell { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; height: 100vh; padding: 10px; }
-    .top { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px auto; gap: 7px; flex: none; }
+    .top { display: flex; flex-wrap: wrap; gap: 7px; flex: none; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; min-height: 31px; cursor: pointer; }
+    .top button { height: 25px; min-height: 0; flex: none; padding: 0; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    #trash { padding: 0 10px; }
+    #new, #quota { width: 21px; }
+    #instructions { width: 52px; }
+    #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
@@ -34,10 +37,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-trash { position: absolute; right: 6px; bottom: 6px; display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
     .card-trash:hover { background: #fbd9d9; }
-    .card-restore { position: absolute; right: 6px; bottom: 6px; min-height: 0; padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+    .card-restore { position: absolute; right: 6px; bottom: 6px; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
     .card.trashed { padding-bottom: 34px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
-    .card-meta { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
     .empty { border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); padding: 14px 10px; text-align: center; }
   </style>
 </head>
@@ -175,7 +178,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #111; --muted: #62625d; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
     .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(96px, 25vh) auto auto; }
@@ -183,22 +186,25 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
-    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; background: var(--surface); overflow-wrap: anywhere; }
+    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; background: #fdecec; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
-    textarea:focus { outline: 2px solid #111; outline-offset: -1px; border-color: transparent; }
-    .bar { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
+    textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
+    .bar { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
+    .bar .spacer { flex: 1; min-width: 8px; }
+    .bar .stats { display: flex; gap: 12px; align-items: center; flex: none; margin-left: auto; }
+    .bar .sep { color: var(--muted); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
     button:hover:not(:disabled), select:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    button:disabled { opacity: 0.42; cursor: default; }
+    button:disabled { background: var(--wash); cursor: default; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     .indicator.done { color: var(--done); border-color: rgba(12,107,50,0.45); background: #ecf7ef; }
     .indicator.active { color: #785b00; border-color: #d6b642; background: #fff8d8; }
     .footer { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 6px 12px 8px; background: var(--page); }
-    @media (max-width: 760px) { .bar { grid-template-columns: 1fr; } .status { white-space: normal; } }
+    @media (max-width: 760px) { .bar { flex-wrap: wrap; } .bar .stats { flex-wrap: wrap; } .status { white-space: normal; } }
   </style>
 </head>
 <body>
@@ -207,9 +213,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     <textarea id="prompt" spellcheck="true"></textarea>
     <div class="bar">
       <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
-      <div class="status" id="tokens"></div>
-      <div class="status" id="context"></div>
-      <div class="status" id="turns"></div>
+      <div class="spacer"></div>
+      <div class="stats"><div class="status" id="tokens"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="turns"></div></div>
     </div>
     <div class="footer">
       <div id="finish" class="indicator">Ready</div>
@@ -407,12 +412,12 @@ function instructionsHtml(webview: vscode.Webview): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #111; --muted: #62625d; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --error: #fdecec; --wash: rgba(0,0,0,0.08); }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --error: #fdecec; --wash: rgba(0,0,0,0.08); }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 16.8px/1.45 Aptos, "Segoe UI", sans-serif; }
     .pane { display: flex; flex-direction: column; height: 100vh; padding: 28px 32px; max-width: 900px; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; margin-bottom: 16px; }
-    h1 { font-size: 24px; font-weight: 600; letter-spacing: 0; margin: 0; }
+    h1 { font-size: 18px; font-weight: 600; letter-spacing: 0; margin: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
     .hint { color: var(--muted); font-size: 14.4px; }
     label { display: flex; flex-direction: column; gap: 5px; flex: 1; min-height: 140px; }
@@ -421,7 +426,7 @@ function instructionsHtml(webview: vscode.Webview): string {
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    button:disabled { opacity: 0.4; cursor: default; }
+    button:disabled { background: var(--wash); cursor: default; }
     .error { background: var(--error); border: 1px solid var(--border); border-left: 3px solid #c62828; border-radius: 8px; margin: 16px 0 0; padding: 10px 14px; }
   </style>
 </head>
@@ -585,24 +590,24 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #111; --muted: #62625d; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --grid: rgba(0,0,0,0.15); --wash: rgba(0,0,0,0.08); --blue: #2457d6; --red: #c62828; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --grid: rgba(0,0,0,0.15); --wash: rgba(0,0,0,0.08); --blue: #2457d6; --red: #c62828; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 16px/1.4 Aptos, "Segoe UI", sans-serif; }
     .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 28px 32px; }
     .pane.expanded { max-width: none; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; }
-    h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: 0; }
+    h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 13px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    button:disabled { opacity: 0.4; cursor: default; }
+    button:disabled { background: var(--wash); cursor: default; }
     .graphs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; min-height: 0; overflow: auto; }
     .graphs.single { display: flex; flex: 1; min-height: 0; }
     .graph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 11px; min-width: 0; }
     .graphs.single .graph { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .graph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
     .graph-name { font-weight: 700; }
-    .legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+    .legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
     .swatch { width: 12px; height: 2px; display: inline-block; background: var(--ink); vertical-align: middle; }
     .swatch.blue { background: var(--blue); } .swatch.red { background: var(--red); }
     .period { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
@@ -610,8 +615,8 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
     .plot { position: relative; width: 100%; aspect-ratio: 320 / 200; border: 1px solid var(--border); cursor: pointer; background: #fff; }
     .graphs.single .plot { flex: 1; min-height: 260px; aspect-ratio: auto; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-    svg text { font-size: 11px; fill: var(--muted); text-anchor: end; }
-    .figures { margin-top: 8px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
+    svg text { font-size: 14px; fill: var(--muted); text-anchor: end; }
+    .figures { margin-top: 8px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
     @media (max-width: 900px) { .graphs { grid-template-columns: 1fr; } .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
@@ -680,7 +685,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
       renderAge();
       const graphsNode = document.getElementById('graphs');
       const pane = document.getElementById('pane');
-      const graphs = [buildWindowGraph('five', '5h', 5 * 60 * 60 * 1000, [{ field: 'five_pct', reset: 'five_resets', name: '5h', color: '#111' }], rows), buildWindowGraph('seven', '7d', 7 * 24 * 60 * 60 * 1000, [{ field: 'seven_pct', reset: 'seven_resets', name: '7d', color: '#2457d6' }, { field: 'fable_pct', reset: 'fable_resets', name: modelLabel(), color: '#c62828' }], rows), buildCreditsGraph(rows)];
+      const graphs = [buildWindowGraph('five', '5h', 5 * 60 * 60 * 1000, [{ field: 'five_pct', reset: 'five_resets', name: '5h', color: '#000' }], rows), buildWindowGraph('seven', '7d', 7 * 24 * 60 * 60 * 1000, [{ field: 'seven_pct', reset: 'seven_resets', name: '7d', color: '#2457d6' }, { field: 'fable_pct', reset: 'fable_resets', name: modelLabel(), color: '#c62828' }], rows), buildCreditsGraph(rows)];
       const visibleGraphs = expanded ? graphs.filter((graph) => graph.key === expanded) : graphs;
       pane.className = 'pane' + (expanded ? ' expanded' : '');
       graphsNode.className = 'graphs' + (expanded ? ' single' : '');
@@ -823,7 +828,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
           const nextYear = parts.month === 12 ? parts.year + 1 : parts.year;
           const nextMonth = parts.month === 12 ? 1 : parts.month + 1;
           const end = zonedTime(nextYear, nextMonth, 1, 0, 0, 0);
-          byMonth.set(key, { key: 'credits', start, end, label: new Date(start).toLocaleString([], { month: 'long', year: 'numeric', timeZone }), series: [{ name: 'credits', color: '#111', points: [] }], limit: 1 });
+          byMonth.set(key, { key: 'credits', start, end, label: new Date(start).toLocaleString([], { month: 'long', year: 'numeric', timeZone }), series: [{ name: 'credits', color: '#000', points: [] }], limit: 1 });
         }
         const period = byMonth.get(key);
         period.series[0].points.push({ t: row.at, v: spent });

@@ -1,5 +1,12 @@
 # Workspace Instructions (Read First)
 
+## display rules
+- **only use Font sizes between 14px and 18px inclusive.** Both bounds are real: smaller
+  is unreadable on this screen, larger breaks the column.
+- **only use Solid black text, never gray.** Gray for de-emphasis fails against these
+  backgrounds. Colour other than gray is fine — it is the washed-out grays that
+  are the problem, not colour as such.
+
 ## Response style
 
 - When asked to do a simple one-off action (generate a file, run a command), just do it and report completion in 1-2 lines.
