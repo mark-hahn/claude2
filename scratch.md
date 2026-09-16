@@ -1,18 +1,22 @@
 
-add `Empty Trash` button
+when session has no submitted prompts (is empty) and the name is not `New session` and the prompt editor had a draft and the draft was cleared then delete the session
 
-close all session editor tabs
-  - other than current
+when + button is clicked focus the prompt editor
 
-when a new session is opened and there is no prompt then delete that empty session when any button is pressed in sidebar or any prompt card other that the empty one is selected
+add `Del all` button -- add trash can to session cards in trash that deletes that session
+
+# sidebar button changes
+- organize the buttons into 2 rows at top of sidebar:
+  - the top row is the management row, it has $, instr, and graft buttons in that order
+  - the second row is the session row, it hs + and trash buttons in that order
+- add a new button `Close` that closes all session tabs other than current
+  - put it to between the + and trash buttons
 
 edit session name
 
 expand prompt bar in-place
 
 show response scrolling in a pane below it's prompt bar
-
-# showing tool/mcp/subagent messages in response text
 
 ======================
 

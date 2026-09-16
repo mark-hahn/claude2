@@ -22,13 +22,15 @@ export function sidebarHtml(webview: vscode.Webview): string {
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.07); }
     body { margin: 0; min-height: 100vh; background: var(--page); color: var(--ink); font: 14px/1.35 Aptos, "Segoe UI", sans-serif; }
     .shell { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; height: 100vh; padding: 10px; }
-    .top { display: flex; flex-wrap: wrap; gap: 7px; flex: none; }
+    .top { display: flex; flex-direction: column; gap: 7px; flex: none; }
+    .row { display: flex; flex-wrap: wrap; gap: 7px; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; min-height: 31px; cursor: pointer; }
     .top button { height: 25px; min-height: 0; flex: none; padding: 0; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
     #graft { width: 52px; }
+    #close { width: 56px; }
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
@@ -48,11 +50,16 @@ export function sidebarHtml(webview: vscode.Webview): string {
 <body>
   <div class="shell">
     <div class="top">
-      <button id="new" title="New Claude2 session">+</button>
-      <button id="instructions" title="Instructions">Instr</button>
-      <button id="quota" title="Quota">$</button>
-      <button id="graft" title="Graft graph">Graft</button>
-      <button id="trash" title="Show trashed sessions">Trash</button>
+      <div class="row">
+        <button id="quota" title="Quota">$</button>
+        <button id="instructions" title="Instructions">Instr</button>
+        <button id="graft" title="Graft graph">Graft</button>
+      </div>
+      <div class="row">
+        <button id="new" title="New Claude2 session">+</button>
+        <button id="close" title="Close every session tab but the current one">Close</button>
+        <button id="trash" title="Show trashed sessions">Trash</button>
+      </div>
     </div>
     <div id="sessions" class="sessions"></div>
   </div>
@@ -67,6 +74,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('instructions').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'instructions' }));
     document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
     document.getElementById('graft').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'graft' }));
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeOtherSessions' }));
     trashButton.addEventListener('click', () => {
       vscode.postMessage({ type: 'discardEmpty' });
       showTrash = !showTrash;

@@ -82,9 +82,13 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     // A session created by "+" that never got a prompt is scratch: drop it as soon as
-    // attention moves to any other sidebar control or session card.
-    await this.discardEmptySessions(stringOf(record?.sessionId));
-    if (type === "newSession") {
+    // attention moves to any other sidebar control or session card. "Close" keeps the
+    // current tab, so its session survives the sweep even when it is still empty.
+    const keepId = stringOf(record?.sessionId) || (type === "closeOtherSessions" ? this.activeConversationId() : "");
+    await this.discardEmptySessions(keepId);
+    if (type === "closeOtherSessions") {
+      this.closeOtherSessions(keepId);
+    } else if (type === "newSession") {
       await this.newSession();
     } else if (type === "openSession") {
       await this.openConversation(stringOf(record?.sessionId));
@@ -171,6 +175,25 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
     this.postConversationState(sessionId);
+  }
+
+  // Only a conversation panel VS Code currently has focused counts as current; if focus
+  // sits anywhere else, "Close" leaves no session tab open.
+  private activeConversationId(): string {
+    for (const [sessionId, panel] of this.conversationPanels) {
+      if (panel.active) {
+        return sessionId;
+      }
+    }
+    return "";
+  }
+
+  private closeOtherSessions(keepId: string): void {
+    for (const [sessionId, panel] of [...this.conversationPanels]) {
+      if (sessionId !== keepId) {
+        panel.dispose();
+      }
+    }
   }
 
   private async handleConversationMessage(message: unknown): Promise<void> {
