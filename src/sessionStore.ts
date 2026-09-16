@@ -77,6 +77,16 @@ export class SessionStore {
     return session;
   }
 
+  public async remove(sessionId: string): Promise<boolean> {
+    const index = this.sessions.findIndex((session) => session.id === sessionId);
+    if (index === -1) {
+      return false;
+    }
+    this.sessions.splice(index, 1);
+    await this.save();
+    return true;
+  }
+
   public async rename(sessionId: string, name: string): Promise<ClaudeSession | undefined> {
     const session = this.get(sessionId);
     if (!session) {

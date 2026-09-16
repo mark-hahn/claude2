@@ -1,5 +1,5 @@
 export const CLAUDE2_CONTEXT_WINDOW = 256000;
-export const DEFAULT_MODEL = "fable";
+export const DEFAULT_MODEL = "claude-opus-5";
 export const DEFAULT_EFFORT = "xhigh";
 
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];

@@ -68,6 +68,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
     document.getElementById('graft').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'graft' }));
     trashButton.addEventListener('click', () => {
+      vscode.postMessage({ type: 'discardEmpty' });
       showTrash = !showTrash;
       trashButton.classList.toggle('active', showTrash);
       trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions';
@@ -180,17 +181,17 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; }
     * { box-sizing: border-box; }
-    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(14px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
     .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(72px, 18.75vh) auto auto; }
     .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
-    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; background: var(--surface); overflow-wrap: anywhere; }
+    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; background: #fdecec; }
-    textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
+    textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
     .bar .spacer { flex: 1; min-width: 8px; }
@@ -225,6 +226,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+${zoomScript()}
     const sessionId = ${safeSessionId};
     const models = ${models};
     const efforts = ${efforts};
@@ -238,6 +240,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     let shownActiveTurn = null;
     let navIndex = null;
     let anchorIndex = 0;
+    let draftSent = '';
+    let draftTimer = 0;
     const historyBox = document.getElementById('history');
     const promptBox = document.getElementById('prompt');
     const modelSelect = document.getElementById('model');
@@ -253,6 +257,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       if (message.type === 'sessionState') {
         session = message.session || session;
         status = message.status || null;
+        if (typeof message.draft === 'string' && message.draft && !promptBox.value) {
+          promptBox.value = message.draft;
+          draftSent = message.draft;
+        }
         document.title = session.name || 'Claude2';
         render();
       }
@@ -269,6 +277,13 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
         navIndex = null;
         scrollBottom();
       }
+      window.clearTimeout(draftTimer);
+      draftTimer = window.setTimeout(() => sendDraft('draftChanged'), 250);
+    });
+    // Losing focus is the cue to name the session after an unsent draft.
+    promptBox.addEventListener('blur', () => {
+      window.clearTimeout(draftTimer);
+      sendDraft('draftBlur');
     });
     document.getElementById('send').addEventListener('click', submitPrompt);
     stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
@@ -296,11 +311,20 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       }
     }
 
+    function sendDraft(type) {
+      const draft = promptBox.value;
+      if (type === 'draftChanged' && draft === draftSent) return;
+      draftSent = draft;
+      vscode.postMessage({ type, sessionId, draft });
+    }
+
     function submitPrompt() {
       const prompt = promptBox.value;
       if (!prompt.trim() || (status && status.active)) return;
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
+      draftSent = '';
+      window.clearTimeout(draftTimer);
       navIndex = null;
       // Older responses hide when a new prompt goes in; the new one shows while streaming and stays
       // open when finished until the next prompt, so the answer never vanishes the moment it lands.
@@ -315,6 +339,23 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       promptBox.value = session.turns[navIndex].prompt;
       scrollToIndex(navIndex);
       promptBox.focus();
+    }
+
+    // Response text is plain, except for a leading **bold** run on a line, which tool-call lines use
+    // for the tool name. Built as text nodes so nothing else in the response is treated as markup.
+    function fillResponse(box, text) {
+      text.split('\\n').forEach((line, index) => {
+        if (index) box.appendChild(document.createTextNode('\\n'));
+        const bold = /^\\*\\*([^*]+)\\*\\*/.exec(line);
+        if (!bold) {
+          box.appendChild(document.createTextNode(line));
+          return;
+        }
+        const name = document.createElement('b');
+        name.textContent = bold[1];
+        box.appendChild(name);
+        box.appendChild(document.createTextNode(line.slice(bold[0].length)));
+      });
     }
 
     function render() {
@@ -356,7 +397,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
           if (expanded.has(turn.id) || isActiveTurn) {
             const response = document.createElement('div');
             response.className = 'response' + (turn.error ? ' error' : '');
-            response.textContent = turn.error || turn.response || '';
+            if (turn.error) response.textContent = turn.error;
+            else fillResponse(response, turn.response || '');
             wrapper.appendChild(response);
           }
           historyBox.appendChild(wrapper);
@@ -437,17 +479,17 @@ function instructionsHtml(webview: vscode.Webview): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --error: #fdecec; --wash: rgba(0,0,0,0.08); }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --error: #fdecec; --wash: rgba(0,0,0,0.08); --z: 1; }
     * { box-sizing: border-box; }
-    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 16.8px/1.45 Aptos, "Segoe UI", sans-serif; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16.8px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
     .pane { display: flex; flex-direction: column; height: 100vh; padding: 28px 32px; max-width: 900px; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; margin-bottom: 16px; }
-    h1 { font-size: 18px; font-weight: 600; letter-spacing: 0; margin: 0; }
+    h1 { font-size: calc(18px * var(--z)); font-weight: 600; letter-spacing: 0; margin: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-    .hint { color: var(--muted); font-size: 14.4px; }
+    .hint { color: var(--muted); font-size: calc(14.4px * var(--z)); }
     label { display: flex; flex-direction: column; gap: 5px; flex: 1; min-height: 140px; }
-    .path { color: var(--muted); font-size: 14.4px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    textarea { flex: 1; resize: none; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 9px 11px; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
+    .path { color: var(--muted); font-size: calc(14.4px * var(--z)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    textarea { flex: 1; resize: none; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 9px 11px; font: calc(14px * var(--z))/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
@@ -465,6 +507,7 @@ function instructionsHtml(webview: vscode.Webview): string {
     // The pane saves as you type, like a VS Code editor with auto save: every edit is written to
     // CLAUDE.md after a short pause, Ctrl-S writes at once, and leaving the pane flushes first.
     const vscode = acquireVsCodeApi();
+${zoomScript()}
     const textBox = document.getElementById('text');
     const pathLabel = document.getElementById('path');
     const hint = document.getElementById('hint');
@@ -615,14 +658,14 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --grid: rgba(0,0,0,0.15); --wash: rgba(0,0,0,0.08); --blue: #2457d6; --red: #c62828; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --grid: rgba(0,0,0,0.15); --wash: rgba(0,0,0,0.08); --blue: #2457d6; --red: #c62828; --z: 1; }
     * { box-sizing: border-box; }
-    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 16px/1.4 Aptos, "Segoe UI", sans-serif; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.4 Aptos, "Segoe UI", sans-serif; }
     .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 28px 32px; }
     .pane.expanded { max-width: none; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; }
-    h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0; }
-    .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; }
+    h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
+    .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 13px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
@@ -632,7 +675,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
     .graphs.single .graph { flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .graph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
     .graph-name { font-weight: 700; }
-    .legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+    .legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(14px * var(--z)); }
     .swatch { width: 12px; height: 2px; display: inline-block; background: var(--ink); vertical-align: middle; }
     .swatch.blue { background: var(--blue); } .swatch.red { background: var(--red); }
     .period { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
@@ -640,8 +683,8 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
     .plot { position: relative; width: 100%; aspect-ratio: 320 / 200; border: 1px solid var(--border); cursor: pointer; background: #fff; }
     .graphs.single .plot { flex: 1; min-height: 260px; aspect-ratio: auto; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-    svg text { font-size: 14px; fill: var(--muted); text-anchor: end; }
-    .figures { margin-top: 8px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
+    svg text { font-size: calc(14px * var(--z)); fill: var(--muted); text-anchor: end; }
+    .figures { margin-top: 8px; color: var(--muted); font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
     @media (max-width: 900px) { .graphs { grid-template-columns: 1fr; } .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
@@ -655,6 +698,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+${zoomScript()}
     const timeZone = ${safeTimezone};
     const pending = new Map();
     const backs = { five: 0, seven: 0, credits: 0 };
@@ -988,6 +1032,42 @@ function quotaHtml(webview: vscode.Webview, timezone: string): string {
   </script>
 </body>
 </html>`;
+}
+
+// Text zoom, shared by every pane that scripts its own HTML. Each pane multiplies its authored font
+// sizes by the --z factor this sets, so stepping the one value scales the whole pane; the level is
+// kept in webview state, which also carries it across a management pane switch. Requires the pane's
+// script to have already declared `vscode`; drop it in right after acquireVsCodeApi().
+function zoomScript(): string {
+  return `
+    const MIN_ZOOM = 0.8;
+    const MAX_ZOOM = 2;
+    const ZOOM_STEP = 0.1;
+    let zoom = 1;
+
+    function applyZoom(next) {
+      zoom = Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next)) * 100) / 100;
+      document.documentElement.style.setProperty('--z', String(zoom));
+      vscode.setState(Object.assign({}, vscode.getState(), { zoom }));
+    }
+
+    window.addEventListener('wheel', (event) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      if (event.deltaY) applyZoom(zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
+    }, { passive: false });
+
+    window.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      const step = event.key === '-' || event.key === '_' ? -ZOOM_STEP : event.key === '=' || event.key === '+' ? ZOOM_STEP : 0;
+      if (!step && event.key !== '0') return;
+      event.preventDefault();
+      event.stopPropagation();
+      applyZoom(step ? zoom + step : 1);
+    });
+
+    applyZoom(Number((vscode.getState() || {}).zoom) || 1);
+`;
 }
 
 function getNonce(): string {

@@ -1,4 +1,13 @@
 
+add `Empty Trash` button
+
+close all session editor tabs
+  - other than current
+
+when a new session is opened and there is no prompt then delete that empty session when any button is pressed in sidebar or any prompt card other that the empty one is selected
+
+edit session name
+
 expand prompt bar in-place
 
 show response scrolling in a pane below it's prompt bar
@@ -6,6 +15,11 @@ show response scrolling in a pane below it's prompt bar
 # showing tool/mcp/subagent messages in response text
 
 ======================
+
+show tool names at beginning of tool line like `Bash:` in bold
+-- remove blank lines between tool lines but keep blank lines around batches of tool lines
+
+what is the file count and line count of source files in this workspace
 
 cut the height of the prompt editor input box in half - remove the prompts count in the prompt card in sidebar
 

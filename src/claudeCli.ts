@@ -153,6 +153,29 @@ export class ClaudeCliRunner {
       let stopReason: string | null = null;
       let resultError: string | null = null;
       let settled = false;
+      let sawTextDelta = false;
+      let toolBatchOpen = false;
+      // Tool calls are announced once each; the CLI can repeat an assistant message, so key off the block id.
+      const seenToolUses = new Set<string>();
+
+      // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
+      const appendToolLine = (text: string): void => {
+        const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
+        const chunk = `${gap}${text}\n`;
+        responseText += chunk;
+        options.onText(chunk);
+        toolBatchOpen = true;
+      };
+
+      // Closes an open batch with the blank line that separates it from the prose that follows.
+      const closeToolBatch = (): void => {
+        if (!toolBatchOpen) {
+          return;
+        }
+        toolBatchOpen = false;
+        responseText += "\n";
+        options.onText("\n");
+      };
 
       const emitStatus = (): void => {
         options.onStatus(this.snapshot(status));
@@ -281,6 +304,8 @@ export class ClaudeCliRunner {
               const delta = recordOf(event.delta);
               const textDelta = stringOf(delta?.text);
               if (textDelta) {
+                closeToolBatch();
+                sawTextDelta = true;
                 responseText += textDelta;
                 status.codeLines = countCodeLines(responseText);
                 options.onText(DUMP_RAW_MESSAGES ? textDelta + "\n\n" : textDelta);
@@ -292,6 +317,22 @@ export class ClaudeCliRunner {
           const assistantError = stringOf(message.error);
           if (assistantError) {
             resultError = assistantError;
+          }
+          // The completed assistant message is the first place a tool call arrives with its input filled in.
+          const content = recordOf(message.message)?.content;
+          if (Array.isArray(content)) {
+            for (const entry of content) {
+              const block = recordOf(entry);
+              if (!block || stringOf(block.type) !== "tool_use") {
+                continue;
+              }
+              const blockId = stringOf(block.id);
+              if (blockId && seenToolUses.has(blockId)) {
+                continue;
+              }
+              seenToolUses.add(blockId);
+              appendToolLine(toolUseLine(block));
+            }
           }
         } else if (messageType === "rate_limit_event") {
           status.phase = "working";
@@ -308,8 +349,11 @@ export class ClaudeCliRunner {
             }
           }
           const resultText = stringOf(message.result);
-          if (!responseText && resultText) {
-            responseText = resultText;
+          // Tool lines alone do not count as a response, so the result text still has to land after them.
+          if (!sawTextDelta && resultText) {
+            closeToolBatch();
+            responseText += resultText;
+            options.onText(resultText);
           }
           costUsd = numberOf(message.total_cost_usd);
           stopReason = stringOf(message.stop_reason) || stringOf(message.terminal_reason);
@@ -419,6 +463,20 @@ function phaseForBlock(blockType: string): ClaudePhase {
     return blockType === "tool_use" ? "querying" : "writing";
   }
   return "working";
+}
+
+// One tool call on one line: the tool name plus whichever input field best names what it was pointed at.
+// The name is wrapped in ** so the conversation view can bold it; nothing else in the line is markup.
+function toolUseLine(block: Record<string, unknown>): string {
+  const name = stringOf(block.name) || "tool";
+  const input = recordOf(block.input);
+  const detailKeys = ["description", "command", "file_path", "path", "pattern", "query", "prompt", "url"];
+  const detail = input ? detailKeys.map((key) => stringOf(input[key])).find((value) => value.trim()) ?? "" : "";
+  const oneLine = detail.replace(/\s+/g, " ").trim();
+  if (!oneLine) {
+    return `**${name}**`;
+  }
+  return `**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
 function usageTotals(usage: Record<string, unknown>): { input: number; output: number; context: number } {

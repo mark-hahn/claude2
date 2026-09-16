@@ -7,7 +7,7 @@ import { ClaudeCliRunner, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -34,6 +34,9 @@ class Claude2Controller implements vscode.Disposable {
   private readonly quota: QuotaService;
   private readonly conversationPanels = new Map<string, vscode.WebviewPanel>();
   private readonly leaveResolvers = new Map<string, (go: boolean) => void>();
+  // Unsent prompt text per session, and the draft each auto-generated name was built from.
+  private readonly drafts = new Map<string, string>();
+  private readonly draftNames = new Map<string, string>();
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
@@ -76,7 +79,12 @@ class Claude2Controller implements vscode.Disposable {
     const type = stringOf(record?.type);
     if (type === "ready") {
       this.refreshSidebar();
-    } else if (type === "newSession") {
+      return;
+    }
+    // A session created by "+" that never got a prompt is scratch: drop it as soon as
+    // attention moves to any other sidebar control or session card.
+    await this.discardEmptySessions(stringOf(record?.sessionId));
+    if (type === "newSession") {
       await this.newSession();
     } else if (type === "openSession") {
       await this.openConversation(stringOf(record?.sessionId));
@@ -100,9 +108,29 @@ class Claude2Controller implements vscode.Disposable {
     if (!(await this.ensureEnabled())) {
       return;
     }
+    await this.discardEmptySessions();
     const session = await this.store.create();
     this.refreshSidebar();
     await this.openConversation(session.id);
+  }
+
+  // Forget every session with neither a turn nor an unsent draft, except `exceptId`.
+  private async discardEmptySessions(exceptId = ""): Promise<void> {
+    // The sidebar click and the prompt box's blur race each other across two webviews;
+    // let the blur's draft message land first so a typed draft is never dropped.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const stale = this.store
+      .all()
+      .filter((session) => session.id !== exceptId && session.turns.length === 0 && !this.drafts.get(session.id));
+    if (stale.length === 0) {
+      return;
+    }
+    for (const session of stale) {
+      this.conversationPanels.get(session.id)?.dispose();
+      this.draftNames.delete(session.id);
+      await this.store.remove(session.id);
+    }
+    this.refreshSidebar();
   }
 
   private async renameSession(sessionId: string): Promise<void> {
@@ -114,6 +142,8 @@ class Claude2Controller implements vscode.Disposable {
     if (name === undefined) {
       return;
     }
+    // A hand-picked name outranks anything auto-naming would put there later.
+    this.draftNames.delete(sessionId);
     await this.store.rename(sessionId, name);
     this.postConversationState(sessionId);
     this.refreshSidebar();
@@ -151,6 +181,11 @@ class Claude2Controller implements vscode.Disposable {
       this.postConversationState(sessionId);
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
+    } else if (type === "draftChanged") {
+      this.noteDraft(sessionId, stringOf(record?.draft));
+    } else if (type === "draftBlur") {
+      this.noteDraft(sessionId, stringOf(record?.draft));
+      await this.nameSessionFromDraft(sessionId);
     } else if (type === "stopPrompt") {
       this.runner.stop(sessionId);
       this.postConversationState(sessionId);
@@ -170,6 +205,7 @@ class Claude2Controller implements vscode.Disposable {
     const selectedModel = model || defaults.model;
     const selectedEffort = effort || defaults.effort;
     const wasFirstPrompt = session.turns.length === 0;
+    this.drafts.delete(sessionId);
     const turn: ClaudeTurn = {
       id: randomUUID(),
       prompt,
@@ -247,7 +283,8 @@ class Claude2Controller implements vscode.Disposable {
     try {
       const title = await this.runner.generateTitle(prompt, model, this.workspacePath());
       const session = this.store.get(sessionId);
-      if (session && session.name === "New session") {
+      if (session && this.ownsName(session)) {
+        this.draftNames.delete(sessionId);
         await this.store.rename(sessionId, title);
         this.postConversationState(sessionId);
         this.refreshSidebar();
@@ -255,6 +292,58 @@ class Claude2Controller implements vscode.Disposable {
     } catch (error) {
       this.channel.appendLine(`Claude session naming failed: ${errorMessage(error)}`);
     }
+  }
+
+  private noteDraft(sessionId: string, draft: string): void {
+    const text = draft.trim();
+    if (text) {
+      this.drafts.set(sessionId, text);
+    } else {
+      this.drafts.delete(sessionId);
+    }
+  }
+
+  // A draft the user typed but never sent still deserves a name, so the sidebar card is
+  // recognisable. Short drafts are named from their own first words; longer ones are worth
+  // a real title from the CLI.
+  private async nameSessionFromDraft(sessionId: string): Promise<void> {
+    const session = this.store.get(sessionId);
+    if (!session || session.turns.length > 0 || !this.ownsName(session)) {
+      return;
+    }
+    const draft = (this.drafts.get(sessionId) ?? "").replace(/\s+/g, " ").trim();
+    if (!draft) {
+      // The draft was cleared: hand the name back to the placeholder so the session can be discarded.
+      if (this.draftNames.delete(sessionId) && session.name !== "New session") {
+        await this.store.rename(sessionId, "New session");
+        this.postConversationState(sessionId);
+      }
+      return;
+    }
+    if (this.draftNames.get(sessionId) === draft) {
+      return;
+    }
+    this.draftNames.set(sessionId, draft);
+    let name = firstWords(draft);
+    if (draft.split(" ").length >= 6) {
+      try {
+        name = await this.runner.generateTitle(draft, this.conversationDefaults().model, this.workspacePath());
+      } catch (error) {
+        this.channel.appendLine(`Claude draft naming failed: ${errorMessage(error)}`);
+      }
+    }
+    const current = this.store.get(sessionId);
+    if (!current || current.turns.length > 0 || this.draftNames.get(sessionId) !== draft) {
+      return;
+    }
+    await this.store.rename(sessionId, name);
+    this.postConversationState(sessionId);
+    this.refreshSidebar();
+  }
+
+  // Auto-naming may only overwrite the placeholder or a name it produced itself from a draft.
+  private ownsName(session: ClaudeSession): boolean {
+    return session.name === "New session" || this.draftNames.has(session.id);
   }
 
   private async openManagement(pane: ManagementPane): Promise<void> {
@@ -390,7 +479,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId) });
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "" });
     this.refreshSidebar();
   }
 
@@ -462,6 +551,12 @@ function recordOf(value: unknown): Record<string, unknown> | undefined {
 
 function stringOf(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+// Fallback name for a draft too short to be worth a generated title.
+function firstWords(text: string): string {
+  const words = text.split(" ").filter(Boolean).slice(0, 5).join(" ").replace(/[.,;:!?]+$/, "");
+  return (words.length > 42 ? `${words.slice(0, 42).trimEnd()}…` : words) || "New session";
 }
 
 function stringOrNull(value: unknown): string | null {

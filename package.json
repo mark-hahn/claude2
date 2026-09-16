@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.6",
+  "version": "0.0.8",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -67,7 +67,7 @@
         },
         "claude2.model": {
           "type": "string",
-          "default": "fable",
+          "default": "claude-opus-5",
           "description": "Default Claude model for new Claude2 prompts."
         },
         "claude2.effort": {
