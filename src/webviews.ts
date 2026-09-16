@@ -319,6 +319,7 @@ ${zoomScript(z)}
     let anchorIndex = 0;
     let selectedResponseToBottom = false;
     let selectedResponseToTop = false;
+    let keepScroll = false;
     let initializedSelection = false;
     let pendingTurnCount = 0;
     let programmaticScroll = false;
@@ -423,10 +424,11 @@ ${zoomScript(z)}
     // Response text is plain, except for a leading **bold** run on a line, which tool-call lines use
     // for the tool name. Built as text nodes so nothing else in the response is treated as markup.
     // A toggle re-renders every response, so hiding tool groups drops those lines at build time:
-    // no leading blanks, and runs of blank lines collapse to a single one.
-    function fillResponse(box, text) {
+    // no leading blanks, and runs of blank lines collapse to a single one. The streaming response
+    // keeps its tool lines either way, since they are how the run's progress reads.
+    function fillResponse(box, text, showTools) {
       let lines = text.split('\\n');
-      if (!toolGroupsVisible) {
+      if (!showTools) {
         const kept = [];
         for (const line of lines) {
           if (isToolLine(line)) continue;
@@ -511,9 +513,13 @@ ${zoomScript(z)}
               selectBlock(index);
               return;
             }
-            const opening = !expanded.has(turn.id);
-            if (opening) expanded.add(turn.id); else expanded.delete(turn.id);
-            selectedResponseToBottom = selectedResponseToBottom || index !== anchorIndex;
+            if (expanded.has(turn.id)) expanded.delete(turn.id); else expanded.add(turn.id);
+            // A bar other than the selected one opens where it sits: selection and scroll stay put.
+            if (index !== anchorIndex) {
+              keepScroll = true;
+              render();
+              return;
+            }
             selectBlock(index);
           });
           wrapper.appendChild(bar);
@@ -522,7 +528,7 @@ ${zoomScript(z)}
             const response = document.createElement('div');
             response.className = 'response' + (turn.error ? ' error' : '');
             if (turn.error) response.textContent = turn.error;
-            else fillResponse(response, turn.response || '');
+            else fillResponse(response, turn.response || '', toolGroupsVisible || isActiveTurn);
             response.addEventListener('click', () => {
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
@@ -545,7 +551,9 @@ ${zoomScript(z)}
       selectedResponseToTop = false;
       const responseToBottom = !responseToTop && (selectedResponseToBottom || selectedResponseAtBottom || newActiveTurn);
       selectedResponseToBottom = false;
-      requestAnimationFrame(() => syncSelectedBlock(true, responseToBottom, responseToTop ? 0 : selectedResponseTop));
+      const align = !keepScroll;
+      keepScroll = false;
+      requestAnimationFrame(() => syncSelectedBlock(align, responseToBottom, responseToTop ? 0 : selectedResponseTop));
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);

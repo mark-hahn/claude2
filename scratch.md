@@ -1,10 +1,13 @@
-when removing the tool groups show the first line of text at the top of the results box and then only show single blank linesin text, not multiple lines
 
-- always show tool groups in active results for latest prompt even if tools are hidden in old results.
-  - this is to follow the session results better
-- when clicking on a bar that isn't the selected block bar then expand it in-place without changing selection.
-- 
+
+
 ======================
+
+- always show tool groups in active streaming results for latest prompt even if tools are hidden in old results.
+  - this is to follow the session resultstreaming better
+- when clicking on a bar that isn't the selected bar then expand it in-place without changing selection.
+
+when removing the tool groups show the first line of text at the top of the results box and then only show single blank linesin text, not multiple lines
 
 i gave the instructions in claude-results-instr.md to another llm and it made the changes detailed in claude2-results-changes.md
 -- check the work it did for correctness in following the instructions and look for bugs it created
