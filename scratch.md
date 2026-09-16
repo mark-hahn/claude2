@@ -1,12 +1,13 @@
 
-cut the height of the prompt editor input box in half - remove the prompts count in the prompt card in sidebar
+expand prompt bar in-place
 
 show response scrolling in a pane below it's prompt bar
 
-
-# showing tool/mcp/subagent comm in response text
+# showing tool/mcp/subagent messages in response text
 
 ======================
+
+cut the height of the prompt editor input box in half - remove the prompts count in the prompt card in sidebar
 
 add a button to top footer row `Graft` that opens a management pane with the graft viz html -- it should be live like a normal browser
 

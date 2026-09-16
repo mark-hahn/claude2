@@ -102,8 +102,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
         name.textContent = session.name || 'New session';
         const meta = document.createElement('span');
         meta.className = 'card-meta';
-        const count = Array.isArray(session.turns) ? session.turns.length : 0;
-        meta.textContent = count + (count === 1 ? ' prompt' : ' prompts') + ' · ' + timeLabel(session.updatedAt);
+        meta.textContent = timeLabel(session.updatedAt);
         card.append(name, meta);
 
         if (showTrash) {
@@ -184,7 +183,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
-    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(96px, 25vh) auto auto; }
+    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(72px, 18.75vh) auto auto; }
     .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }

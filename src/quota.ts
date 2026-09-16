@@ -7,9 +7,17 @@ import type { QuotaHistoryPayload, QuotaReadingRow, QuotaState, QuotaWindowState
 
 const usageUrl = "https://api.anthropic.com/api/oauth/usage";
 const historyFilename = "quota-history.json";
+const metaFilename = "quota-meta.json";
 const fiveMinutesMs = 5 * 60 * 1000;
 const oneMinuteMs = 60 * 1000;
 const fifteenMinutesMs = 15 * 60 * 1000;
+// The endpoint rate-limits the whole account: measured (see the finance app's
+// quota-poll.js) ten calls in five minutes draws a 429, and a steady call a
+// minute lasts about eighteen minutes before one. Every VS Code window runs
+// its own QuotaService, so freshness and 429 pauses are shared through a meta
+// file in global storage; timer ticks defer to any window's reading younger
+// than this, keeping the fleet at one background call per five minutes.
+const timerFreshMs = fiveMinutesMs - 30 * 1000;
 const fetchTimeoutMs = 5000;
 
 interface HttpJsonResponse {
@@ -34,6 +42,7 @@ export class QuotaService {
   private lastReadAt = 0;
   private lastFailureReason: string | null = null;
   private pausedUntil = 0;
+  private storageDirPromise: Promise<string> | null = null;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
@@ -42,7 +51,7 @@ export class QuotaService {
   ) {}
 
   public start(): void {
-    this.schedule(5000);
+    this.schedule(5000 + Math.floor(Math.random() * 10000));
   }
 
   public dispose(): void {
@@ -58,9 +67,11 @@ export class QuotaService {
     return { readAt: this.lastReadAt || null, rows: [...this.readings].sort((left, right) => left.at - right.at), state: this.state };
   }
 
-  public async read(force: boolean): Promise<QuotaState> {
+  public async read(force: boolean, background = false): Promise<QuotaState> {
     await this.ensureLoaded();
-    if (!force && this.lastReadAt && Date.now() - this.lastReadAt < oneMinuteMs) {
+    await this.adoptShared();
+    const freshMs = background ? timerFreshMs : oneMinuteMs;
+    if (!force && this.lastReadAt && Date.now() - this.lastReadAt < freshMs) {
       return this.state;
     }
     if (this.inFlight) {
@@ -80,7 +91,7 @@ export class QuotaService {
       clearTimeout(this.timer);
     }
     this.timer = setTimeout(() => {
-      void this.read(false).finally(() => this.schedule(fiveMinutesMs));
+      void this.read(false, true).finally(() => this.schedule(fiveMinutesMs));
     }, delayMs);
   }
 
@@ -100,11 +111,16 @@ export class QuotaService {
       this.state = state;
       this.lastReadAt = state.at ?? Date.now();
       this.lastFailureReason = null;
+      this.pausedUntil = 0;
       await this.recordReading(state);
+      await this.writeSharedMeta();
       return this.state;
     } catch (error) {
       this.noteFailure(error);
       this.state = { ...this.state, available: this.lastReadAt > 0, error: errorMessage(error), pausedUntil: this.pausedUntil || null };
+      if (this.pausedUntil > Date.now()) {
+        await this.sharePause();
+      }
       return this.state;
     }
   }
@@ -189,35 +205,146 @@ export class QuotaService {
       return;
     }
     this.loaded = true;
-    try {
-      const raw = await fs.readFile(this.historyPath(), "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      this.readings = Array.isArray(parsed) ? parsed.map((row) => normalizeRow(row)).filter((row) => row !== null) : [];
-      const newest = [...this.readings].sort((left, right) => right.at - left.at)[0];
-      if (newest) {
-        this.lastReadAt = newest.at;
-      }
-    } catch (error) {
-      if (!isMissingFileError(error)) {
-        this.noteFailure(error);
-      }
+    this.readings = await this.loadReadings();
+    const newest = [...this.readings].sort((left, right) => right.at - left.at)[0];
+    if (newest) {
+      this.lastReadAt = newest.at;
     }
+  }
+
+  private async loadReadings(): Promise<QuotaReadingRow[]> {
+    return await readRows(await this.historyPath());
   }
 
   private async recordReading(state: QuotaState): Promise<void> {
     const row = rowFromState(state);
-    const newest = [...this.readings].sort((left, right) => right.at - left.at)[0];
+    // Other windows append to the same file; merge from disk before writing.
+    const merged = new Map<number, QuotaReadingRow>((await this.loadReadings()).map((reading) => [reading.at, reading]));
+    for (const reading of this.readings) {
+      if (!merged.has(reading.at)) {
+        merged.set(reading.at, reading);
+      }
+    }
+    this.readings = [...merged.values()].sort((left, right) => left.at - right.at);
+    const newest = this.readings[this.readings.length - 1];
     if (!newest || rowChanged(newest, row) || row.at - newest.at >= 60 * 60 * 1000) {
       if (!this.readings.some((reading) => reading.at === row.at)) {
         this.readings.push(row);
       }
-      await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
-      await fs.writeFile(this.historyPath(), JSON.stringify(this.readings.sort((left, right) => left.at - right.at), null, 2), "utf8");
+      await fs.mkdir(await this.storageDir(), { recursive: true });
+      await fs.writeFile(await this.historyPath(), JSON.stringify(this.readings.sort((left, right) => left.at - right.at), null, 2), "utf8");
     }
   }
 
-  private historyPath(): string {
-    return path.join(this.context.globalStorageUri.fsPath, historyFilename);
+  private async adoptShared(): Promise<void> {
+    const meta = await this.readSharedMeta();
+    if (meta.pausedUntil > this.pausedUntil) {
+      this.pausedUntil = meta.pausedUntil;
+    }
+    if (meta.state && meta.lastReadAt > this.lastReadAt) {
+      this.state = meta.state;
+      this.lastReadAt = meta.lastReadAt;
+      this.readings = await this.loadReadings();
+    }
+  }
+
+  private async readSharedMeta(): Promise<{ lastReadAt: number; pausedUntil: number; state: QuotaState | null }> {
+    try {
+      const raw = await fs.readFile(await this.metaPath(), "utf8");
+      const record = recordOf(JSON.parse(raw));
+      const state = recordOf(record?.state);
+      return {
+        lastReadAt: numberOf(record?.lastReadAt) ?? 0,
+        pausedUntil: numberOf(record?.pausedUntil) ?? 0,
+        state: state && Array.isArray(state.windows) ? state as unknown as QuotaState : null,
+      };
+    } catch {
+      return { lastReadAt: 0, pausedUntil: 0, state: null };
+    }
+  }
+
+  private async writeSharedMeta(): Promise<void> {
+    try {
+      await fs.mkdir(await this.storageDir(), { recursive: true });
+      await fs.writeFile(await this.metaPath(), JSON.stringify({ lastReadAt: this.lastReadAt, pausedUntil: this.pausedUntil, state: this.state }), "utf8");
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  private async sharePause(): Promise<void> {
+    try {
+      const meta = await this.readSharedMeta();
+      if (this.pausedUntil > meta.pausedUntil) {
+        await fs.mkdir(await this.storageDir(), { recursive: true });
+        await fs.writeFile(await this.metaPath(), JSON.stringify({ lastReadAt: meta.lastReadAt, pausedUntil: this.pausedUntil, state: meta.state }), "utf8");
+      }
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  private storageDir(): Promise<string> {
+    this.storageDirPromise ??= this.resolveStorageDir();
+    return this.storageDirPromise;
+  }
+
+  // In WSL, store readings in the Windows-side extension storage through
+  // /mnt/c, so the Windows and WSL window groups share one reading cadence,
+  // one 429 pause, and one graph history. Falls back to this side's own
+  // storage when no Windows VS Code profile is reachable.
+  private async resolveStorageDir(): Promise<string> {
+    const local = this.context.globalStorageUri.fsPath;
+    let users: string[];
+    try {
+      users = await fs.readdir("/mnt/c/Users");
+    } catch {
+      return local;
+    }
+    const extensionDirName = this.context.extension.id.toLowerCase();
+    for (const user of users) {
+      try {
+        const storageRoot = path.join("/mnt/c/Users", user, "AppData", "Roaming", "Code", "User", "globalStorage");
+        if (!(await fs.stat(storageRoot)).isDirectory()) {
+          continue;
+        }
+        const shared = path.join(storageRoot, extensionDirName);
+        await fs.mkdir(shared, { recursive: true });
+        await this.migrateHistory(local, shared);
+        return shared;
+      } catch {
+        continue;
+      }
+    }
+    return local;
+  }
+
+  // Carry rows recorded before storage was shared into the shared file; idempotent.
+  private async migrateHistory(fromDir: string, toDir: string): Promise<void> {
+    const legacy = await readRows(path.join(fromDir, historyFilename));
+    if (legacy.length === 0) {
+      return;
+    }
+    const sharedPath = path.join(toDir, historyFilename);
+    const merged = new Map<number, QuotaReadingRow>((await readRows(sharedPath)).map((row) => [row.at, row]));
+    let added = false;
+    for (const row of legacy) {
+      if (!merged.has(row.at)) {
+        merged.set(row.at, row);
+        added = true;
+      }
+    }
+    if (added) {
+      await fs.writeFile(sharedPath, JSON.stringify([...merged.values()].sort((left, right) => left.at - right.at), null, 2), "utf8");
+    }
+  }
+
+  private async historyPath(): Promise<string> {
+    return path.join(await this.storageDir(), historyFilename);
+  }
+
+  private async metaPath(): Promise<string> {
+    return path.join(await this.storageDir(), metaFilename);
   }
 
   private noteFailure(error: unknown): void {
@@ -389,8 +516,14 @@ function childEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+async function readRows(filePath: string): Promise<QuotaReadingRow[]> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.map((row) => normalizeRow(row)).filter((row) => row !== null) : [];
+  } catch {
+    return [];
+  }
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
