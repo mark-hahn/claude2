@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "graft";
+export type ManagementPane = "instructions" | "quota" | "graft" | "markdown";
 
 export interface ConversationDefaults {
   model: string;
@@ -30,6 +30,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
     #graft { width: 52px; }
+    #markdown { width: 30px; }
     #close { width: 56px; }
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
@@ -60,6 +61,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
+        <button id="markdown" title="Show the selected response as markdown">md</button>
         <button id="close" title="Close every session tab but the current one">Close</button>
         <button id="trash" title="Show trashed sessions">Trash</button>
       </div>
@@ -81,6 +83,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('instructions').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'instructions' }));
     document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
     document.getElementById('graft').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'graft' }));
+    document.getElementById('markdown').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'markdown' }));
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeOtherSessions' }));
     trashButton.addEventListener('click', () => {
       vscode.postMessage({ type: 'discardEmpty' });
@@ -326,6 +329,7 @@ ${zoomScript(z)}
     let scrollTimer = 0;
     let draftSent = '';
     let draftTimer = 0;
+    let selectionSent = -1;
     const historyBox = document.getElementById('history');
     const promptBox = document.getElementById('prompt');
     const modelSelect = document.getElementById('model');
@@ -554,6 +558,7 @@ ${zoomScript(z)}
       const align = !keepScroll;
       keepScroll = false;
       requestAnimationFrame(() => syncSelectedBlock(align, responseToBottom, responseToTop ? 0 : selectedResponseTop));
+      noteSelection();
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
@@ -574,6 +579,14 @@ ${zoomScript(z)}
         finish.className = 'indicator';
         finish.textContent = 'Ready';
       }
+    }
+
+    // The md pane renders whichever response box is selected here, so every move of the
+    // selection is reported; the extension holds the index until that pane asks for it.
+    function noteSelection() {
+      if (!session.turns.length || anchorIndex === selectionSent) return;
+      selectionSent = anchorIndex;
+      vscode.postMessage({ type: 'selectionChanged', sessionId, index: anchorIndex });
     }
 
     function selectBlock(index) {
@@ -604,6 +617,7 @@ ${zoomScript(z)}
       if (bestIndex !== anchorIndex) {
         anchorIndex = bestIndex;
         syncSelectedBlock(true, true, 0);
+        noteSelection();
       }
     }
 
@@ -660,6 +674,9 @@ ${zoomScript(z)}
 export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, graftPage: string | null = null, zoom = 1): string {
   if (pane === "graft") {
     return graftPage ?? graftFailedHtml();
+  }
+  if (pane === "markdown") {
+    return markdownHtml(webview, zoom);
   }
   return pane === "instructions" ? instructionsHtml(webview, zoom) : quotaHtml(webview, timezone, zoom);
 }
@@ -854,6 +871,233 @@ ${zoomScript(z)}
       errorNode.hidden = !error;
       errorNode.textContent = error || '';
     }
+  </script>
+</body>
+</html>`;
+}
+
+// The md pane renders the conversation's selected response box as markdown. The text is whatever
+// that box holds, so the renderer is deliberately small: the blocks Claude actually emits
+// (headings, fences, lists, quotes, tables, rules) and the inline runs inside them.
+function markdownHtml(webview: vscode.Webview, zoom: number): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
+  return `<!doctype html>
+<html lang="en" style="--z: ${z}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <style>
+    :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.55 Aptos, "Segoe UI", sans-serif; }
+    .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 28px 24px; max-width: 980px; }
+    .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 12px; }
+    h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
+    .prompt { flex: 1; min-width: 0; font-size: calc(14px * var(--z)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .doc { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 16px 20px; }
+    .doc > :first-child { margin-top: 0; }
+    .doc h1, .doc h2 { font-size: calc(18px * var(--z)); font-weight: 700; margin: 20px 0 8px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+    .doc h3, .doc h4, .doc h5, .doc h6 { font-size: calc(16px * var(--z)); font-weight: 700; margin: 16px 0 6px; }
+    .doc p { margin: 0 0 10px; }
+    .doc ul, .doc ol { margin: 0 0 10px; padding-left: 26px; }
+    .doc li { margin: 3px 0; }
+    .doc li > ul, .doc li > ol { margin: 3px 0 0; }
+    .doc blockquote { margin: 0 0 10px; border-left: 3px solid var(--border); padding: 2px 12px; }
+    .doc hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+    .doc a { color: #0b4f9c; }
+    .doc code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 4px; }
+    .doc pre { background: #f2f1ec; border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 10px 12px; overflow: auto; }
+    .doc pre code { background: none; padding: 0; white-space: pre; }
+    .doc table { border-collapse: collapse; margin: 0 0 12px; font-size: calc(14px * var(--z)); }
+    .doc th, .doc td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+    .doc th { background: rgba(0,0,0,0.05); }
+    .empty { font-size: calc(16px * var(--z)); }
+  </style>
+</head>
+<body>
+  <div class="pane">
+    <div class="title"><h1>Markdown</h1><span id="prompt" class="prompt"></span><button id="close">Close</button></div>
+    <div id="doc" class="doc"><p class="empty">No response selected.</p></div>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${zoomScript(z)}
+    const docBox = document.getElementById('doc');
+    const promptLabel = document.getElementById('prompt');
+    const pending = new Map();
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'reply' && pending.has(message.requestId)) {
+        const resolve = pending.get(message.requestId);
+        pending.delete(message.requestId);
+        resolve(message);
+      } else if (message.type === 'selectedResponse') {
+        show(message.payload);
+      }
+    });
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
+
+    function request(type, payload) {
+      const requestId = String(Date.now()) + '-' + String(Math.random()).slice(2);
+      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
+    }
+
+    function show(payload) {
+      promptLabel.textContent = payload && payload.prompt ? payload.prompt.split('\\n')[0] : '';
+      if (!payload) {
+        docBox.innerHTML = '<p class="empty">No response selected.</p>';
+        return;
+      }
+      const text = payload.text || '';
+      docBox.innerHTML = text.trim() ? renderMarkdown(text) : '<p class="empty">The selected response is empty.</p>';
+      docBox.scrollTop = 0;
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Inline runs. Code spans are lifted out first so nothing inside them is treated as markup,
+    // and only http(s) links are kept as links.
+    function inline(text) {
+      const codes = [];
+      let out = escapeHtml(text).replace(/\\\`([^\\\`]+)\\\`/g, (match, code) => {
+        codes.push(code);
+        return '\\u0000' + (codes.length - 1) + '\\u0000';
+      });
+      out = out.replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1');
+      out = out.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href="$2">$1</a>');
+      out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+      out = out.replace(/(^|[^*])\\*([^*\\n]+)\\*/g, '$1<em>$2</em>');
+      out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+      return out.replace(/\\u0000(\\d+)\\u0000/g, (match, index) => '<code>' + codes[Number(index)] + '</code>');
+    }
+
+    // The offset is where the item's text starts, which is how far a continuation line under it
+    // is indented; the indent is the marker's own column, which is what nesting goes by.
+    function listItemOf(line) {
+      const bullet = /^(\\s*)[-*+]\\s+(.*)$/.exec(line);
+      if (bullet) return { indent: bullet[1].length, offset: line.length - bullet[2].length, ordered: false, text: bullet[2] };
+      const numbered = /^(\\s*)\\d+[.)]\\s+(.*)$/.exec(line);
+      if (numbered) return { indent: numbered[1].length, offset: line.length - numbered[2].length, ordered: true, text: numbered[2] };
+      return null;
+    }
+
+    function buildList(items) {
+      const parts = [];
+      let index = 0;
+      while (index < items.length) {
+        const item = items[index];
+        const nested = [];
+        let next = index + 1;
+        while (next < items.length && items[next].indent > item.indent) { nested.push(items[next]); next++; }
+        const body = item.lines.join('\\n');
+        let inner = item.lines.length > 1 ? renderMarkdown(body) : inline(body);
+        if (nested.length) inner += buildList(nested);
+        parts.push('<li>' + inner + '</li>');
+        index = next;
+      }
+      return '<' + (items[0].ordered ? 'ol' : 'ul') + '>' + parts.join('') + '</' + (items[0].ordered ? 'ol' : 'ul') + '>';
+    }
+
+    function tableRow(line) {
+      const trimmed = line.trim().replace(/^\\|/, '').replace(/\\|$/, '');
+      return trimmed.split('|').map((cell) => cell.trim());
+    }
+
+    function renderMarkdown(text) {
+      const lines = String(text).replace(/\\r\\n/g, '\\n').split('\\n');
+      const out = [];
+      let paragraph = [];
+      const flush = () => {
+        if (!paragraph.length) return;
+        out.push('<p>' + inline(paragraph.join('\\n')).replace(/\\n/g, '<br>') + '</p>');
+        paragraph = [];
+      };
+      let index = 0;
+      while (index < lines.length) {
+        const line = lines[index];
+        const fence = /^\\s*(\\\`{3,}|~{3,})/.exec(line);
+        if (fence) {
+          flush();
+          const marker = fence[1].charAt(0);
+          const body = [];
+          index++;
+          while (index < lines.length && !new RegExp('^\\\\s*' + marker + '{3,}\\\\s*$').test(lines[index])) { body.push(lines[index]); index++; }
+          index++;
+          out.push('<pre><code>' + escapeHtml(body.join('\\n')) + '</code></pre>');
+          continue;
+        }
+        if (!line.trim()) { flush(); index++; continue; }
+        const heading = /^(#{1,6})\\s+(.*)$/.exec(line);
+        if (heading) {
+          flush();
+          const level = heading[1].length;
+          out.push('<h' + level + '>' + inline(heading[2].replace(/\\s+#+\\s*$/, '')) + '</h' + level + '>');
+          index++;
+          continue;
+        }
+        if (/^\\s*(-{3,}|\\*{3,}|_{3,})\\s*$/.test(line)) { flush(); out.push('<hr>'); index++; continue; }
+        if (/^\\s*>/.test(line)) {
+          flush();
+          const quoted = [];
+          while (index < lines.length && (/^\\s*>/.test(lines[index]) || (quoted.length && lines[index].trim()))) {
+            quoted.push(lines[index].replace(/^\\s*>\\s?/, ''));
+            index++;
+          }
+          out.push('<blockquote>' + renderMarkdown(quoted.join('\\n')) + '</blockquote>');
+          continue;
+        }
+        if (line.indexOf('|') >= 0 && index + 1 < lines.length && /^\\s*\\|?[\\s:-]*-[\\s|:-]*$/.test(lines[index + 1]) && lines[index + 1].indexOf('-') >= 0) {
+          flush();
+          const head = tableRow(line);
+          index += 2;
+          const rows = [];
+          while (index < lines.length && lines[index].indexOf('|') >= 0 && lines[index].trim()) { rows.push(tableRow(lines[index])); index++; }
+          const headHtml = '<tr>' + head.map((cell) => '<th>' + inline(cell) + '</th>').join('') + '</tr>';
+          const bodyHtml = rows.map((row) => '<tr>' + row.map((cell) => '<td>' + inline(cell) + '</td>').join('') + '</tr>').join('');
+          out.push('<table>' + headHtml + bodyHtml + '</table>');
+          continue;
+        }
+        if (listItemOf(line)) {
+          flush();
+          const items = [];
+          while (index < lines.length) {
+            const item = listItemOf(lines[index]);
+            // Bullets switching to numbers (or back) at the top level start a new list rather
+            // than joining this one, which would take the tag of whichever came first.
+            if (item && items.length && item.indent <= items[0].indent && item.ordered !== items[0].ordered) break;
+            if (item) { items.push({ indent: item.indent, offset: item.offset, ordered: item.ordered, lines: [item.text] }); index++; continue; }
+            const owner = items[items.length - 1];
+            // A blank line inside a list is kept only when a list line or an indented
+            // continuation follows it; an indented line that is not a new item continues
+            // the item above, keeping any indentation past the item's own.
+            const after = lines[index + 1] || '';
+            if (!lines[index].trim() && owner && (listItemOf(after) || /^\\s{2,}\\S/.test(after))) { owner.lines.push(''); index++; continue; }
+            if (owner && /^\\s{2,}\\S/.test(lines[index])) {
+              const lead = lines[index].length - lines[index].replace(/^\\s+/, '').length;
+              owner.lines.push(lines[index].slice(Math.min(lead, owner.offset)));
+              index++;
+              continue;
+            }
+            break;
+          }
+          out.push(buildList(items));
+          continue;
+        }
+        paragraph.push(line);
+        index++;
+      }
+      flush();
+      return out.join('');
+    }
+
+    void request('loadSelectedResponse', {}).then((reply) => show(reply.ok ? reply.payload : null));
   </script>
 </body>
 </html>`;

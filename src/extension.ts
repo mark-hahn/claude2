@@ -39,6 +39,8 @@ class Claude2Controller implements vscode.Disposable {
   private readonly draftNames = new Map<string, string>();
   // Sessions whose panel should put the caret in the prompt box once its webview loads.
   private readonly pendingPromptFocus = new Set<string>();
+  // Index of the response box each conversation has selected; the md pane renders that one.
+  private readonly selectedTurns = new Map<string, number>();
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
@@ -195,6 +197,7 @@ class Claude2Controller implements vscode.Disposable {
       });
       panel.onDidDispose(() => {
         this.conversationPanels.delete(sessionId);
+        this.selectedTurns.delete(sessionId);
         if (this.lastConversationId === sessionId) {
           this.lastConversationId = "";
         }
@@ -264,7 +267,25 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "stopPrompt") {
       this.runner.stop(sessionId);
       this.postConversationState(sessionId);
+    } else if (type === "selectionChanged") {
+      const index = record?.index;
+      this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
+      if (this.managementPane === "markdown" && sessionId === this.lastConversationId) {
+        void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
+      }
     }
+  }
+
+  // The response box the conversation has selected, as the md pane wants it. The pane opens from
+  // the sidebar, so the conversation it reads from is the last one focused.
+  private selectedResponse(): { prompt: string; text: string } | null {
+    const session = this.store.get(this.lastConversationId);
+    if (!session || !session.turns.length) {
+      return null;
+    }
+    const index = Math.max(0, Math.min(session.turns.length - 1, this.selectedTurns.get(session.id) ?? session.turns.length - 1));
+    const turn = session.turns[index];
+    return { prompt: turn.prompt, text: turn.error ?? turn.response };
   }
 
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
@@ -450,7 +471,7 @@ class Claude2Controller implements vscode.Disposable {
     if (!this.managementPanel || this.managementPane !== pane) {
       return;
     }
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : "Graft";
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : "Graft";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage, this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
   }
@@ -540,6 +561,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.quota.history(false));
     } else if (type === "forceQuotaHistory") {
       await this.reply(requestId, async () => await this.quota.history(true));
+    } else if (type === "loadSelectedResponse") {
+      await this.reply(requestId, async () => this.selectedResponse());
     }
   }
 
@@ -636,7 +659,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "graft" ? value : null;
+  return value === "instructions" || value === "quota" || value === "graft" || value === "markdown" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

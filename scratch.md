@@ -1,7 +1,13 @@
 
+highlight session card for currently visible editor pane
+
+add a button `md` between + and close
+-- when clicked display the selected response box text formatted as markdown in the management pane
 
 
 ======================
+
+describe status variables available from response, like turns, context, etc, and whether they are for the entire conversation or just the last response. which would be useful for display and whether they should be total or last response?
 
 - always show tool groups in active streaming results for latest prompt even if tools are hidden in old results.
   - this is to follow the session resultstreaming better
