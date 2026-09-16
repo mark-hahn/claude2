@@ -319,9 +319,11 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       const active = status && status.active;
       stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
+      let newActiveTurn = false;
       if (active && status.turnId !== shownActiveTurn) {
         shownActiveTurn = status.turnId;
         expanded.add(status.turnId);
+        newActiveTurn = true;
       }
       const nearBottom = historyBox.scrollHeight - historyBox.scrollTop - historyBox.clientHeight < 18;
       historyBox.replaceChildren();
@@ -358,7 +360,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
           historyBox.appendChild(wrapper);
         });
       }
-      if (nearBottom || active) scrollBottom();
+      // Sticky scrolling: follow the streaming response only while already at the bottom, so a
+      // reader who scrolled up to look at earlier text is not dragged back down on every chunk.
+      if (nearBottom || newActiveTurn) scrollBottom();
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);

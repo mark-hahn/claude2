@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Build the vsix and install it into WSL, Windows, and hahnca.com VS Code.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+REMOTE=hahnca.com
+WIN_USER=mark
+WIN_HOME=/mnt/c/Users/$WIN_USER
+
+echo "== bump version =="
+npm version patch --no-git-tag-version >/dev/null
+VERSION=$(node -p "require('./package.json').version")
+VSIX=claude2-$VERSION.vsix
+rm -f claude2-*.vsix
+
+echo "== build $VSIX =="
+npx vsce package >/dev/null
+ls -la "$VSIX"
+
+echo "== WSL =="
+code --install-extension "$VSIX" --force
+
+echo "== Windows =="
+cp "$VSIX" "$WIN_HOME/$VSIX"
+(cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$VSIX --force" 2>&1 \
+  | tr -d '\r' | grep -v -e DeprecationWarning -e trace-deprecation || true)
+
+echo "== $REMOTE =="
+scp -q "$VSIX" "$REMOTE:/tmp/$VSIX"
+ssh "$REMOTE" "
+  set -e
+  bin=\$(ls -td ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
+        | grep -v '\.staging/' | head -1)
+  [ -n \"\$bin\" ] || { echo 'no vscode-server found on remote'; exit 1; }
+  \"\$bin\" --install-extension /tmp/$VSIX --force
+  rm -f /tmp/$VSIX
+"
+
+echo "== done: reload VS Code windows to pick up $VSIX =="

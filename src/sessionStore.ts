@@ -43,7 +43,15 @@ export class SessionStore {
   private sessions: ClaudeSession[];
 
   public constructor(private readonly context: vscode.ExtensionContext) {
-    this.sessions = this.context.globalState.get<Partial<ClaudeSession>[]>(sessionsKey, []).map((session) => normalizeSession(session));
+    const local = this.context.workspaceState.get<Partial<ClaudeSession>[]>(sessionsKey);
+    // one-time migration: sessions used to live in globalState (shared across
+    // workspaces); the first workspace opened after the update adopts them
+    const legacy = local === undefined ? this.context.globalState.get<Partial<ClaudeSession>[]>(sessionsKey, []) : [];
+    this.sessions = (local ?? legacy).map((session) => normalizeSession(session));
+    if (local === undefined && legacy.length > 0) {
+      void this.context.workspaceState.update(sessionsKey, this.sessions);
+      void this.context.globalState.update(sessionsKey, undefined);
+    }
   }
 
   public all(): ClaudeSession[] {
@@ -120,6 +128,6 @@ export class SessionStore {
   }
 
   private async save(): Promise<void> {
-    await this.context.globalState.update(sessionsKey, this.sessions);
+    await this.context.workspaceState.update(sessionsKey, this.sessions);
   }
 }

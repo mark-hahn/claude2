@@ -15,3 +15,10 @@ tsconfig.json
 **/*.map
 **/*.ts
 **/.eslintrc.json
+scratch.md
+*.scratch.md
+Untitled-*.json
+responses/**
+CLAUDE.md
+.github/**
+*.vsix

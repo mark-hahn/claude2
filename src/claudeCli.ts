@@ -5,7 +5,7 @@ import * as path from "path";
 import { EFFORT_OPTIONS, MODEL_OPTIONS, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
-const DUMP_RAW_MESSAGES = true;
+const DUMP_RAW_MESSAGES = false;
 
 const titleBudgetUsd = 0.25;
 const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
