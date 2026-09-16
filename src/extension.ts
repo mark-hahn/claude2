@@ -37,6 +37,8 @@ class Claude2Controller implements vscode.Disposable {
   // Unsent prompt text per session, and the draft each auto-generated name was built from.
   private readonly drafts = new Map<string, string>();
   private readonly draftNames = new Map<string, string>();
+  // Sessions whose panel should put the caret in the prompt box once its webview loads.
+  private readonly pendingPromptFocus = new Set<string>();
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
@@ -93,7 +95,7 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "openSession") {
       await this.openConversation(stringOf(record?.sessionId));
     } else if (type === "renameSession") {
-      await this.renameSession(stringOf(record?.sessionId));
+      await this.renameSession(stringOf(record?.sessionId), stringOf(record?.name));
     } else if (type === "trashSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), true);
       this.refreshSidebar();
@@ -115,7 +117,7 @@ class Claude2Controller implements vscode.Disposable {
     await this.discardEmptySessions();
     const session = await this.store.create();
     this.refreshSidebar();
-    await this.openConversation(session.id);
+    await this.openConversation(session.id, true);
   }
 
   // Forget every session with neither a turn nor an unsent draft, except `exceptId`.
@@ -137,13 +139,10 @@ class Claude2Controller implements vscode.Disposable {
     this.refreshSidebar();
   }
 
-  private async renameSession(sessionId: string): Promise<void> {
+  // The sidebar card edits the name in place, so the new text arrives with the message.
+  private async renameSession(sessionId: string, name: string): Promise<void> {
     const session = this.store.get(sessionId);
-    if (!session) {
-      return;
-    }
-    const name = await vscode.window.showInputBox({ title: "Rename Claude2 session", value: session.name, prompt: "Session name" });
-    if (name === undefined) {
+    if (!session || !name.trim() || name === session.name) {
       return;
     }
     // A hand-picked name outranks anything auto-naming would put there later.
@@ -153,7 +152,7 @@ class Claude2Controller implements vscode.Disposable {
     this.refreshSidebar();
   }
 
-  private async openConversation(sessionId: string): Promise<void> {
+  private async openConversation(sessionId: string, focusPrompt = false): Promise<void> {
     if (!sessionId || !(await this.ensureEnabled())) {
       return;
     }
@@ -175,6 +174,12 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
     this.postConversationState(sessionId);
+    if (focusPrompt) {
+      // A brand-new panel's webview has not loaded yet, so the message would be dropped;
+      // `conversationReady` replays it. Posting now covers a panel that is already up.
+      this.pendingPromptFocus.add(sessionId);
+      void panel.webview.postMessage({ type: "focusPrompt" });
+    }
   }
 
   // Only a conversation panel VS Code currently has focused counts as current; if focus
@@ -202,6 +207,9 @@ class Claude2Controller implements vscode.Disposable {
     const sessionId = stringOf(record?.sessionId);
     if (type === "conversationReady") {
       this.postConversationState(sessionId);
+      if (this.pendingPromptFocus.delete(sessionId)) {
+        void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
+      }
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "draftChanged") {

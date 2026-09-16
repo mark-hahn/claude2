@@ -43,6 +43,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-restore { position: absolute; right: 6px; bottom: 6px; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
     .card.trashed { padding-bottom: 34px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+    .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
     .empty { border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); padding: 14px 10px; text-align: center; }
   </style>
@@ -67,6 +68,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
     const vscode = acquireVsCodeApi();
     let sessions = [];
     let showTrash = false;
+    // An inline rename owns its card until it commits, so a background refresh waits
+    // rather than yanking the input out from under the typing.
+    let editingId = '';
+    let pendingRender = false;
     const list = document.getElementById('sessions');
     const trashButton = document.getElementById('trash');
 
@@ -87,6 +92,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
       const message = event.data;
       if (message.type === 'sessions') {
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
+        if (editingId) {
+          pendingRender = true;
+          return;
+        }
         render();
       }
     });
@@ -141,10 +150,15 @@ export function sidebarHtml(webview: vscode.Webview): string {
         let timer = 0;
         let renamed = false;
         card.addEventListener('pointerdown', () => {
-          renamed = false;
+          // Clicking the card that is mid-rename only dismisses the editor (blur commits it);
+          // it must not also open the session, and must not arm a second long press.
+          renamed = editingId === session.id;
+          if (renamed) {
+            return;
+          }
           timer = window.setTimeout(() => {
             renamed = true;
-            vscode.postMessage({ type: 'renameSession', sessionId: session.id });
+            startRename(name, session);
           }, 650);
         });
         for (const eventName of ['pointerup', 'pointercancel', 'pointerleave']) {
@@ -159,6 +173,50 @@ export function sidebarHtml(webview: vscode.Webview): string {
         });
         list.appendChild(card);
       }
+    }
+
+    function startRename(nameEl, session) {
+      if (editingId) {
+        return;
+      }
+      editingId = session.id;
+      const input = document.createElement('input');
+      input.className = 'card-rename';
+      input.type = 'text';
+      input.value = session.name || 'New session';
+      for (const eventName of ['pointerdown', 'pointerup', 'click', 'dblclick']) {
+        input.addEventListener(eventName, (event) => event.stopPropagation());
+      }
+      let closed = false;
+      const finish = (commit) => {
+        if (closed) return;
+        closed = true;
+        const value = input.value.trim();
+        editingId = '';
+        input.replaceWith(nameEl);
+        if (commit && value && value !== session.name) {
+          session.name = value;
+          nameEl.textContent = value;
+          vscode.postMessage({ type: 'renameSession', sessionId: session.id, name: value });
+        }
+        if (pendingRender) {
+          pendingRender = false;
+          render();
+        }
+      };
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          finish(true);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          finish(false);
+        }
+      });
+      input.addEventListener('blur', () => finish(true));
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
     }
 
     function timeLabel(value) {
@@ -271,6 +329,8 @@ ${zoomScript()}
         }
         document.title = session.name || 'Claude2';
         render();
+      } else if (message.type === 'focusPrompt') {
+        promptBox.focus();
       }
     });
 

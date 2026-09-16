@@ -1,9 +1,18 @@
 
 when session has no submitted prompts (is empty) and the name is not `New session` and the prompt editor had a draft and the draft was cleared then delete the session
 
+add `Del all` button -- add trash can to session cards in trash that deletes that session
+
+remember font sizes in management and conversation panes
+
+expand prompt bar in-place
+show response scrolling in a pane below it's prompt bar
+
+======================
+
 when + button is clicked focus the prompt editor
 
-add `Del all` button -- add trash can to session cards in trash that deletes that session
+when a session card is long-pressed the edit session name inline
 
 # sidebar button changes
 - organize the buttons into 2 rows at top of sidebar:
@@ -11,14 +20,6 @@ add `Del all` button -- add trash can to session cards in trash that deletes tha
   - the second row is the session row, it hs + and trash buttons in that order
 - add a new button `Close` that closes all session tabs other than current
   - put it to between the + and trash buttons
-
-edit session name
-
-expand prompt bar in-place
-
-show response scrolling in a pane below it's prompt bar
-
-======================
 
 show tool names at beginning of tool line like `Bash:` in bold
 -- remove blank lines between tool lines but keep blank lines around batches of tool lines
