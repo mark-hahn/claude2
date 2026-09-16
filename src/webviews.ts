@@ -37,10 +37,12 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
     .card { position: relative; box-sizing: border-box; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
     .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    .card-trash { position: absolute; right: 6px; bottom: 6px; display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
+    .card-actions { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 6px; }
+    .card-trash { display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
     .card-trash:hover { background: #fbd9d9; }
-    .card-restore { position: absolute; right: 6px; bottom: 6px; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
+    .card-restore { display: none; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
+    .card:hover .card-restore { display: block; }
     .card.trashed { padding-bottom: 34px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
     .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
@@ -123,6 +125,19 @@ export function sidebarHtml(webview: vscode.Webview): string {
         meta.textContent = timeLabel(session.updatedAt);
         card.append(name, meta);
 
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+
+        const trash = document.createElement('button');
+        trash.className = 'card-trash';
+        trash.textContent = '\u{1F5D1}';
+        // Same icon, two meanings: one hop to the trash, then gone for good.
+        trash.title = showTrash ? 'Delete this session permanently' : 'Move this session to the trash';
+        trash.addEventListener('pointerdown', (event) => event.stopPropagation());
+        trash.addEventListener('click', (event) => {
+          event.stopPropagation();
+          vscode.postMessage({ type: showTrash ? 'deleteSession' : 'trashSession', sessionId: session.id });
+        });
         if (showTrash) {
           const restore = document.createElement('button');
           restore.className = 'card-restore';
@@ -133,19 +148,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
             event.stopPropagation();
             vscode.postMessage({ type: 'restoreSession', sessionId: session.id });
           });
-          card.appendChild(restore);
-        } else {
-          const trash = document.createElement('button');
-          trash.className = 'card-trash';
-          trash.textContent = '\u{1F5D1}';
-          trash.title = 'Move this session to the trash';
-          trash.addEventListener('pointerdown', (event) => event.stopPropagation());
-          trash.addEventListener('click', (event) => {
-            event.stopPropagation();
-            vscode.postMessage({ type: 'trashSession', sessionId: session.id });
-          });
-          card.appendChild(trash);
+          actions.appendChild(restore);
         }
+        actions.appendChild(trash);
+        card.appendChild(actions);
 
         let timer = 0;
         let renamed = false;

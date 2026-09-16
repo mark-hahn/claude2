@@ -105,6 +105,8 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
+    } else if (type === "deleteSession") {
+      await this.deleteSession(stringOf(record?.sessionId));
     } else if (type === "openPane") {
       const pane = paneOf(record?.pane);
       if (pane) {
@@ -139,6 +141,20 @@ class Claude2Controller implements vscode.Disposable {
       this.draftNames.delete(session.id);
       await this.store.remove(session.id);
     }
+    this.refreshSidebar();
+  }
+
+  // The trash icon on a trashed card is the permanent one: the session is forgotten
+  // outright, not just hidden, so its tab and any draft go with it.
+  private async deleteSession(sessionId: string): Promise<void> {
+    if (!sessionId) {
+      return;
+    }
+    this.conversationPanels.get(sessionId)?.dispose();
+    this.conversationPanels.delete(sessionId);
+    this.draftNames.delete(sessionId);
+    this.drafts.delete(sessionId);
+    await this.store.remove(sessionId);
     this.refreshSidebar();
   }
 
