@@ -40,3 +40,5 @@
 - never do git commit, push, pop, or anything else that modifies git repo unless i tell you to
 - you can do git reads without permission
 
+# more rules
+- don't deploy anything -- i will deploy before i test

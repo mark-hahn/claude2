@@ -89,14 +89,15 @@ class Claude2Controller implements vscode.Disposable {
     // A session created by "+" that never got a prompt is scratch: drop it as soon as
     // attention moves to any other sidebar control or session card. "Close" keeps the
     // current tab, so its session survives the sweep even when it is still empty.
-    const keepId = stringOf(record?.sessionId) || (type === "closeOtherSessions" ? this.activeConversationId() : "");
+    const requestedSessionId = stringOf(record?.sessionId);
+    const keepId = requestedSessionId || (type === "closeOtherSessions" ? this.activeConversationId() : "");
     await this.discardEmptySessions(keepId);
     if (type === "closeOtherSessions") {
       this.closeOtherSessions(keepId);
     } else if (type === "newSession") {
       await this.newSession();
     } else if (type === "openSession") {
-      await this.openConversation(stringOf(record?.sessionId));
+      await this.openConversation(requestedSessionId);
     } else if (type === "renameSession") {
       await this.renameSession(stringOf(record?.sessionId), stringOf(record?.name));
     } else if (type === "trashSession") {

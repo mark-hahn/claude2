@@ -1,4 +1,13 @@
 
+i gave the instructions in claude-results-instr.md to another llm and it made the changes detailed in claude2-results-changes.md
+-- check the work it did for correctness in following the instructions and look for bugs it created
+
+remove up/down buttons
+
+- always show tool groups in active results for latest prompt even if tools are hidden in old results.
+- when clicking on a bar that isn't the selected block bar then expand it in-place without changing selection.
+- 
+
 # new conversation results pane specs
 - the results pane has prompt/response block displays
   - i'll call prompt/response blocks just blocks in these instructions

@@ -261,9 +261,14 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
+    .turn.selected .prompt-bar { outline: 1px solid #6d6527; outline-offset: -1px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
+    .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; background: #fdecec; }
+    .tool-group { display: inline; }
+    .tool-group.hidden { display: none; }
+    .bottom-spacer { flex: none; height: 0; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
@@ -294,7 +299,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     </div>
     <div class="footer">
       <div id="finish" class="indicator">Ready</div>
-      <div class="group"><button id="top">Top</button><button id="up">Up</button><button id="down">Down</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="closeAll">Close All</button><button id="openAll">Open All</button></div>
+      <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button></div>
     </div>
   </div>
   <script nonce="${nonce}">
@@ -310,9 +315,15 @@ ${zoomScript(z)}
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     let expanded = new Set();
+    let expandedPrompts = new Set();
+    let toolGroupsVisible = true;
     let shownActiveTurn = null;
-    let navIndex = null;
     let anchorIndex = 0;
+    let selectedResponseToBottom = false;
+    let initializedSelection = false;
+    let pendingTurnCount = 0;
+    let programmaticScroll = false;
+    let scrollTimer = 0;
     let draftSent = '';
     let draftTimer = 0;
     const historyBox = document.getElementById('history');
@@ -348,10 +359,6 @@ ${zoomScript(z)}
       }
     });
     promptBox.addEventListener('input', () => {
-      if (navIndex !== null && session.turns[navIndex] && promptBox.value !== session.turns[navIndex].prompt) {
-        navIndex = null;
-        scrollBottom();
-      }
       window.clearTimeout(draftTimer);
       draftTimer = window.setTimeout(() => sendDraft('draftChanged'), 250);
     });
@@ -362,17 +369,15 @@ ${zoomScript(z)}
     });
     document.getElementById('send').addEventListener('click', submitPrompt);
     stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
-    document.getElementById('top').addEventListener('click', () => scrollToIndex(0));
-    document.getElementById('up').addEventListener('click', () => scrollToIndex(Math.max(0, anchorIndex - 1)));
-    document.getElementById('down').addEventListener('click', () => scrollToIndex(Math.min(session.turns.length - 1, anchorIndex + 1)));
-    document.getElementById('bottom').addEventListener('click', scrollBottom);
-    document.getElementById('prev').addEventListener('click', () => loadPrompt(-1));
-    document.getElementById('next').addEventListener('click', () => loadPrompt(1));
-    document.getElementById('closeAll').addEventListener('click', () => { expanded = new Set(); render(); });
-    document.getElementById('openAll').addEventListener('click', () => {
-      expanded = new Set(session.turns.map((turn) => turn.id));
-      render();
-      requestAnimationFrame(() => scrollToIndex(anchorIndex));
+    document.getElementById('top').addEventListener('click', () => selectBlock(0));
+    document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
+    document.getElementById('prev').addEventListener('click', () => selectBlock(anchorIndex - 1));
+    document.getElementById('next').addEventListener('click', () => selectBlock(anchorIndex + 1));
+    document.getElementById('load').addEventListener('click', loadSelectedPrompt);
+    historyBox.addEventListener('scroll', () => {
+      if (programmaticScroll || !session.turns.length) return;
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(selectTopVisibleBlock, 80);
     });
 
     function fillSelect(select, values, selected) {
@@ -400,27 +405,47 @@ ${zoomScript(z)}
       promptBox.value = '';
       draftSent = '';
       window.clearTimeout(draftTimer);
-      navIndex = null;
       // Older responses hide when a new prompt goes in; the new one shows while streaming and stays
       // open when finished until the next prompt, so the answer never vanishes the moment it lands.
       expanded = new Set();
-      scrollBottom();
+      pendingTurnCount = session.turns.length + 1;
+      selectedResponseToBottom = true;
     }
 
-    function loadPrompt(direction) {
+    function loadSelectedPrompt() {
       if (!session.turns.length) return;
-      if (navIndex === null) navIndex = direction < 0 ? session.turns.length : session.turns.length - 1;
-      navIndex = Math.max(0, Math.min(session.turns.length - 1, navIndex + direction));
-      promptBox.value = session.turns[navIndex].prompt;
-      scrollToIndex(navIndex);
+      const turn = session.turns[Math.max(0, Math.min(session.turns.length - 1, anchorIndex))];
+      if (!turn) return;
+      promptBox.value = turn.prompt + (promptBox.value ? '\\n\\n' + promptBox.value : '');
+      sendDraft('draftChanged');
       promptBox.focus();
     }
 
     // Response text is plain, except for a leading **bold** run on a line, which tool-call lines use
     // for the tool name. Built as text nodes so nothing else in the response is treated as markup.
     function fillResponse(box, text) {
+      let toolGroup = null;
+      let groupAtStart = false;
       text.split('\\n').forEach((line, index) => {
-        if (index) box.appendChild(document.createTextNode('\\n'));
+        const isTool = isToolLine(line);
+        if (isTool && !toolGroup) {
+          toolGroup = document.createElement('span');
+          toolGroup.className = 'tool-group' + (toolGroupsVisible ? '' : ' hidden');
+          box.appendChild(toolGroup);
+          groupAtStart = index === 0;
+        }
+        // A hidden group must swallow one adjacent newline or a blank line marks where it was:
+        // the separator before it, or the one after it when the group opens the response.
+        if (index) {
+          const target = isTool || (toolGroup && groupAtStart) ? toolGroup : box;
+          target.appendChild(document.createTextNode('\\n'));
+        }
+        if (!isTool) toolGroup = null;
+        appendFormattedLine(isTool ? toolGroup : box, line);
+      });
+    }
+
+    function appendFormattedLine(box, line) {
         const bold = /^\\*\\*([^*]+)\\*\\*/.exec(line);
         if (!bold) {
           box.appendChild(document.createTextNode(line));
@@ -430,20 +455,43 @@ ${zoomScript(z)}
         name.textContent = bold[1];
         box.appendChild(name);
         box.appendChild(document.createTextNode(line.slice(bold[0].length)));
-      });
+    }
+
+    function isToolLine(line) {
+      return /^\\*\\*[^*]+\\*\\*/.test(line);
     }
 
     function render() {
       const active = status && status.active;
       stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
+      anchorIndex = Math.max(0, Math.min(turns.length - 1, anchorIndex));
+      // First non-empty state after the webview opens: land on the newest block, response open.
+      if (!initializedSelection && turns.length) {
+        initializedSelection = true;
+        anchorIndex = turns.length - 1;
+        expanded.add(turns[anchorIndex].id);
+        selectedResponseToBottom = true;
+      }
+      if (pendingTurnCount && turns.length >= pendingTurnCount) {
+        anchorIndex = pendingTurnCount - 1;
+        selectedResponseToBottom = true;
+        pendingTurnCount = 0;
+      }
+      const selectedResponse = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
+      const selectedResponseTop = selectedResponse ? selectedResponse.scrollTop : 0;
+      const selectedResponseAtBottom = selectedResponse ? selectedResponse.scrollHeight - selectedResponse.scrollTop - selectedResponse.clientHeight < 18 : false;
       let newActiveTurn = false;
       if (active && status.turnId !== shownActiveTurn) {
         shownActiveTurn = status.turnId;
         expanded.add(status.turnId);
+        const activeIndex = turns.findIndex((turn) => turn.id === status.turnId);
+        if (activeIndex >= 0) {
+          selectedResponseToBottom = selectedResponseToBottom || activeIndex !== anchorIndex;
+          anchorIndex = activeIndex;
+        }
         newActiveTurn = true;
       }
-      const nearBottom = historyBox.scrollHeight - historyBox.scrollTop - historyBox.clientHeight < 18;
       historyBox.replaceChildren();
       if (!turns.length) {
         const empty = document.createElement('div');
@@ -457,15 +505,19 @@ ${zoomScript(z)}
           wrapper.dataset.index = String(index);
           wrapper.dataset.turnId = turn.id;
           const bar = document.createElement('button');
-          bar.className = 'prompt-bar';
+          bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) ? ' prompt-expanded' : '');
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
-          bar.addEventListener('click', () => {
+          bar.addEventListener('click', (event) => {
+            if (event.ctrlKey) {
+              if (expandedPrompts.has(turn.id)) expandedPrompts.delete(turn.id); else expandedPrompts.add(turn.id);
+              selectBlock(index);
+              return;
+            }
             const opening = !expanded.has(turn.id);
             if (opening) expanded.add(turn.id); else expanded.delete(turn.id);
-            render();
-            // Queue after render's own scrollBottom frame so the opened bar lands at the top.
-            if (opening) requestAnimationFrame(() => scrollToIndex(index));
+            selectedResponseToBottom = selectedResponseToBottom || index !== anchorIndex;
+            selectBlock(index);
           });
           wrapper.appendChild(bar);
           const isActiveTurn = active && status.turnId === turn.id;
@@ -474,14 +526,24 @@ ${zoomScript(z)}
             response.className = 'response' + (turn.error ? ' error' : '');
             if (turn.error) response.textContent = turn.error;
             else fillResponse(response, turn.response || '');
+            response.addEventListener('click', () => {
+              // A click that ends a text-selection drag is a copy, not a toggle.
+              const selection = window.getSelection();
+              if (selection && !selection.isCollapsed) return;
+              toolGroupsVisible = !toolGroupsVisible;
+              render();
+            });
             wrapper.appendChild(response);
           }
           historyBox.appendChild(wrapper);
         });
+        const spacer = document.createElement('div');
+        spacer.className = 'bottom-spacer';
+        historyBox.appendChild(spacer);
       }
-      // Sticky scrolling: follow the streaming response only while already at the bottom, so a
-      // reader who scrolled up to look at earlier text is not dragged back down on every chunk.
-      if (nearBottom || newActiveTurn) scrollBottom();
+      const responseToBottom = selectedResponseToBottom || selectedResponseAtBottom || newActiveTurn;
+      selectedResponseToBottom = false;
+      requestAnimationFrame(() => syncSelectedBlock(true, responseToBottom, selectedResponseTop));
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
@@ -504,16 +566,79 @@ ${zoomScript(z)}
       }
     }
 
-    function scrollToIndex(index) {
+    function selectBlock(index) {
       if (!session.turns.length) return;
-      anchorIndex = Math.max(0, Math.min(session.turns.length - 1, index));
-      const node = historyBox.querySelector('[data-index="' + anchorIndex + '"]');
-      if (node) node.scrollIntoView({ block: 'start' });
+      const nextIndex = Math.max(0, Math.min(session.turns.length - 1, index));
+      selectedResponseToBottom = selectedResponseToBottom || nextIndex !== anchorIndex;
+      // Deliberate navigation outranks a submit's queued jump to the not-yet-arrived turn.
+      pendingTurnCount = 0;
+      anchorIndex = nextIndex;
+      render();
     }
 
-    function scrollBottom() {
-      anchorIndex = Math.max(0, session.turns.length - 1);
-      requestAnimationFrame(() => { historyBox.scrollTop = historyBox.scrollHeight; });
+    function selectTopVisibleBlock() {
+      const nodes = Array.from(historyBox.querySelectorAll('.turn'));
+      if (!nodes.length) return;
+      const historyTop = historyBox.getBoundingClientRect().top;
+      let bestIndex = anchorIndex;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const node of nodes) {
+        const rect = node.getBoundingClientRect();
+        if (rect.bottom < historyTop) continue;
+        const distance = Math.abs(rect.top - historyTop);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = Number(node.dataset.index) || 0;
+        }
+      }
+      if (bestIndex !== anchorIndex) {
+        anchorIndex = bestIndex;
+        syncSelectedBlock(true, true, 0);
+      }
+    }
+
+    function syncSelectedBlock(align, responseToBottom, responseTop) {
+      const spacer = historyBox.querySelector('.bottom-spacer');
+      if (spacer) spacer.style.height = '0px';
+      // Only the selected block is clamped; scrub leftover clamps so a block deselected by
+      // manual scrolling (no re-render) returns to its natural size, and so the measurements
+      // below see this block's natural height.
+      historyBox.querySelectorAll('.turn').forEach((turn) => {
+        turn.classList.remove('selected');
+        turn.querySelectorAll('.prompt-bar, .response').forEach((part) => {
+          part.style.maxHeight = '';
+          part.style.overflowY = '';
+        });
+      });
+      const node = historyBox.querySelector('[data-index="' + anchorIndex + '"]');
+      if (!node) return;
+      node.classList.add('selected');
+      const bar = node.querySelector('.prompt-bar');
+      const response = node.querySelector('.response');
+      if (bar && bar.classList.contains('prompt-expanded') && node.offsetHeight > historyBox.clientHeight) {
+        const lineHeight = parseFloat(getComputedStyle(bar).lineHeight) || 20;
+        bar.style.maxHeight = Math.ceil(lineHeight * 3 + 4) + 'px';
+        bar.style.overflowY = 'auto';
+      }
+      if (response && node.offsetHeight > historyBox.clientHeight) {
+        const available = Math.max(48, historyBox.clientHeight - (bar ? bar.offsetHeight : 0) - 16);
+        response.style.maxHeight = available + 'px';
+        response.style.overflowY = 'auto';
+      }
+      // Pad only enough for the selected block to reach the top: pane height minus everything
+      // from the selected block down. Sizing from the block alone bloats the pane whenever a
+      // short block is selected above taller ones.
+      if (spacer) spacer.style.height = Math.max(0, historyBox.clientHeight - (spacer.offsetTop - node.offsetTop)) + 'px';
+      if (align) {
+        programmaticScroll = true;
+        window.clearTimeout(scrollTimer);
+        node.scrollIntoView({ block: 'start' });
+        window.setTimeout(() => { programmaticScroll = false; }, 80);
+      }
+      if (response) {
+        if (responseToBottom && response.scrollHeight > response.clientHeight) response.scrollTop = response.scrollHeight;
+        else response.scrollTop = responseTop || 0;
+      }
     }
 
     vscode.postMessage({ type: 'conversationReady', sessionId });
