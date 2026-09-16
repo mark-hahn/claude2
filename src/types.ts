@@ -31,6 +31,7 @@ export interface ClaudeSession {
   name: string;
   createdAt: number;
   updatedAt: number;
+  trashed: boolean;
   turns: ClaudeTurn[];
 }
 

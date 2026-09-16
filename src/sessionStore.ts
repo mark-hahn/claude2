@@ -32,6 +32,7 @@ function normalizeSession(session: Partial<ClaudeSession>): ClaudeSession {
     name: typeof session.name === "string" && session.name.trim() ? session.name : "New session",
     createdAt,
     updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : createdAt,
+    trashed: session.trashed === true,
     turns: Array.isArray(session.turns) ? session.turns.map((turn) => normalizeTurn(turn)) : [],
   };
 }
@@ -58,6 +59,7 @@ export class SessionStore {
       name: "New session",
       createdAt: now,
       updatedAt: now,
+      trashed: false,
       turns: [],
     };
     this.sessions.unshift(session);
@@ -72,6 +74,16 @@ export class SessionStore {
     }
     session.name = name.trim() || "New session";
     session.updatedAt = Date.now();
+    await this.save();
+    return session;
+  }
+
+  public async setTrashed(sessionId: string, trashed: boolean): Promise<ClaudeSession | undefined> {
+    const session = this.get(sessionId);
+    if (!session) {
+      return undefined;
+    }
+    session.trashed = trashed;
     await this.save();
     return session;
   }

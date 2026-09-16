@@ -1,7 +1,24 @@
 
-always show the current streaming response below it's prompt bar -- don't close that bar's response until the next prompt has been entered
+when hovering over a prompt card show a trash can icon in bottom right -- it should move that conversation into persistent trash storage -- add a button to the right of the $ called `Trash` that shows only sessions in the trash -- the trash button should toggle -- it should have a light-red background when trash is showing --  in each trash card show a button `Restore` in bottom right that moves that session out of trash 
+
+
+when the Plan quota over time pane is opened i get:
+`Parse Error: JS Exception
+Nothing recorded yet...`
+
+
+add a button to top footer row `Graft` that opens a management pane with the graft viz html -- it should be live like a normal browser
+
+# showing tool/mcp/subagent comm in response text
 
 ======================
+
+add `Close All` and `Open All`buttons to the right of the next button that close and open text for all bars
+
+when you click on a prompt bar and open it's response text then scroll window so the bar is at the top
+
+add a new footer row in editor pane -- move the navigation controls to that row -- put the thinking, working, finished, etc. indicator at the far left of the row
+
 
 # major change to this extension
 - a different claude ai implemented a claude-like vscode extension in this project.

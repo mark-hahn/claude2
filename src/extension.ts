@@ -79,6 +79,12 @@ class Claude2Controller implements vscode.Disposable {
       await this.openConversation(stringOf(record?.sessionId));
     } else if (type === "renameSession") {
       await this.renameSession(stringOf(record?.sessionId));
+    } else if (type === "trashSession") {
+      await this.store.setTrashed(stringOf(record?.sessionId), true);
+      this.refreshSidebar();
+    } else if (type === "restoreSession") {
+      await this.store.setTrashed(stringOf(record?.sessionId), false);
+      this.refreshSidebar();
     } else if (type === "openPane") {
       const pane = paneOf(record?.pane);
       if (pane) {

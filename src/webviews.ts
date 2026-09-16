@@ -21,11 +21,20 @@ export function sidebarHtml(webview: vscode.Webview): string {
     :root { color-scheme: light; --ink: #111; --muted: #666; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.07); }
     body { margin: 0; min-height: 100vh; background: var(--page); color: var(--ink); font: 13px/1.35 Aptos, "Segoe UI", sans-serif; }
     .shell { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; height: 100vh; padding: 10px; }
-    .top { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px; gap: 7px; flex: none; }
+    .top { display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px auto; gap: 7px; flex: none; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; min-height: 31px; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    #trash { padding: 0 10px; }
+    #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
+    #trash.active:hover { background: #f5c7c7; }
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
-    .card { width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; }
+    .card { position: relative; box-sizing: border-box; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
+    .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .card-trash { position: absolute; right: 6px; bottom: 6px; display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
+    .card:hover .card-trash { display: block; }
+    .card-trash:hover { background: #fbd9d9; }
+    .card-restore { position: absolute; right: 6px; bottom: 6px; min-height: 0; padding: 3px 8px; font-size: 12px; border-radius: 6px; }
+    .card.trashed { padding-bottom: 34px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
     .card-meta { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
     .empty { border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); padding: 14px 10px; text-align: center; }
@@ -37,17 +46,26 @@ export function sidebarHtml(webview: vscode.Webview): string {
       <button id="new" title="New Claude2 session">+</button>
       <button id="instructions" title="Instructions">Instr</button>
       <button id="quota" title="Quota">$</button>
+      <button id="trash" title="Show trashed sessions">Trash</button>
     </div>
     <div id="sessions" class="sessions"></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let sessions = [];
+    let showTrash = false;
     const list = document.getElementById('sessions');
+    const trashButton = document.getElementById('trash');
 
     document.getElementById('new').addEventListener('click', () => vscode.postMessage({ type: 'newSession' }));
     document.getElementById('instructions').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'instructions' }));
     document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
+    trashButton.addEventListener('click', () => {
+      showTrash = !showTrash;
+      trashButton.classList.toggle('active', showTrash);
+      trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions';
+      render();
+    });
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -59,16 +77,19 @@ export function sidebarHtml(webview: vscode.Webview): string {
 
     function render() {
       list.replaceChildren();
-      if (sessions.length === 0) {
+      const visible = sessions.filter((session) => (session.trashed === true) === showTrash);
+      if (visible.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = 'No sessions yet';
+        empty.textContent = showTrash ? 'Trash is empty' : 'No sessions yet';
         list.appendChild(empty);
         return;
       }
-      for (const session of sessions) {
-        const card = document.createElement('button');
-        card.className = 'card';
+      for (const session of visible) {
+        const card = document.createElement('div');
+        card.className = showTrash ? 'card trashed' : 'card';
+        card.setAttribute('role', 'button');
+        card.tabIndex = 0;
         const name = document.createElement('span');
         name.className = 'card-name';
         name.textContent = session.name || 'New session';
@@ -77,6 +98,30 @@ export function sidebarHtml(webview: vscode.Webview): string {
         const count = Array.isArray(session.turns) ? session.turns.length : 0;
         meta.textContent = count + (count === 1 ? ' prompt' : ' prompts') + ' · ' + timeLabel(session.updatedAt);
         card.append(name, meta);
+
+        if (showTrash) {
+          const restore = document.createElement('button');
+          restore.className = 'card-restore';
+          restore.textContent = 'Restore';
+          restore.title = 'Move this session out of the trash';
+          restore.addEventListener('pointerdown', (event) => event.stopPropagation());
+          restore.addEventListener('click', (event) => {
+            event.stopPropagation();
+            vscode.postMessage({ type: 'restoreSession', sessionId: session.id });
+          });
+          card.appendChild(restore);
+        } else {
+          const trash = document.createElement('button');
+          trash.className = 'card-trash';
+          trash.textContent = '\u{1F5D1}';
+          trash.title = 'Move this session to the trash';
+          trash.addEventListener('pointerdown', (event) => event.stopPropagation());
+          trash.addEventListener('click', (event) => {
+            event.stopPropagation();
+            vscode.postMessage({ type: 'trashSession', sessionId: session.id });
+          });
+          card.appendChild(trash);
+        }
 
         let timer = 0;
         let renamed = false;
@@ -131,7 +176,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     :root { color-scheme: light; --ink: #111; --muted: #62625d; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
-    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(96px, 25vh) auto; }
+    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(96px, 25vh) auto auto; }
     .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -140,7 +185,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .response.error { border-left-color: #c62828; background: #fdecec; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid #111; outline-offset: -1px; border-color: transparent; }
-    .bar { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
+    .bar { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
@@ -150,6 +195,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     .indicator.done { color: var(--done); border-color: rgba(12,107,50,0.45); background: #ecf7ef; }
     .indicator.active { color: #785b00; border-color: #d6b642; background: #fff8d8; }
+    .footer { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 6px 12px 8px; background: var(--page); }
     @media (max-width: 760px) { .bar { grid-template-columns: 1fr; } .status { white-space: normal; } }
   </style>
 </head>
@@ -161,8 +207,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
       <div class="status" id="tokens"></div>
       <div class="status" id="context"></div>
-      <div class="group"><button id="top">Top</button><button id="up">Up</button><button id="down">Down</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button></div>
+    </div>
+    <div class="footer">
       <div id="finish" class="indicator">Ready</div>
+      <div class="group"><button id="top">Top</button><button id="up">Up</button><button id="down">Down</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="closeAll">Close All</button><button id="openAll">Open All</button></div>
     </div>
   </div>
   <script nonce="${nonce}">
@@ -219,6 +267,12 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     document.getElementById('bottom').addEventListener('click', scrollBottom);
     document.getElementById('prev').addEventListener('click', () => loadPrompt(-1));
     document.getElementById('next').addEventListener('click', () => loadPrompt(1));
+    document.getElementById('closeAll').addEventListener('click', () => { expanded = new Set(); render(); });
+    document.getElementById('openAll').addEventListener('click', () => {
+      expanded = new Set(session.turns.map((turn) => turn.id));
+      render();
+      requestAnimationFrame(() => scrollToIndex(anchorIndex));
+    });
 
     function fillSelect(select, values, selected) {
       select.replaceChildren();
@@ -278,8 +332,11 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
           bar.addEventListener('click', () => {
-            if (expanded.has(turn.id)) expanded.delete(turn.id); else expanded.add(turn.id);
+            const opening = !expanded.has(turn.id);
+            if (opening) expanded.add(turn.id); else expanded.delete(turn.id);
             render();
+            // Queue after render's own scrollBottom frame so the opened bar lands at the top.
+            if (opening) requestAnimationFrame(() => scrollToIndex(index));
           });
           wrapper.appendChild(bar);
           const isActiveTurn = active && status.turnId === turn.id;
