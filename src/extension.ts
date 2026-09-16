@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
+import { spawn } from "child_process";
 import { randomUUID } from "crypto";
+import { promises as fs } from "fs";
+import * as path from "path";
 import { ClaudeCliRunner, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
@@ -274,9 +277,32 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : "Claude2 Quota";
-    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone());
+    const graftPage = pane === "graft" ? await this.exportedGraftViz() : null;
+    // The panel can close (or switch panes) while the export runs.
+    if (!this.managementPanel || this.managementPane !== pane) {
+      return;
+    }
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : "Graft";
+    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage);
     this.managementPanel.reveal(vscode.ViewColumn.One);
+  }
+
+  // `graft viz --export` packages the graph into one self-contained html page; no
+  // server or port is involved, so re-export on every open to stay current.
+  private async exportedGraftViz(): Promise<string | null> {
+    const storage = this.context.storageUri ?? this.context.globalStorageUri;
+    const dir = path.join(storage.fsPath, "graft-viz");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn("graft", ["viz", "--export", dir], { cwd: this.workspacePath(), stdio: "ignore" });
+        child.on("error", reject);
+        child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`graft viz --export exited with code ${code}`))));
+      });
+      return await fs.readFile(path.join(dir, "index.html"), "utf8");
+    } catch (error) {
+      this.channel.appendLine(`graft viz export failed: ${errorMessage(error)}`);
+      return null;
+    }
   }
 
   // The Instructions pane saves as you type, like a VS Code editor with auto save. When the file
@@ -427,7 +453,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" ? value : null;
+  return value === "instructions" || value === "quota" || value === "graft" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

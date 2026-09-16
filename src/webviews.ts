@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS } from "./types";
 
-export type ManagementPane = "instructions" | "quota";
+export type ManagementPane = "instructions" | "quota" | "graft";
 
 export interface ConversationDefaults {
   model: string;
@@ -28,6 +28,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
+    #graft { width: 52px; }
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
@@ -50,6 +51,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       <button id="new" title="New Claude2 session">+</button>
       <button id="instructions" title="Instructions">Instr</button>
       <button id="quota" title="Quota">$</button>
+      <button id="graft" title="Graft graph">Graft</button>
       <button id="trash" title="Show trashed sessions">Trash</button>
     </div>
     <div id="sessions" class="sessions"></div>
@@ -64,6 +66,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('new').addEventListener('click', () => vscode.postMessage({ type: 'newSession' }));
     document.getElementById('instructions').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'instructions' }));
     document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
+    document.getElementById('graft').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'graft' }));
     trashButton.addEventListener('click', () => {
       showTrash = !showTrash;
       trashButton.classList.toggle('active', showTrash);
@@ -403,8 +406,27 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
 </html>`;
 }
 
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string): string {
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, graftPage: string | null = null): string {
+  if (pane === "graft") {
+    return graftPage ?? graftFailedHtml();
+  }
   return pane === "instructions" ? instructionsHtml(webview) : quotaHtml(webview, timezone);
+}
+
+// The Graft pane shows the self-contained page from `graft viz --export`, run by
+// the extension at open time; this fallback appears only when that export fails.
+function graftFailedHtml(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+  <style>
+    body { margin: 0; height: 100vh; display: grid; place-items: center; background: #f9f9f7; color: #000; font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
+  </style>
+</head>
+<body><div>graft viz export failed — see the Claude2 output channel. Click Graft again to retry.</div></body>
+</html>`;
 }
 
 function instructionsHtml(webview: vscode.Webview): string {

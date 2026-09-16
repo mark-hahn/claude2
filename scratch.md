@@ -1,18 +1,18 @@
 
+cut the height of the prompt editor input box in half - remove the prompts count in the prompt card in sidebar
+
 show response scrolling in a pane below it's prompt bar
 
-
-
-when i click $ and the `Plan quota over time` pane is opened i get:
-`Parse Error: JS Exception
-Nothing recorded yet...`
-
-
-add a button to top footer row `Graft` that opens a management pane with the graft viz html -- it should be live like a normal browser
 
 # showing tool/mcp/subagent comm in response text
 
 ======================
+
+add a button to top footer row `Graft` that opens a management pane with the graft viz html -- it should be live like a normal browser
+
+when i click $ and the `Plan quota over time` pane is opened i get:
+`Parse Error: JS Exception
+Nothing recorded yet...`
 
 response scrolling should be sticky -- only scroll when at the bottom
 
