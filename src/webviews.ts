@@ -1776,18 +1776,24 @@ ${zoomScript(z)}
     }
 
     function drawSvg(period, money, width, height) {
-      const margin = { left: 40, right: 6, top: 6, bottom: 18 };
+      const yMax = money ? Math.max(1, period.limit || 1) : 100;
+      const fractions = [0, 0.5, 1];
+      const labels = fractions.map((fraction) => axisLabel(yMax * fraction, money));
+      // Axis text renders in user units at the CSS size, so the gutter has to grow with zoom
+      // and with the widest label or the labels run off the left edge of the viewBox.
+      const fontSize = 14 * zoom;
+      const labelWidth = Math.max(...labels.map((label) => label.length)) * 0.62 * fontSize;
+      const margin = { left: Math.ceil(labelWidth) + 8, right: 6, top: Math.ceil(fontSize * 0.6), bottom: Math.ceil(fontSize * 0.6) + 12 };
       const plotWidth = Math.max(1, width - margin.left - margin.right);
       const plotHeight = Math.max(1, height - margin.top - margin.bottom);
-      const yMax = money ? Math.max(1, period.limit || 1) : 100;
       const x = (time) => margin.left + ((time - period.start) / (period.end - period.start)) * plotWidth;
       const y = (value) => margin.top + (1 - Math.min(yMax, Math.max(0, value)) / yMax) * plotHeight;
       let svg = '<svg viewBox="0 0 ' + width + ' ' + height + '" role="img">';
-      for (const fraction of [0, 0.5, 1]) {
+      fractions.forEach((fraction, index) => {
         const yValue = y(yMax * fraction);
         svg += '<line x1="' + margin.left + '" x2="' + (width - margin.right) + '" y1="' + yValue + '" y2="' + yValue + '" stroke="rgba(0,0,0,0.15)" />';
-        svg += '<text x="' + (margin.left - 5) + '" y="' + (yValue + 4) + '">' + escapeHtml(axisLabel(yMax * fraction, money)) + '</text>';
-      }
+        svg += '<text x="' + (margin.left - 5) + '" y="' + (yValue + fontSize * 0.35) + '">' + escapeHtml(labels[index]) + '</text>';
+      });
       for (const time of gridTimes(period, money)) {
         const xValue = x(time);
         svg += '<line x1="' + xValue + '" x2="' + xValue + '" y1="' + margin.top + '" y2="' + (height - margin.bottom) + '" stroke="rgba(0,0,0,0.15)" />';
