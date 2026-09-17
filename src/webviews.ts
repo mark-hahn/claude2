@@ -401,11 +401,13 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     button:disabled { background: var(--wash); cursor: default; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
-    /* Fixed width so the widest status ("compacting") fits without the box resizing — a
-       growing indicator would push the prompt editor around on every phase change. */
-    #finish { width: calc(11ch + 22px); flex: none; text-align: center; overflow: hidden; text-overflow: ellipsis; }
-    .indicator.done { color: var(--done); border-color: rgba(12,107,50,0.45); background: #ecf7ef; }
-    .indicator.active { color: #785b00; border-color: #d6b642; background: #fff8d8; }
+    /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
+       changes and pushes the prompt editor around. */
+    #finish { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; }
+    /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
+    #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 400; white-space: nowrap; z-index: 5; }
+    .indicator.done { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
+    .indicator.active { color: #13341f; border-color: #8fca9f; background: #ddf6e2; }
     .footer { display: flex; gap: 8px; align-items: center; }
     #cap.armed { background: var(--yellow); border-color: #d6b642; font-weight: 700; }
     @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
@@ -422,7 +424,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
           <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
         </div>
         <div class="footer">
-          <div id="finish" class="indicator">Ready</div>
+          <div id="finish" class="indicator" data-status="Ready">R</div>
           <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button><button id="cap">Cap</button></div>
         </div>
       </div>
@@ -785,16 +787,16 @@ ${zoomScript(z)}
       document.getElementById('cost').textContent = '$' + shownCost + (shownWouldHave === shownCost ? '' : '/' + shownWouldHave);
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
-      if (active) {
-        finish.className = 'indicator active';
-        finish.textContent = status.phase || 'working';
-      } else if (latest && latest.finished) {
-        finish.className = 'indicator done';
-        finish.textContent = latest.stopped ? 'Stopped' : 'Finished';
-      } else {
-        finish.className = 'indicator';
-        finish.textContent = 'Ready';
-      }
+      // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,
+      // F or S once the turn lands, R when idle.
+      const label = active
+        ? (status.phase || 'working')
+        : latest && latest.finished
+          ? (latest.stopped ? 'stopped' : 'finished')
+          : 'ready';
+      finish.className = 'indicator' + (active ? ' active' : latest && latest.finished ? ' done' : '');
+      finish.textContent = label.charAt(0).toUpperCase();
+      finish.dataset.status = label.charAt(0).toUpperCase() + label.slice(1);
     }
 
     function inK(tokens) {
