@@ -1,11 +1,17 @@
 
-when the model or effort is changed in session then that should be persistant for every opening of the session later
 
-the results scrolling container height isn't responsive to editor size changes
 
 stack prompt blocks when room
 
+stats ...
+  graft savings
+  total $
+
 ======================
+
+the results scrolling container height isn't responsive to editor size changes
+
+when the model or effort is changed in session then that should be persistant for every opening of the session later
 
 # search input box
 - add a text input box searchBox below the 2 button rows in sidebar

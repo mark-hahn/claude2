@@ -439,6 +439,7 @@ ${zoomScript(z)}
     let pendingTurnCount = 0;
     let programmaticScroll = false;
     let scrollTimer = 0;
+    let resizeTimer = 0;
     let draftSent = '';
     let draftTimer = 0;
     let selectionSent = -1;
@@ -504,6 +505,16 @@ ${zoomScript(z)}
       if (programmaticScroll || !session.turns.length) return;
       window.clearTimeout(scrollTimer);
       scrollTimer = window.setTimeout(selectTopVisibleBlock, 80);
+    });
+    // The selected response's clamp and the bottom spacer are sized from the pane height,
+    // so a pane resize has to re-derive them or the old clamp sticks.
+    window.addEventListener('resize', () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        const response = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
+        const atBottom = response ? response.scrollHeight - response.scrollTop - response.clientHeight < 18 : false;
+        syncSelectedBlock(false, atBottom, response ? response.scrollTop : 0);
+      }, 80);
     });
 
     function fillSelect(select, values, selected) {
