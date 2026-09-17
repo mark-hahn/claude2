@@ -406,8 +406,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     #finish { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; }
     /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
     #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 400; white-space: nowrap; z-index: 5; }
-    .indicator.done { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
-    .indicator.active { color: #13341f; border-color: #8fca9f; background: #ddf6e2; }
+    .indicator.done { background: #fff; }
+    .indicator.active { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
     .footer { display: flex; gap: 8px; align-items: center; }
     #cap.armed { background: var(--yellow); border-color: #d6b642; font-weight: 700; }
     @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
