@@ -1,4 +1,10 @@
 
+alt-click
+
+stack prompt blocks when room
+
+======================
+
 which of these do our stats use: usage.input_tokens, usage.output_tokens, usage.cache_read_input_tokens, and usage.cache_creation_input_tokens
 
 change current stats:
@@ -6,16 +12,6 @@ change current stats:
 Shorten text, remove tokens, add total_cost_usd summed over conversation, duration_ms live summed over conversation: 
 `ctx 100K/256K | turns 11/50 | $1.32 | 0.3 secs`.
 note the ctx is now in K
-
-alt-click
-
-stack prompt blocks when room
-
-stats ...
-  graft savings
-  total $
-
-======================
 
 - add a button `Cap` to the right of the load button.
 - when clicked:

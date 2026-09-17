@@ -25,6 +25,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     turns: typeof turn.turns === "number" ? turn.turns : 0,
     maxTurns: typeof turn.maxTurns === "number" ? turn.maxTurns : 0,
     durationMs: typeof turn.durationMs === "number" ? turn.durationMs : 0,
+    graftSaved: typeof turn.graftSaved === "number" ? turn.graftSaved : 0,
   };
 }
 

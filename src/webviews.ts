@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
+import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "graft" | "markdown" | "cap";
 
@@ -355,6 +355,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const defaultModel = JSON.stringify(defaults.model || DEFAULT_MODEL);
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
   const contextWindow = JSON.stringify(defaults.contextWindow);
+  const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
   const maxTurns = JSON.stringify(defaults.maxTurns);
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
@@ -433,6 +434,7 @@ ${zoomScript(z)}
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
+    const compactAt = Math.max(1000, contextWindow - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
@@ -754,14 +756,22 @@ ${zoomScript(z)}
       // Context is a level, so it holds at wherever the conversation last sat. Turns that errored
       // before an API call carry no level, hence the scan back rather than reading only the latest.
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
-      document.getElementById('context').textContent = 'ctx ' + inK(used) + '/' + inK(contextWindow);
+      // Against the compaction point, not the window: the conversation is summarised there, so that
+      // is the ceiling the level is really climbing towards. Only the denominator carries the K.
+      document.getElementById('context').textContent = 'ctx ' + Math.round((used || 0) / 1000) + '/' + inK(compactAt);
       const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
       const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
       document.getElementById('turns').textContent = 'turns ' + turnsSoFar + '/' + turnLimit;
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
-      document.getElementById('cost').textContent = '$' + cost.toFixed(2);
+      const saved = turns.reduce((sum, turn) => sum + (turn.graftSaved || 0), 0) + (active ? status.graftSaved || 0 : 0);
+      // What the run would have cost had graft not held those tokens back, priced at what this
+      // conversation actually paid per token sent. A floor: tokens graft kept out of the prompt
+      // would have been re-sent on every later call too, which this does not try to model.
+      const sent = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0) + (turn.tokensOut || 0), 0);
+      const wouldHave = sent > 0 ? cost + saved * (cost / sent) : cost;
+      document.getElementById('cost').textContent = '$' + cost.toFixed(2) + '/' + wouldHave.toFixed(2);
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       if (active) {

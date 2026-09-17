@@ -399,6 +399,7 @@ class Claude2Controller implements vscode.Disposable {
       turns: 0,
       maxTurns: this.runLimits().maxTurns,
       durationMs: 0,
+      graftSaved: 0,
     };
     await this.store.appendTurn(sessionId, turn);
     this.postConversationState(sessionId);
@@ -414,6 +415,8 @@ class Claude2Controller implements vscode.Disposable {
     let streamDirty = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     let lastContext = priorContext;
+    let lastGraftSaved = 0;
+    let lastTurns = 0;
     const flushStream = (): void => {
       flushTimer = null;
       if (!streamDirty) {
@@ -450,6 +453,8 @@ class Claude2Controller implements vscode.Disposable {
         },
         onStatus: (status) => {
           lastContext = status.contextTokens || lastContext;
+          lastGraftSaved = status.graftSaved || lastGraftSaved;
+          lastTurns = status.turns || lastTurns;
           queueStream();
         },
       });
@@ -465,6 +470,7 @@ class Claude2Controller implements vscode.Disposable {
         stopReason: result.stopReason,
         turns: result.turns,
         durationMs: result.durationMs,
+        graftSaved: result.graftSaved,
       }, true);
       await this.store.flush();
     } catch (error) {
@@ -473,6 +479,8 @@ class Claude2Controller implements vscode.Disposable {
         completedAt: Date.now(),
         contextUsed: lastContext,
         durationMs: Math.max(0, Date.now() - turn.createdAt),
+        graftSaved: lastGraftSaved,
+        turns: lastTurns,
         finished: true,
         stopped: false,
       }, true);

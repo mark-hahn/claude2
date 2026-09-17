@@ -105,6 +105,7 @@ export class ClaudeCliRunner {
       maxTurns: options.limits.maxTurns,
       costUsd: null,
       contextTokens: Math.max(0, options.priorContextTokens),
+      graftSaved: 0,
       codeLines: 0,
       phase: "thinking",
       elapsedMs: 0,
@@ -158,6 +159,10 @@ export class ClaudeCliRunner {
       let costUsd: number | null = null;
       let stopReason: string | null = null;
       let durationMs = 0;
+      let graftSaved = 0;
+      // What the CLI itself counted. --max-turns is enforced against this, not against the
+      // message_start tally the gauge runs on live, and the two do not agree.
+      let reportedTurns = 0;
       let resultError: string | null = null;
       let settled = false;
       let sawTextDelta = false;
@@ -246,9 +251,10 @@ export class ClaudeCliRunner {
           contextTokens,
           costUsd,
           stopReason,
-          turns: status.turns || 1,
+          turns: reportedTurns || status.turns || 1,
           // A run killed by Stop never reports its own duration, so fall back to the wall clock.
           durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
+          graftSaved,
         };
 
         if (running.stopped) {
@@ -343,6 +349,36 @@ export class ClaudeCliRunner {
               appendToolLine(toolUseLine(block));
             }
           }
+        } else if (messageType === "user") {
+          // Tool output comes back as the user turn that carries the tool results, which is where
+          // graft reports what it reckons it saved.
+          const saved = graftSavedIn(message);
+          if (saved > 0) {
+            graftSaved += saved;
+            status.graftSaved = graftSaved;
+            emitStatus();
+          }
+        } else if (messageType === "system") {
+          // Compaction runs between API calls, so nothing else on the stream moves while it works.
+          // Without this the phase would sit on whatever it last showed for the whole pause.
+          const subtype = stringOf(message.subtype);
+          if (subtype === "status" && stringOf(message.status) === "compacting") {
+            status.phase = "compacting";
+            emitStatus();
+          } else if (subtype === "compact_boundary") {
+            // The summary replaces the conversation, so the level drops to where it now stands.
+            // post_tokens is optional; without it the gauge waits for the next message_start.
+            const meta = recordOf(message.compact_metadata);
+            const after = numberOf(meta?.post_tokens);
+            const before = numberOf(meta?.pre_tokens);
+            status.phase = "working";
+            if (typeof after === "number" && after > 0) {
+              contextTokens = after;
+              status.contextTokens = after;
+            }
+            appendToolLine(`**compacted** conversation summarised${before ? ` from ${before.toLocaleString()} tokens` : ""}`);
+            emitStatus();
+          }
         } else if (messageType === "rate_limit_event") {
           status.phase = "working";
           emitStatus();
@@ -365,6 +401,12 @@ export class ClaudeCliRunner {
           }
           costUsd = numberOf(message.total_cost_usd);
           durationMs = numberOf(message.duration_ms) ?? 0;
+          reportedTurns = numberOf(message.num_turns) ?? 0;
+          if (reportedTurns > 0) {
+            // Snap the live tally to the real count now that the run has one to give.
+            status.turns = reportedTurns;
+            emitStatus();
+          }
           stopReason = stringOf(message.stop_reason) || stringOf(message.terminal_reason);
           if (message.is_error === true) {
             resultError = readableResultError(stringOf(message.subtype), options.limits.maxTurns);
@@ -507,6 +549,30 @@ function toolUseLine(block: Record<string, unknown>): string {
     return `${TOOL_LINE_MARK}**${name}**`;
   }
   return `${TOOL_LINE_MARK}**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
+}
+
+// graft prints its own estimate of what reading the files whole would have cost into its output.
+const graftSavedPattern = /\[graft\] tokens saved ≈ ([\d,]+)/g;
+
+function graftSavedIn(message: Record<string, unknown>): number {
+  const content = recordOf(message.message)?.content;
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+  let saved = 0;
+  for (const entry of content) {
+    const block = recordOf(entry);
+    if (!block || stringOf(block.type) !== "tool_result") {
+      continue;
+    }
+    // A tool result is usually one string; some tools hand back an array of content blocks instead.
+    const raw = block.content;
+    const text = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((part) => stringOf(recordOf(part)?.text)).join("\n") : "";
+    for (const match of text.matchAll(graftSavedPattern)) {
+      saved += Number(match[1].replace(/,/g, "")) || 0;
+    }
+  }
+  return saved;
 }
 
 function usageTotals(usage: Record<string, unknown>): { prompt: number; output: number; context: number } {

@@ -1,4 +1,9 @@
 export const CLAUDE2_CONTEXT_WINDOW = 256000;
+
+// The CLI never lets the context reach the window: it holds back up to 20,000 tokens for the reply
+// and a further 13,000 of headroom, and auto-compacts the conversation at what is left. That figure,
+// not the window, is the ceiling the gauge is really counting towards.
+export const CLAUDE2_COMPACT_RESERVE = 33000;
 export const DEFAULT_MODEL = "claude-opus-5";
 export const DEFAULT_EFFORT = "high";
 
@@ -10,7 +15,7 @@ export const TOOL_LINE_MARK = "⁣";
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
 
-export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | null;
+export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | "compacting" | null;
 
 export interface ClaudeTurn {
   id: string;
@@ -32,6 +37,7 @@ export interface ClaudeTurn {
   turns: number;
   maxTurns: number;
   durationMs: number;
+  graftSaved: number;
 }
 
 export interface ClaudeSession {
@@ -55,6 +61,7 @@ export interface RunningStatus {
   maxTurns: number;
   costUsd: number | null;
   contextTokens: number;
+  graftSaved: number;
   codeLines: number;
   phase: ClaudePhase;
   elapsedMs: number;
@@ -71,6 +78,7 @@ export interface ClaudeRunResult {
   stopReason: string | null;
   turns: number;
   durationMs: number;
+  graftSaved: number;
 }
 
 export interface QuotaReadingRow {
