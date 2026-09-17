@@ -35,6 +35,8 @@ function normalizeSession(session: Partial<ClaudeSession>): ClaudeSession {
     createdAt,
     updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : createdAt,
     trashed: session.trashed === true,
+    model: typeof session.model === "string" ? session.model : "",
+    effort: typeof session.effort === "string" ? session.effort : "",
     turns: Array.isArray(session.turns) ? session.turns.map((turn) => normalizeTurn(turn)) : [],
   };
 }
@@ -70,6 +72,8 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       trashed: false,
+      model: "",
+      effort: "",
       turns: [],
     };
     this.sessions.unshift(session);
@@ -106,6 +110,18 @@ export class SessionStore {
     session.trashed = trashed;
     await this.save();
     return session;
+  }
+
+  // The pickers' current position. Deliberately does not touch updatedAt: changing a
+  // dropdown is not activity, and bumping it would reshuffle the sidebar.
+  public async setPicks(sessionId: string, model: string, effort: string): Promise<void> {
+    const session = this.get(sessionId);
+    if (!session || (session.model === model && session.effort === effort)) {
+      return;
+    }
+    session.model = model;
+    session.effort = effort;
+    await this.save();
   }
 
   public async appendTurn(sessionId: string, turn: ClaudeTurn): Promise<ClaudeTurn | undefined> {

@@ -39,6 +39,10 @@ export interface ClaudeSession {
   createdAt: number;
   updatedAt: number;
   trashed: boolean;
+  // The model/effort the session's pickers last sat on, so reopening it restores them.
+  // Empty means the session never picked and the configured default applies.
+  model: string;
+  effort: string;
   turns: ClaudeTurn[];
 }
 

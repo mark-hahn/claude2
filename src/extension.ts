@@ -207,7 +207,7 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
-      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(), this.zoomOf("conversation"));
+      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
       panel.onDidChangeViewState(() => {
         if (panel?.active) {
@@ -281,6 +281,8 @@ class Claude2Controller implements vscode.Disposable {
       }
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
+    } else if (type === "picksChanged") {
+      await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
@@ -327,9 +329,12 @@ class Claude2Controller implements vscode.Disposable {
       void vscode.window.showWarningMessage("Claude is already responding in this session.");
       return;
     }
-    const defaults = this.conversationDefaults();
+    const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model || defaults.model;
     const selectedEffort = effort || defaults.effort;
+    // Belt and braces with the picker's own change event: whatever a prompt actually ran
+    // with is what the session reopens on.
+    await this.store.setPicks(sessionId, selectedModel, selectedEffort);
     const wasFirstPrompt = session.turns.length === 0;
     this.drafts.delete(sessionId);
     const turn: ClaudeTurn = {
@@ -688,11 +693,14 @@ class Claude2Controller implements vscode.Disposable {
     await this.context.globalState.update(`zoom.${kind}`, zoomFactor(value));
   }
 
-  private conversationDefaults(): ConversationDefaults {
+  // A session that has picked a model/effort keeps it across reopens; the configured
+  // default only fills in for a session that never picked.
+  private conversationDefaults(sessionId = ""): ConversationDefaults {
     const config = vscode.workspace.getConfiguration("claude2");
+    const session = sessionId ? this.store.get(sessionId) : undefined;
     return {
-      model: config.get<string>("model", DEFAULT_MODEL),
-      effort: config.get<string>("effort", DEFAULT_EFFORT),
+      model: session?.model || config.get<string>("model", DEFAULT_MODEL),
+      effort: session?.effort || config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
       maxTurns: config.get<number>("maxTurns", 200),
     };

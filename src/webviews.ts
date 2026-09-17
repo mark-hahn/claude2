@@ -451,6 +451,10 @@ ${zoomScript(z)}
 
     fillSelect(modelSelect, models, defaultModel);
     fillSelect(effortSelect, efforts, defaultEffort);
+    // The pickers belong to the session, not the panel: every change is written back so
+    // reopening this session later comes up on the same model and effort.
+    modelSelect.addEventListener('change', sendPicks);
+    effortSelect.addEventListener('change', sendPicks);
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -511,6 +515,10 @@ ${zoomScript(z)}
         option.selected = value === selected;
         select.appendChild(option);
       }
+    }
+
+    function sendPicks() {
+      vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value });
     }
 
     function sendDraft(type) {
