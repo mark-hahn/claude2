@@ -743,7 +743,9 @@ ${zoomScript(z)}
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
       const outTokens = turns.reduce((sum, turn) => sum + (turn.tokensOut || 0), 0);
       document.getElementById('tokens').textContent = 'tokens ' + inTokens.toLocaleString() + ' in / ' + outTokens.toLocaleString() + ' out';
-      const used = active ? status.contextTokens : (latest ? latest.contextUsed || 0 : 0);
+      // Context is a level, so it holds at wherever the conversation last sat. Turns that errored
+      // before an API call carry no level, hence the scan back rather than reading only the latest.
+      const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
       document.getElementById('context').textContent = 'context ' + used.toLocaleString() + ' / ' + contextWindow.toLocaleString();
       const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
       const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);

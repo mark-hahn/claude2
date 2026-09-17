@@ -373,6 +373,9 @@ class Claude2Controller implements vscode.Disposable {
     // with is what the session reopens on.
     await this.store.setPicks(sessionId, selectedModel, selectedEffort);
     const wasFirstPrompt = session.turns.length === 0;
+    // Where the conversation already sits in the window. A turn that errored never recorded a
+    // level, so the newest turn that did is the one to carry forward.
+    const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || level, 0);
     this.drafts.delete(sessionId);
     const turn: ClaudeTurn = {
       id: randomUUID(),
@@ -385,7 +388,7 @@ class Claude2Controller implements vscode.Disposable {
       tokensIn: 0,
       tokensOut: 0,
       contextWindow: defaults.contextWindow,
-      contextUsed: 0,
+      contextUsed: priorContext,
       finished: false,
       stopped: false,
       error: null,
@@ -407,6 +410,7 @@ class Claude2Controller implements vscode.Disposable {
     let pendingDelta = "";
     let streamDirty = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastContext = priorContext;
     const flushStream = (): void => {
       flushTimer = null;
       if (!streamDirty) {
@@ -433,6 +437,7 @@ class Claude2Controller implements vscode.Disposable {
         contextWindow: defaults.contextWindow,
         workspacePath: this.workspacePath(),
         hasPriorTurns: !wasFirstPrompt,
+        priorContextTokens: priorContext,
         limits: this.runLimits(),
         onText: (text) => {
           streamedResponse += text;
@@ -440,7 +445,10 @@ class Claude2Controller implements vscode.Disposable {
           pendingDelta += text;
           queueStream();
         },
-        onStatus: queueStream,
+        onStatus: (status) => {
+          lastContext = status.contextTokens || lastContext;
+          queueStream();
+        },
       });
       this.store.patchTurn(sessionId, turn.id, {
         response: streamedResponse || result.text,
@@ -459,6 +467,7 @@ class Claude2Controller implements vscode.Disposable {
       this.store.patchTurn(sessionId, turn.id, {
         error: errorMessage(error),
         completedAt: Date.now(),
+        contextUsed: lastContext,
         finished: true,
         stopped: false,
       }, true);

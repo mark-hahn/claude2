@@ -1,6 +1,13 @@
 
-
 alt-click
+
+stack prompt blocks when room
+
+stats ...
+  graft savings
+  total $
+
+======================
 
 - add a button `Cap` to the right of the load button.
 - when clicked:
@@ -13,16 +20,6 @@ alt-click
   - for remote linux use second extension
     - put extension code in this workspace
     - create a monorepo for these 2 extensions
-
-stack prompt blocks when room
-
-stats ...
-  graft savings
-  total $
-
-move cap button in sidebar to right of graft
-
-======================
 
 move everything in the footer lines below the prompt editor to the right of that editor so the editor bottom is at the bottom of the window
 

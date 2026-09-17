@@ -25,6 +25,9 @@ interface RunPromptOptions {
   contextWindow: number;
   workspacePath: string;
   hasPriorTurns: boolean;
+  // Context is a level, not a total: a run inherits where the last one left off so the gauge
+  // never drops to zero while the first API call of the run is still in flight.
+  priorContextTokens: number;
   limits: RunLimits;
   onText: (text: string) => void;
   onStatus: (status: RunningStatus) => void;
@@ -101,7 +104,7 @@ export class ClaudeCliRunner {
       turns: 0,
       maxTurns: options.limits.maxTurns,
       costUsd: null,
-      contextTokens: 0,
+      contextTokens: Math.max(0, options.priorContextTokens),
       codeLines: 0,
       phase: "thinking",
       elapsedMs: 0,
@@ -151,7 +154,7 @@ export class ClaudeCliRunner {
       let responseText = "";
       let tokensIn = 0;
       let tokensOut = 0;
-      let contextTokens = 0;
+      let contextTokens = Math.max(0, options.priorContextTokens);
       let costUsd: number | null = null;
       let stopReason: string | null = null;
       let resultError: string | null = null;
@@ -347,9 +350,8 @@ export class ClaudeCliRunner {
             const totals = usageTotals(usage);
             tokensIn = Math.max(tokensIn, totals.input);
             tokensOut = Math.max(tokensOut, totals.output);
-            if (!contextTokens) {
-              contextTokens = totals.context;
-            }
+            // No context reading here: the result usage sums cache reads over every API call in the
+            // run, so it runs far past the window. Only a stream_event carries a real context level.
           }
           const resultText = stringOf(message.result);
           // Tool lines alone do not count as a response, so the result text still has to land after them.
