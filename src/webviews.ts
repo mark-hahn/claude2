@@ -401,6 +401,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     button:disabled { background: var(--wash); cursor: default; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
+    /* Fixed width so the widest status ("compacting") fits without the box resizing — a
+       growing indicator would push the prompt editor around on every phase change. */
+    #finish { width: calc(11ch + 22px); flex: none; text-align: center; overflow: hidden; text-overflow: ellipsis; }
     .indicator.done { color: var(--done); border-color: rgba(12,107,50,0.45); background: #ecf7ef; }
     .indicator.active { color: #785b00; border-color: #d6b642; background: #fff8d8; }
     .footer { display: flex; gap: 8px; align-items: center; }
@@ -765,13 +768,21 @@ ${zoomScript(z)}
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
-      const saved = turns.reduce((sum, turn) => sum + (turn.graftSaved || 0), 0) + (active ? status.graftSaved || 0 : 0);
-      // What the run would have cost had graft not held those tokens back, priced at what this
-      // conversation actually paid per token sent. A floor: tokens graft kept out of the prompt
-      // would have been re-sent on every later call too, which this does not try to model.
-      const sent = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0) + (turn.tokensOut || 0), 0);
-      const wouldHave = sent > 0 ? cost + saved * (cost / sent) : cost;
-      document.getElementById('cost').textContent = '$' + cost.toFixed(2) + '/' + wouldHave.toFixed(2);
+      // What the run would have cost had graft not held those tokens back. They are priced at list,
+      // not at what the conversation averaged per token: a token graft kept out was never read at
+      // all, so reading it would have been billed as fresh input rather than as a cheap cache read.
+      // A floor either way — those tokens would then have been re-sent on every later call too,
+      // which this does not try to model. Each turn pays its own model's rate.
+      let extra = turns.reduce((sum, turn) => sum + (turn.graftSaved || 0) * listRate(turn.model) / 1000000, 0);
+      if (active) {
+        extra += (status.graftSaved || 0) * listRate(latest ? latest.model : defaultModel) / 1000000;
+      }
+      const wouldHave = cost + extra;
+      // With nothing saved the two halves are the same number, which reads as a broken gauge rather
+      // than as "graft was not used", so the comparison only appears once there is one to make.
+      const shownCost = cost.toFixed(2);
+      const shownWouldHave = wouldHave.toFixed(2);
+      document.getElementById('cost').textContent = '$' + shownCost + (shownWouldHave === shownCost ? '' : '/' + shownWouldHave);
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       if (active) {
@@ -788,6 +799,25 @@ ${zoomScript(z)}
 
     function inK(tokens) {
       return Math.round((tokens || 0) / 1000) + 'K';
+    }
+
+    // List price of an input token, $ per million, by model family — the same table graft prices
+    // its own savings with. Output rates are irrelevant: what graft saves is context never read in.
+    // Ordered so the narrower pattern wins; an unrecognised model falls back to the Opus rate.
+    const LIST_USD_PER_MTOK = [
+      [/fable|mythos/, 10],
+      [/opus/, 5],
+      [/sonnet-?4-6/, 3],
+      [/sonnet/, 2],
+      [/haiku/, 1],
+    ];
+
+    function listRate(model) {
+      const name = String(model || '').toLowerCase();
+      for (const entry of LIST_USD_PER_MTOK) {
+        if (entry[0].test(name)) return entry[1];
+      }
+      return 5;
     }
 
     // m:ss, with the minutes free to run past 60 rather than rolling over into hours.
