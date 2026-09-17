@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "graft" | "markdown";
+export type ManagementPane = "instructions" | "quota" | "graft" | "markdown" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -66,10 +66,11 @@ export function sidebarHtml(webview: vscode.Webview): string {
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
         <button id="graft" title="Graft graph">Graft</button>
+        <button id="cap" title="Show the latest screen capture">Cap</button>
+        <button id="markdown" title="Show the selected response as markdown">md</button>
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
-        <button id="markdown" title="Show the selected response as markdown">md</button>
         <button id="close" title="Close every session tab but the current one">Close</button>
         <button id="trash" title="Show trashed sessions">Trash</button>
       </div>
@@ -103,6 +104,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
     document.getElementById('graft').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'graft' }); });
     document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
+    document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     trashButton.addEventListener('click', () => {
       clearSearch();
@@ -364,10 +366,16 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; --edh: calc(63px * var(--z) + 22px); }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(14px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
-    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) minmax(72px, calc((18.75vh - 3em) * 6 / 7)) auto auto; }
+    .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+    /* Prompt editor and every control sit on one bottom dock, so the editor's bottom edge is the
+       window's bottom edge; the controls stack to its right instead of below it. */
+    .dock { display: flex; align-items: stretch; gap: 10px; border-top: 1px solid var(--border); background: var(--page); padding: 8px 12px; }
+    .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
+    .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
+    .dock-controls .indicator { padding: 2px 8px; }
     .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -379,12 +387,11 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
     .bottom-spacer { flex: none; height: 0; }
-    textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
+    textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; min-height: var(--edh); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
-    .bar { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 8px 12px; background: var(--page); }
-    .bar .spacer { flex: 1; min-width: 8px; }
-    .bar .stats { display: flex; gap: 12px; align-items: center; flex: none; margin-left: auto; }
-    .bar .sep { color: var(--muted); }
+    .bar { display: flex; gap: 8px; align-items: center; }
+    .stats { display: flex; gap: 12px; align-items: center; }
+    .sep { color: var(--muted); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
@@ -394,22 +401,26 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     .indicator.done { color: var(--done); border-color: rgba(12,107,50,0.45); background: #ecf7ef; }
     .indicator.active { color: #785b00; border-color: #d6b642; background: #fff8d8; }
-    .footer { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding: 6px 12px 8px; background: var(--page); }
-    @media (max-width: 760px) { .bar { flex-wrap: wrap; } .bar .stats { flex-wrap: wrap; } .status { white-space: normal; } }
+    .footer { display: flex; gap: 8px; align-items: center; }
+    #cap.armed { background: var(--yellow); border-color: #d6b642; font-weight: 700; }
+    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
   </style>
 </head>
 <body>
   <div class="shell">
     <div id="history" class="history"><div class="empty"></div></div>
-    <textarea id="prompt" spellcheck="true"></textarea>
-    <div class="bar">
-      <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
-      <div class="spacer"></div>
-      <div class="stats"><div class="status" id="tokens"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="turns"></div></div>
-    </div>
-    <div class="footer">
-      <div id="finish" class="indicator">Ready</div>
-      <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button></div>
+    <div class="dock">
+      <textarea id="prompt" spellcheck="true"></textarea>
+      <div class="dock-controls">
+        <div class="stats"><div class="status" id="tokens"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="turns"></div></div>
+        <div class="bar">
+          <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
+        </div>
+        <div class="footer">
+          <div id="finish" class="indicator">Ready</div>
+          <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button><button id="cap">Cap</button></div>
+        </div>
+      </div>
     </div>
   </div>
   <script nonce="${nonce}">
@@ -448,6 +459,7 @@ ${zoomScript(z)}
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
+    const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
 
     fillSelect(modelSelect, models, defaultModel);
@@ -476,6 +488,9 @@ ${zoomScript(z)}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
+      } else if (message.type === 'capState') {
+        capButton.disabled = false;
+        capButton.classList.toggle('armed', !!message.armed);
       }
     });
 
@@ -501,6 +516,11 @@ ${zoomScript(z)}
     document.getElementById('prev').addEventListener('click', () => selectBlock(anchorIndex - 1));
     document.getElementById('next').addEventListener('click', () => selectBlock(anchorIndex + 1));
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
+    document.getElementById('cap').addEventListener('click', () => {
+      // Armed means a screenshot is waiting to ride with the next Send; a second click discards it.
+      capButton.disabled = true;
+      vscode.postMessage({ type: capButton.classList.contains('armed') ? 'discardCapture' : 'captureScreen', sessionId });
+    });
     historyBox.addEventListener('scroll', () => {
       if (programmaticScroll || !session.turns.length) return;
       window.clearTimeout(scrollTimer);
@@ -868,7 +888,89 @@ export function managementHtml(webview: vscode.Webview, pane: ManagementPane, ti
   if (pane === "markdown") {
     return markdownHtml(webview, zoom);
   }
+  if (pane === "cap") {
+    return capHtml(webview, zoom);
+  }
   return pane === "instructions" ? instructionsHtml(webview, zoom) : quotaHtml(webview, timezone, zoom);
+}
+
+// The Cap pane shows the most recent desktop capture. The image arrives as a data URI in the
+// loadCapture reply: the PNG lives in a temp dir outside any localResourceRoots, so a file URI
+// could not load, and this also keeps working when the capture was taken on another machine.
+function capHtml(webview: vscode.Webview, zoom: number): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
+  return `<!doctype html>
+<html lang="en" style="--z: ${z}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <style>
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
+    .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 24px; }
+    .title { display: flex; align-items: center; gap: 12px; flex: none; margin-bottom: 12px; min-width: 0; }
+    h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; flex: none; }
+    .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .frame { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  </style>
+</head>
+<body>
+  <div class="pane">
+    <div class="title"><h1>Capture</h1><span id="path" class="path"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="frame"><img id="shot" hidden><div id="empty" hidden></div></div>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${zoomScript(z)}
+    const img = document.getElementById('shot');
+    const empty = document.getElementById('empty');
+    const pathLabel = document.getElementById('path');
+    const pending = new Map();
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'reply' && pending.has(message.requestId)) {
+        pending.get(message.requestId)(message);
+        pending.delete(message.requestId);
+      } else if (message.type === 'captureChanged') {
+        void load();
+      }
+    });
+    document.getElementById('reload').addEventListener('click', () => void load());
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
+    void load();
+
+    function request(type, payload) {
+      const requestId = String(Date.now()) + Math.random();
+      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
+    }
+
+    async function load() {
+      const reply = await request('loadCapture', {});
+      const payload = reply.ok ? reply.payload : null;
+      if (payload && payload.dataUri) {
+        img.src = payload.dataUri;
+        img.hidden = false;
+        empty.hidden = true;
+        pathLabel.textContent = payload.path || '';
+      } else {
+        img.removeAttribute('src');
+        img.hidden = true;
+        empty.hidden = false;
+        empty.textContent = reply.ok ? 'No capture to show yet — click Cap in a conversation.' : 'Could not load the capture: ' + (reply.error || 'unknown error');
+        pathLabel.textContent = '';
+      }
+    }
+  </script>
+</body>
+</html>`;
 }
 
 // The Graft pane shows the self-contained page from `graft viz --export`, run by

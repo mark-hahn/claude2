@@ -125,6 +125,9 @@ export class ClaudeCliRunner {
       options.sessionId,
       "--permission-mode",
       sanitizePermissionMode(options.limits.permissionMode),
+      // Cap screenshots land in the temp dir, outside the workspace; this keeps them readable.
+      "--add-dir",
+      capTempDir(),
       "--append-system-prompt",
       claude2SystemPrompt(options.contextWindow),
     ];
@@ -404,6 +407,12 @@ export class ClaudeCliRunner {
   private snapshot(status: RunningStatus): RunningStatus {
     return { ...status, elapsedMs: Date.now() - status.startedAt };
   }
+}
+
+// Where Cap screenshots are read from: the WSL host reads them off the Windows side of the
+// mount, every other host uses its own temp dir (see capture.ts).
+function capTempDir(): string {
+  return process.platform === "linux" && fs.existsSync("/mnt/c/Windows/Temp") ? "/mnt/c/Windows/Temp" : os.tmpdir();
 }
 
 function claude2SystemPrompt(contextWindow: number): string {

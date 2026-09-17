@@ -5,6 +5,7 @@ src/**
 out/**
 node_modules/**
 graft/**
+claude2-cap/**
 .claude/**
 .mcp.json
 .ignore

@@ -1,0 +1,26 @@
+{
+  "name": "claude2-cap",
+  "displayName": "Claude2 Cap",
+  "description": "Client-side desktop screen capture service for the Claude2 extension",
+  "version": "0.0.2",
+  "publisher": "hahnca",
+  "author": "Mark Hahn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mark-hahn/claude2"
+  },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onCommand:claude2-cap.capture"
+  ],
+  "main": "./extension.js"
+}

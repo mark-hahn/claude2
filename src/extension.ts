@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import * as path from "path";
+import { captureScreen } from "./capture";
 import { ClaudeCliRunner, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
@@ -41,6 +42,11 @@ class Claude2Controller implements vscode.Disposable {
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
   private readonly selectedTurns = new Map<string, number>();
+  // Screenshot armed by the Cap button, per session: the PNG path rides along with the next
+  // prompt submitted, then the entry clears. Toggling Cap off clears it without sending.
+  private readonly pendingCaptures = new Map<string, string>();
+  // Most recent capture taken, kept after submit or discard so the Cap pane can still show it.
+  private lastCapture: string | null = null;
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
@@ -276,9 +282,15 @@ class Claude2Controller implements vscode.Disposable {
       await this.noteZoom("conversation", record?.zoom);
     } else if (type === "conversationReady") {
       this.postConversationState(sessionId);
+      this.postCapState(sessionId);
       if (this.pendingPromptFocus.delete(sessionId)) {
         void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
       }
+    } else if (type === "captureScreen") {
+      await this.captureForSession(sessionId);
+    } else if (type === "discardCapture") {
+      this.pendingCaptures.delete(sessionId);
+      this.postCapState(sessionId);
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "picksChanged") {
@@ -320,6 +332,25 @@ class Claude2Controller implements vscode.Disposable {
     void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
   }
 
+  private async captureForSession(sessionId: string): Promise<void> {
+    try {
+      const file = await captureScreen();
+      this.pendingCaptures.set(sessionId, file);
+      this.lastCapture = file;
+      if (this.managementPane === "cap") {
+        void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
+      }
+    } catch (error) {
+      this.pendingCaptures.delete(sessionId);
+      void vscode.window.showErrorMessage(`Screen capture failed: ${errorMessage(error)}`);
+    }
+    this.postCapState(sessionId);
+  }
+
+  private postCapState(sessionId: string): void {
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "capState", armed: this.pendingCaptures.has(sessionId) });
+  }
+
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
     const session = this.store.get(sessionId);
     if (!session || !prompt.trim()) {
@@ -328,6 +359,12 @@ class Claude2Controller implements vscode.Disposable {
     if (this.runner.isRunning(sessionId)) {
       void vscode.window.showWarningMessage("Claude is already responding in this session.");
       return;
+    }
+    const capturePath = this.pendingCaptures.get(sessionId);
+    if (capturePath) {
+      this.pendingCaptures.delete(sessionId);
+      this.postCapState(sessionId);
+      prompt = `${prompt}\n\n[A screenshot of the user's desktop is attached. Read the image file ${capturePath} to view it.]`;
     }
     const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model || defaults.model;
@@ -537,7 +574,7 @@ class Claude2Controller implements vscode.Disposable {
     if (!this.managementPanel || this.managementPane !== pane) {
       return;
     }
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : "Graft";
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Graft";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage, this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
   }
@@ -629,7 +666,19 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.quota.history(true));
     } else if (type === "loadSelectedResponse") {
       await this.reply(requestId, async () => this.selectedResponse());
+    } else if (type === "loadCapture") {
+      await this.reply(requestId, async () => await this.captureView());
     }
+  }
+
+  // The Cap pane's image, as a data URI: the PNG sits in a temp dir outside any root the
+  // webview may load file URIs from, and this also works when it was taken on another machine.
+  private async captureView(): Promise<{ path: string | null; dataUri: string | null }> {
+    if (!this.lastCapture) {
+      return { path: null, dataUri: null };
+    }
+    const bytes = await fs.readFile(this.lastCapture);
+    return { path: this.lastCapture, dataUri: `data:image/png;base64,${bytes.toString("base64")}` };
   }
 
   private async reply(requestId: string, work: () => Promise<unknown>): Promise<void> {
@@ -755,7 +804,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "graft" || value === "markdown" ? value : null;
+  return value === "instructions" || value === "quota" || value === "graft" || value === "markdown" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

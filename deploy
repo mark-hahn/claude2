@@ -25,6 +25,14 @@ cp "$VSIX" "$WIN_HOME/$VSIX"
 (cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$VSIX --force" 2>&1 \
   | tr -d '\r' | grep -v -e DeprecationWarning -e trace-deprecation || true)
 
+echo "== claude2-cap (client-side capture, Windows only) =="
+CAP_VERSION=$(node -p "require('./claude2-cap/package.json').version")
+CAP_VSIX=claude2-cap-$CAP_VERSION.vsix
+(cd claude2-cap && rm -f claude2-cap-*.vsix && npx vsce package >/dev/null)
+cp "claude2-cap/$CAP_VSIX" "$WIN_HOME/$CAP_VSIX"
+(cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$CAP_VSIX --force" 2>&1 \
+  | tr -d '\r' | grep -v -e DeprecationWarning -e trace-deprecation || true)
+
 echo "== $REMOTE =="
 scp -q "$VSIX" "$REMOTE:/tmp/$VSIX"
 ssh "$REMOTE" "
