@@ -2,7 +2,7 @@
   "name": "claude2-cap",
   "displayName": "Claude2 Cap",
   "description": "Client-side desktop screen capture service for the Claude2 extension",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",

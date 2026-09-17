@@ -292,7 +292,7 @@ class Claude2Controller implements vscode.Disposable {
         void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
       }
     } else if (type === "captureScreen") {
-      await this.captureForSession(sessionId);
+      await this.captureForSession(sessionId, record?.hideWindow === true);
     } else if (type === "discardCapture") {
       this.pendingCaptures.delete(sessionId);
       this.postCapState(sessionId);
@@ -349,9 +349,11 @@ class Claude2Controller implements vscode.Disposable {
     void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
   }
 
-  private async captureForSession(sessionId: string): Promise<void> {
+  // hideWindow is Ctrl-Cap: minimize this VS Code window for the length of the shot so the picture
+  // shows what it was covering. It comes back by itself, and the extension host never goes away.
+  private async captureForSession(sessionId: string, hideWindow = false): Promise<void> {
     try {
-      const file = await captureScreen();
+      const file = await captureScreen(hideWindow);
       this.pendingCaptures.set(sessionId, file);
       this.lastCapture = file;
       if (this.managementPane === "cap") {

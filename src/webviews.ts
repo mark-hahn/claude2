@@ -434,7 +434,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button><button id="cap">Cap</button></div>
+          <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — Ctrl-click hides this window for the shot">Cap</button></div>
         </div>
       </div>
     </div>
@@ -537,10 +537,15 @@ ${zoomScript(z)}
     document.getElementById('prev').addEventListener('click', () => selectBlock(anchorIndex - 1));
     document.getElementById('next').addEventListener('click', () => selectBlock(anchorIndex + 1));
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
-    document.getElementById('cap').addEventListener('click', () => {
+    document.getElementById('cap').addEventListener('click', (event) => {
       // Armed means a screenshot is waiting to ride with the next Send; a second click discards it.
       capButton.disabled = true;
-      vscode.postMessage({ type: capButton.classList.contains('armed') ? 'discardCapture' : 'captureScreen', sessionId });
+      if (capButton.classList.contains('armed')) {
+        vscode.postMessage({ type: 'discardCapture', sessionId });
+        return;
+      }
+      // Ctrl-click minimizes this VS Code window for the shot, so it shows what was behind it.
+      vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey === true });
     });
     historyBox.addEventListener('scroll', () => {
       if (programmaticScroll || !session.turns.length) return;
