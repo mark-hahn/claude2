@@ -1,7 +1,9 @@
 
-alt-click
+
 
 stack prompt blocks when room
+
+remove diag line from credits graph
 
 ======================
 

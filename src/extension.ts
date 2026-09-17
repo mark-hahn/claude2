@@ -111,6 +111,11 @@ class Claude2Controller implements vscode.Disposable {
       this.refreshSidebar();
       return;
     }
+    // Alt-click copies; it must not disturb the selection or sweep away an empty session.
+    if (type === "copyText") {
+      await this.copyToClipboard(stringOf(record?.text));
+      return;
+    }
     // A session created by "+" that never got a prompt is scratch: drop it as soon as
     // attention moves to any other sidebar control or session card. "Close" keeps the
     // current tab, so its session survives the sweep even when it is still empty.
@@ -303,6 +308,8 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "stopPrompt") {
       this.runner.stop(sessionId);
       this.postConversationState(sessionId);
+    } else if (type === "copyText") {
+      await this.copyToClipboard(stringOf(record?.text));
     } else if (type === "selectionChanged") {
       const index = record?.index;
       this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
@@ -310,6 +317,14 @@ class Claude2Controller implements vscode.Disposable {
         this.postSelectedResponse();
       }
     }
+  }
+
+  private async copyToClipboard(text: string): Promise<void> {
+    if (!text) {
+      return;
+    }
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.setStatusBarMessage("Copied to clipboard", 1500);
   }
 
   // The response box the conversation has selected, as the md pane wants it. The pane opens from

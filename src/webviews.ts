@@ -233,7 +233,11 @@ export function sidebarHtml(webview: vscode.Webview): string {
 
         let timer = 0;
         let renamed = false;
-        card.addEventListener('pointerdown', () => {
+        card.addEventListener('pointerdown', (event) => {
+          // Alt-click is a copy, so it must not arm the long-press rename.
+          if (event.altKey) {
+            return;
+          }
           // Clicking the card that is mid-rename only dismisses the editor (blur commits it);
           // it must not also open the session, and must not arm a second long press.
           renamed = editingId === session.id;
@@ -249,6 +253,11 @@ export function sidebarHtml(webview: vscode.Webview): string {
           card.addEventListener(eventName, () => window.clearTimeout(timer));
         }
         card.addEventListener('click', (event) => {
+          if (event.altKey) {
+            event.preventDefault();
+            vscode.postMessage({ type: 'copyText', text: session.name || '' });
+            return;
+          }
           if (renamed) {
             event.preventDefault();
             return;
@@ -697,6 +706,10 @@ ${zoomScript(z)}
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
           bar.addEventListener('click', (event) => {
+            if (event.altKey) {
+              vscode.postMessage({ type: 'copyText', sessionId, text: turn.prompt || '' });
+              return;
+            }
             if (event.ctrlKey) {
               if (expandedPrompts.has(turn.id)) expandedPrompts.delete(turn.id); else expandedPrompts.add(turn.id);
               selectBlock(index);
@@ -725,7 +738,13 @@ ${zoomScript(z)}
               note.textContent = turn.error;
               response.appendChild(note);
             }
-            response.addEventListener('click', () => {
+            response.addEventListener('click', (event) => {
+              if (event.altKey) {
+                // Same as the md pane: a failed turn keeps its partial text and gains the reason.
+                const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
+                vscode.postMessage({ type: 'copyText', sessionId, text: (turn.prompt || '') + '\\n\\n' + body });
+                return;
+              }
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
