@@ -1,13 +1,40 @@
 
+the results scrolling container height isn't responsive to editor size changes
+
 stack prompt blocks when room
 
-search input box
-
-show results as markdown live while streaming
+# search input box
+- add a text input box searchBox below the 2 button rows in sidebar
+  - but an X button to the right of it
+    - X should clear the searchBox
+- when text is entered and enter key is pressed then enter search mode:
+  - the searchBox background should be light-blue when in search mode
+  - show session card for each session with a search match:
+    - a search match is when the search text matches:
+      - text in the session name
+      - text in the results text of the session
+        - search both the prompts and the results
+        - when results text matches then show the number of matches in the card
+          - don't show the match count message when there is no match in a response
+            - this indicates match must be in the name
+          - the match count message should have blue text
+    - show matching sessions from trash also
+      - trash cards should sort below the non-trash cards
+  - in search mode the editor pane should show a light-blue background on every line with matching text
+- there are several ways to exit search mode:
+  - when searchBox is cleared with X button 
+  - when searchBox is cleared by manually editing and return key
+  - when any button in sidebar is used
+  - after exiting search mode everything in UI should return to normal
+  - clicking on a session card should not clear search mode
+    - session editors should open as normal
+    - you need to be able to see highlighted lines in responses
 
 results scrolling box shrinks to short height
 
 ======================
+
+show results as markdown live while streaming
 
 session card stays highlighted when no editor selected
 

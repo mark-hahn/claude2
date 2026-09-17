@@ -35,6 +35,11 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
+    .search-row { display: flex; gap: 7px; }
+    #searchBox { flex: 1; min-width: 0; box-sizing: border-box; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+    #searchBox::placeholder { color: var(--ink); }
+    #searchBox.searching { background: #cfe8ff; }
+    #searchClear { width: 25px; }
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
     .card { position: relative; box-sizing: border-box; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
     .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
@@ -50,6 +55,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
     .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
+    .card-hits { display: block; color: #0b5ed7; font-size: 14px; margin-top: 3px; }
     .empty { border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); padding: 14px 10px; text-align: center; }
   </style>
 </head>
@@ -67,6 +73,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
         <button id="close" title="Close every session tab but the current one">Close</button>
         <button id="trash" title="Show trashed sessions">Trash</button>
       </div>
+      <div class="search-row">
+        <input id="searchBox" type="text" placeholder="Search" spellcheck="false">
+        <button id="searchClear" title="Clear search">&#x2715;</button>
+      </div>
     </div>
     <div id="sessions" class="sessions"></div>
   </div>
@@ -82,20 +92,51 @@ export function sidebarHtml(webview: vscode.Webview): string {
     let pendingRender = false;
     const list = document.getElementById('sessions');
     const trashButton = document.getElementById('trash');
+    const searchBox = document.getElementById('searchBox');
+    // Search mode is on while this is non-empty. Enter in the box starts it; the X, an
+    // empty Enter, or any top button ends it. Card clicks leave it alone on purpose, so
+    // the opened editors can show their highlighted lines.
+    let searchText = '';
 
-    document.getElementById('new').addEventListener('click', () => vscode.postMessage({ type: 'newSession' }));
-    document.getElementById('instructions').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'instructions' }));
-    document.getElementById('quota').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'quota' }));
-    document.getElementById('graft').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'graft' }));
-    document.getElementById('markdown').addEventListener('click', () => vscode.postMessage({ type: 'openPane', pane: 'markdown' }));
-    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeOtherSessions' }));
+    document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
+    document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
+    document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
+    document.getElementById('graft').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'graft' }); });
+    document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
+    document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     trashButton.addEventListener('click', () => {
+      clearSearch();
       vscode.postMessage({ type: 'discardEmpty' });
       showTrash = !showTrash;
       trashButton.classList.toggle('active', showTrash);
       trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions';
       render();
     });
+    searchBox.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        setSearch(searchBox.value.trim());
+      }
+    });
+    document.getElementById('searchClear').addEventListener('click', () => {
+      searchBox.value = '';
+      if (searchText) setSearch('');
+    });
+
+    // The extension mirrors the search into every conversation pane, so it hears
+    // about every change here, including the empty text that ends search mode.
+    function setSearch(text) {
+      searchText = text;
+      searchBox.classList.toggle('searching', searchText !== '');
+      vscode.postMessage({ type: 'searchChanged', text: searchText });
+      render();
+    }
+
+    function clearSearch() {
+      if (!searchText) return;
+      searchBox.value = '';
+      setSearch('');
+    }
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -113,17 +154,32 @@ export function sidebarHtml(webview: vscode.Webview): string {
     function render() {
       list.replaceChildren();
       let selectedCard = null;
-      const visible = sessions.filter((session) => (session.trashed === true) === showTrash);
+      let visible;
+      const counts = new Map();
+      if (searchText) {
+        // Every session competes, trash included; a name-only match carries a zero count.
+        visible = sessions.filter((session) => {
+          const count = matchCount(session);
+          if (!count && !(session.name || '').toLowerCase().includes(searchText.toLowerCase())) return false;
+          counts.set(session.id, count);
+          return true;
+        });
+        // Stable sort: trashed cards sink below active ones, each group keeping its recency order.
+        visible.sort((left, right) => (left.trashed === true ? 1 : 0) - (right.trashed === true ? 1 : 0));
+      } else {
+        visible = sessions.filter((session) => (session.trashed === true) === showTrash);
+      }
       if (visible.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = showTrash ? 'Trash is empty' : 'No sessions yet';
+        empty.textContent = searchText ? 'No matches' : (showTrash ? 'Trash is empty' : 'No sessions yet');
         list.appendChild(empty);
         return;
       }
       for (const session of visible) {
+        const trashed = searchText ? session.trashed === true : showTrash;
         const card = document.createElement('div');
-        card.className = showTrash ? 'card trashed' : 'card';
+        card.className = trashed ? 'card trashed' : 'card';
         if (session.id === selectedId) {
           card.classList.add('selected');
           selectedCard = card;
@@ -137,6 +193,13 @@ export function sidebarHtml(webview: vscode.Webview): string {
         meta.className = 'card-meta';
         meta.textContent = timeLabel(session.updatedAt);
         card.append(name, meta);
+        const hitCount = counts.get(session.id) || 0;
+        if (hitCount > 0) {
+          const hits = document.createElement('span');
+          hits.className = 'card-hits';
+          hits.textContent = hitCount + (hitCount === 1 ? ' match' : ' matches');
+          card.appendChild(hits);
+        }
 
         const actions = document.createElement('div');
         actions.className = 'card-actions';
@@ -145,13 +208,13 @@ export function sidebarHtml(webview: vscode.Webview): string {
         trash.className = 'card-trash';
         trash.textContent = '\u{1F5D1}';
         // Same icon, two meanings: one hop to the trash, then gone for good.
-        trash.title = showTrash ? 'Delete this session permanently' : 'Move this session to the trash';
+        trash.title = trashed ? 'Delete this session permanently' : 'Move this session to the trash';
         trash.addEventListener('pointerdown', (event) => event.stopPropagation());
         trash.addEventListener('click', (event) => {
           event.stopPropagation();
-          vscode.postMessage({ type: showTrash ? 'deleteSession' : 'trashSession', sessionId: session.id });
+          vscode.postMessage({ type: trashed ? 'deleteSession' : 'trashSession', sessionId: session.id });
         });
-        if (showTrash) {
+        if (trashed) {
           const restore = document.createElement('button');
           restore.className = 'card-restore';
           restore.textContent = 'Restore';
@@ -250,6 +313,31 @@ export function sidebarHtml(webview: vscode.Webview): string {
       return new Date(ms).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
+    // Occurrences of the search text across the session's prompts and responses,
+    // case-insensitive. The name is deliberately not counted: a name-only match
+    // shows the card with no tally.
+    function matchCount(session) {
+      const needle = searchText.toLowerCase();
+      const turns = Array.isArray(session.turns) ? session.turns : [];
+      let count = 0;
+      for (const turn of turns) {
+        count += occurrences(turn.prompt, needle) + occurrences(turn.response, needle);
+      }
+      return count;
+    }
+
+    function occurrences(text, needle) {
+      if (!text || !needle) return 0;
+      const lower = String(text).toLowerCase();
+      let count = 0;
+      let index = lower.indexOf(needle);
+      while (index !== -1) {
+        count += 1;
+        index = lower.indexOf(needle, index + needle.length);
+      }
+      return count;
+    }
+
     vscode.postMessage({ type: 'ready' });
   </script>
 </body>
@@ -288,6 +376,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; background: #fdecec; }
+    .response .search-line { background: #cfe8ff; }
+    .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
     .bottom-spacer { flex: none; height: 0; }
     textarea { resize: none; width: calc(100% - 24px); margin: 8px 12px; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
@@ -335,6 +425,8 @@ ${zoomScript(z)}
     const TOOL_LINE_MARK = ${toolLineMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
+    // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
+    let searchText = '';
     let expanded = new Set();
     let expandedPrompts = new Set();
     let toolGroupsVisible = true;
@@ -369,10 +461,14 @@ ${zoomScript(z)}
           promptBox.value = message.draft;
           draftSent = message.draft;
         }
+        if (typeof message.search === 'string') searchText = message.search;
         document.title = session.name || 'Claude2';
         render();
       } else if (message.type === 'turnDelta') {
         applyTurnDelta(message);
+      } else if (message.type === 'searchState') {
+        searchText = typeof message.text === 'string' ? message.text : '';
+        render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
       }
@@ -472,15 +568,27 @@ ${zoomScript(z)}
 
     function appendFormattedLine(box, line) {
         if (isToolLine(line)) line = line.slice(TOOL_LINE_MARK.length);
+        // Search mode: a line holding the search text builds inside a washed span,
+        // so the light blue covers exactly that line, wrapped continuations included.
+        let target = box;
+        if (matchesSearch(line)) {
+          target = document.createElement('span');
+          target.className = 'search-line';
+          box.appendChild(target);
+        }
         const bold = /^\\*\\*([^*]+)\\*\\*/.exec(line);
         if (!bold) {
-          box.appendChild(document.createTextNode(line));
+          target.appendChild(document.createTextNode(line));
           return;
         }
         const name = document.createElement('b');
         name.textContent = bold[1];
-        box.appendChild(name);
-        box.appendChild(document.createTextNode(line.slice(bold[0].length)));
+        target.appendChild(name);
+        target.appendChild(document.createTextNode(line.slice(bold[0].length)));
+    }
+
+    function matchesSearch(text) {
+      return searchText !== '' && (text || '').toLowerCase().includes(searchText.toLowerCase());
     }
 
     // Tool lines carry an invisible marker from the runner. Bold alone is not the tell: the model
@@ -534,6 +642,7 @@ ${zoomScript(z)}
           wrapper.dataset.turnId = turn.id;
           const bar = document.createElement('button');
           bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) ? ' prompt-expanded' : '');
+          if (matchesSearch(turn.prompt)) bar.classList.add('search-hit');
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
           bar.addEventListener('click', (event) => {

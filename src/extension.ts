@@ -47,6 +47,8 @@ class Claude2Controller implements vscode.Disposable {
   // The conversation a management button toggles back to; the panels themselves are all
   // inactive while a management pane is up front, so remember the last one focused.
   private lastConversationId = "";
+  // Sidebar search text; non-empty means search mode, and every conversation pane tints matching lines.
+  private searchText = "";
   private instructionsWatcher: vscode.FileSystemWatcher | null = null;
 
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
@@ -125,6 +127,8 @@ class Claude2Controller implements vscode.Disposable {
       this.refreshSidebar();
     } else if (type === "deleteSession") {
       await this.deleteSession(stringOf(record?.sessionId));
+    } else if (type === "searchChanged") {
+      this.setSearch(stringOf(record?.text));
     } else if (type === "openPane") {
       const pane = paneOf(record?.pane);
       if (pane) {
@@ -635,6 +639,16 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
+  private setSearch(text: string): void {
+    if (text === this.searchText) {
+      return;
+    }
+    this.searchText = text;
+    for (const panel of this.conversationPanels.values()) {
+      void panel.webview.postMessage({ type: "searchState", text });
+    }
+  }
+
   private postConversationState(sessionId: string): void {
     const session = this.store.get(sessionId);
     const panel = this.conversationPanels.get(sessionId);
@@ -642,7 +656,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "" });
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText });
     if (sessionId === this.lastConversationId) {
       this.postSelectedResponse();
     }
