@@ -322,7 +322,9 @@ class Claude2Controller implements vscode.Disposable {
     }
     const index = Math.max(0, Math.min(session.turns.length - 1, this.selectedTurns.get(session.id) ?? session.turns.length - 1));
     const turn = session.turns[index];
-    return { turnId: turn.id, prompt: turn.prompt, text: turn.error ?? turn.response };
+    // Same as the conversation pane: a failed turn keeps its partial text and gains the reason.
+    const text = turn.error ? `${turn.response}${turn.response ? "\n\n" : ""}${turn.error}` : turn.response;
+    return { turnId: turn.id, prompt: turn.prompt, text };
   }
 
   private postSelectedResponse(): void {
@@ -396,6 +398,7 @@ class Claude2Controller implements vscode.Disposable {
       stopReason: null,
       turns: 0,
       maxTurns: this.runLimits().maxTurns,
+      durationMs: 0,
     };
     await this.store.appendTurn(sessionId, turn);
     this.postConversationState(sessionId);
@@ -461,6 +464,7 @@ class Claude2Controller implements vscode.Disposable {
         costUsd: result.costUsd,
         stopReason: result.stopReason,
         turns: result.turns,
+        durationMs: result.durationMs,
       }, true);
       await this.store.flush();
     } catch (error) {
@@ -468,6 +472,7 @@ class Claude2Controller implements vscode.Disposable {
         error: errorMessage(error),
         completedAt: Date.now(),
         contextUsed: lastContext,
+        durationMs: Math.max(0, Date.now() - turn.createdAt),
         finished: true,
         stopped: false,
       }, true);
@@ -760,14 +765,14 @@ class Claude2Controller implements vscode.Disposable {
       model: session?.model || config.get<string>("model", DEFAULT_MODEL),
       effort: session?.effort || config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
-      maxTurns: config.get<number>("maxTurns", 200),
+      maxTurns: config.get<number>("maxTurns", 50),
     };
   }
 
   private runLimits(): RunLimits {
     const config = vscode.workspace.getConfiguration("claude2");
     return {
-      maxTurns: config.get<number>("maxTurns", 200),
+      maxTurns: config.get<number>("maxTurns", 50),
       maxBudgetUsd: config.get<number>("maxBudgetUsd", 0),
       permissionMode: config.get<string>("permissionMode", "auto"),
     };

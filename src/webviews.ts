@@ -383,7 +383,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
-    .response.error { border-left-color: #c62828; background: #fdecec; }
+    .response.error { border-left-color: #c62828; }
+    .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
     .bottom-spacer { flex: none; height: 0; }
@@ -412,7 +413,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     <div class="dock">
       <textarea id="prompt" spellcheck="true"></textarea>
       <div class="dock-controls">
-        <div class="stats"><div class="status" id="tokens"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="turns"></div></div>
+        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
           <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
         </div>
@@ -436,6 +437,9 @@ ${zoomScript(z)}
     const TOOL_LINE_MARK = ${toolLineMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
+    // When the last status arrived, so the elapsed time it carries can be run forward locally
+    // between messages instead of sitting still through a long tool call.
+    let statusAt = 0;
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expanded = new Set();
@@ -474,6 +478,7 @@ ${zoomScript(z)}
       if (message.type === 'sessionState') {
         session = message.session || session;
         status = message.status || null;
+        statusAt = Date.now();
         if (typeof message.draft === 'string' && message.draft && !promptBox.value) {
           promptBox.value = message.draft;
           draftSent = message.draft;
@@ -704,8 +709,15 @@ ${zoomScript(z)}
           if (expanded.has(turn.id) || isActiveTurn) {
             const response = document.createElement('div');
             response.className = 'response' + (turn.error ? ' error' : '');
-            if (turn.error) response.textContent = turn.error;
-            else fillResponse(response, turn.response || '', toolGroupsVisible || isActiveTurn);
+            // A run that failed part way still wrote everything up to that point, so the text stays
+            // and the reason goes underneath it rather than in its place.
+            fillResponse(response, turn.response || '', toolGroupsVisible || isActiveTurn);
+            if (turn.error) {
+              const note = document.createElement('div');
+              note.className = 'error-note';
+              note.textContent = turn.error;
+              response.appendChild(note);
+            }
             response.addEventListener('click', () => {
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
@@ -739,17 +751,19 @@ ${zoomScript(z)}
       const active = status && status.active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
       const latest = turns[turns.length - 1];
-      // Totals for the whole conversation, not just the latest prompt.
-      const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
-      const outTokens = turns.reduce((sum, turn) => sum + (turn.tokensOut || 0), 0);
-      document.getElementById('tokens').textContent = 'tokens ' + inTokens.toLocaleString() + ' in / ' + outTokens.toLocaleString() + ' out';
       // Context is a level, so it holds at wherever the conversation last sat. Turns that errored
       // before an API call carry no level, hence the scan back rather than reading only the latest.
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
-      document.getElementById('context').textContent = 'context ' + used.toLocaleString() + ' / ' + contextWindow.toLocaleString();
+      document.getElementById('context').textContent = 'ctx ' + inK(used) + '/' + inK(contextWindow);
       const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
       const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
       document.getElementById('turns').textContent = 'turns ' + turnsSoFar + '/' + turnLimit;
+      // Cost and time are flows, so every turn of the conversation adds in. The running turn has
+      // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
+      const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
+      document.getElementById('cost').textContent = '$' + cost.toFixed(2);
+      const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
+      document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       if (active) {
         finish.className = 'indicator active';
         finish.textContent = status.phase || 'working';
@@ -761,6 +775,27 @@ ${zoomScript(z)}
         finish.textContent = 'Ready';
       }
     }
+
+    function inK(tokens) {
+      return Math.round((tokens || 0) / 1000) + 'K';
+    }
+
+    // m:ss, with the minutes free to run past 60 rather than rolling over into hours.
+    function shortTime(ms) {
+      const total = Math.max(0, Math.round((ms || 0) / 1000));
+      return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+    }
+
+    // The running turn's elapsed time, run forward from the last status so it still counts up
+    // while a long tool call keeps the stream quiet.
+    function liveElapsed() {
+      return (status.elapsedMs || 0) + Math.max(0, Date.now() - statusAt);
+    }
+
+    // Nothing arrives from the extension between API calls, so the clock ticks on its own.
+    window.setInterval(() => {
+      if (status && status.active) renderStatus();
+    }, 250);
 
     // A streaming delta refills only the one growing response box. The full render, with its
     // whole-history rebuild, is kept for structure: the first delta of a run (which anchors and
@@ -774,6 +809,7 @@ ${zoomScript(z)}
         return;
       }
       status = message.status || status;
+      statusAt = Date.now();
       if (message.delta) turn.response = (turn.response || '') + message.delta;
       const node = historyBox.querySelector('[data-turn-id="' + message.turnId + '"]');
       const response = node ? node.querySelector('.response') : null;

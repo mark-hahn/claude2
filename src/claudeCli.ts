@@ -157,6 +157,7 @@ export class ClaudeCliRunner {
       let contextTokens = Math.max(0, options.priorContextTokens);
       let costUsd: number | null = null;
       let stopReason: string | null = null;
+      let durationMs = 0;
       let resultError: string | null = null;
       let settled = false;
       let sawTextDelta = false;
@@ -246,6 +247,8 @@ export class ClaudeCliRunner {
           costUsd,
           stopReason,
           turns: status.turns || 1,
+          // A run killed by Stop never reports its own duration, so fall back to the wall clock.
+          durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
         };
 
         if (running.stopped) {
@@ -348,7 +351,7 @@ export class ClaudeCliRunner {
           const usage = recordOf(message.usage);
           if (usage) {
             const totals = usageTotals(usage);
-            tokensIn = Math.max(tokensIn, totals.input);
+            tokensIn = Math.max(tokensIn, totals.prompt);
             tokensOut = Math.max(tokensOut, totals.output);
             // No context reading here: the result usage sums cache reads over every API call in the
             // run, so it runs far past the window. Only a stream_event carries a real context level.
@@ -361,9 +364,10 @@ export class ClaudeCliRunner {
             options.onText(resultText);
           }
           costUsd = numberOf(message.total_cost_usd);
+          durationMs = numberOf(message.duration_ms) ?? 0;
           stopReason = stringOf(message.stop_reason) || stringOf(message.terminal_reason);
           if (message.is_error === true) {
-            resultError = stringOf(message.subtype) || "Claude returned an error.";
+            resultError = readableResultError(stringOf(message.subtype), options.limits.maxTurns);
           }
         }
       };
@@ -439,6 +443,21 @@ function childEnv(autoCompactWindow: number | null = null): NodeJS.ProcessEnv {
   return env;
 }
 
+// A run that hit a limit comes back as a bare subtype like "error_max_turns". Both panes show this
+// string as it stands, so it becomes a sentence here rather than being decoded in each of them.
+function readableResultError(subtype: string, maxTurns: number): string {
+  if (subtype === "error_max_turns") {
+    return `Stopped at the turn limit of ${maxTurns}. The response above is unfinished — send another prompt to carry on, or raise claude2.maxTurns.`;
+  }
+  if (subtype === "error_during_execution") {
+    return "The Claude CLI stopped part way through this response.";
+  }
+  if (subtype.startsWith("error_")) {
+    return `Claude stopped: ${subtype.slice(6).replace(/_/g, " ")}.`;
+  }
+  return subtype || "Claude returned an error.";
+}
+
 function sanitizePermissionMode(mode: string): string {
   return permissionModes.includes(mode) ? mode : "auto";
 }
@@ -490,12 +509,15 @@ function toolUseLine(block: Record<string, unknown>): string {
   return `${TOOL_LINE_MARK}**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
-function usageTotals(usage: Record<string, unknown>): { input: number; output: number; context: number } {
+function usageTotals(usage: Record<string, unknown>): { prompt: number; output: number; context: number } {
   const input = numberOf(usage.input_tokens) ?? 0;
   const output = numberOf(usage.output_tokens) ?? 0;
   const cacheRead = numberOf(usage.cache_read_input_tokens) ?? 0;
   const cacheCreate = numberOf(usage.cache_creation_input_tokens) ?? 0;
-  return { input, output, context: input + output + cacheRead + cacheCreate };
+  // On a resumed session nearly all input arrives as cache reads, so the prompt total has to count
+  // them: input_tokens on its own is only the uncached remainder and reads as a handful of tokens.
+  const prompt = input + cacheRead + cacheCreate;
+  return { prompt, output, context: prompt + output };
 }
 
 function countCodeLines(text: string): number {

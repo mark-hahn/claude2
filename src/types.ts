@@ -31,6 +31,7 @@ export interface ClaudeTurn {
   stopReason: string | null;
   turns: number;
   maxTurns: number;
+  durationMs: number;
 }
 
 export interface ClaudeSession {
@@ -69,6 +70,7 @@ export interface ClaudeRunResult {
   costUsd: number | null;
   stopReason: string | null;
   turns: number;
+  durationMs: number;
 }
 
 export interface QuotaReadingRow {
