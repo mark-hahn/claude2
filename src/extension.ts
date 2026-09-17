@@ -288,22 +288,30 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "selectionChanged") {
       const index = record?.index;
       this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
-      if (this.managementPane === "markdown" && sessionId === this.lastConversationId) {
-        void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
+      if (sessionId === this.lastConversationId) {
+        this.postSelectedResponse();
       }
     }
   }
 
   // The response box the conversation has selected, as the md pane wants it. The pane opens from
-  // the sidebar, so the conversation it reads from is the last one focused.
-  private selectedResponse(): { prompt: string; text: string } | null {
+  // the sidebar, so the conversation it reads from is the last one focused. The turn id rides
+  // along so the pane can tell a growing response apart from a different one and keep its scroll.
+  private selectedResponse(): { turnId: string; prompt: string; text: string } | null {
     const session = this.store.get(this.lastConversationId);
     if (!session || !session.turns.length) {
       return null;
     }
     const index = Math.max(0, Math.min(session.turns.length - 1, this.selectedTurns.get(session.id) ?? session.turns.length - 1));
     const turn = session.turns[index];
-    return { prompt: turn.prompt, text: turn.error ?? turn.response };
+    return { turnId: turn.id, prompt: turn.prompt, text: turn.error ?? turn.response };
+  }
+
+  private postSelectedResponse(): void {
+    if (this.managementPane !== "markdown") {
+      return;
+    }
+    void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
   }
 
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
@@ -635,13 +643,20 @@ class Claude2Controller implements vscode.Disposable {
     }
     panel.title = session.name;
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "" });
+    if (sessionId === this.lastConversationId) {
+      this.postSelectedResponse();
+    }
     this.refreshSidebar();
   }
 
   // Streaming update: only the new text and the run status cross to the webview, and the
-  // sidebar (whose cards show nothing live) is left alone until the run ends.
+  // sidebar (whose cards show nothing live) is left alone until the run ends. The md pane
+  // rides the same throttle so it renders the response as markdown while it grows.
   private postTurnDelta(sessionId: string, turnId: string, delta: string): void {
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "turnDelta", turnId, delta, status: this.runner.status(sessionId) });
+    if (sessionId === this.lastConversationId) {
+      this.postSelectedResponse();
+    }
   }
 
   private refreshSidebar(): void {

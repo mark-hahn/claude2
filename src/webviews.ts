@@ -991,6 +991,8 @@ ${zoomScript(z)}
     const docBox = document.getElementById('doc');
     const promptLabel = document.getElementById('prompt');
     const pending = new Map();
+    let shownTurnId = null;
+    let shownText = null;
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -1009,15 +1011,30 @@ ${zoomScript(z)}
       return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
     }
 
+    // Called on every selection move and on every streaming delta, so the same text arriving twice
+    // must not repaint: a rebuilt doc drops the reader's place. A response growing under the same
+    // turn keeps its scroll (sticking to the tail if it was already there); a different turn starts
+    // at the top.
     function show(payload) {
       promptLabel.textContent = payload && payload.prompt ? payload.prompt.split('\\n')[0] : '';
       if (!payload) {
+        if (shownTurnId === null && shownText === null) return;
+        shownTurnId = null;
+        shownText = null;
         docBox.innerHTML = '<p class="empty">No response selected.</p>';
         return;
       }
       const text = payload.text || '';
+      const sameTurn = payload.turnId === shownTurnId;
+      if (sameTurn && text === shownText) return;
+      const atBottom = docBox.scrollHeight - docBox.scrollTop - docBox.clientHeight < 18;
+      const savedTop = docBox.scrollTop;
+      shownTurnId = payload.turnId;
+      shownText = text;
       docBox.innerHTML = text.trim() ? renderMarkdown(text) : '<p class="empty">The selected response is empty.</p>';
-      docBox.scrollTop = 0;
+      if (!sameTurn) docBox.scrollTop = 0;
+      else if (atBottom) docBox.scrollTop = docBox.scrollHeight;
+      else docBox.scrollTop = savedTop;
     }
 
     function escapeHtml(text) {

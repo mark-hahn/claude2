@@ -3,13 +3,13 @@ stack prompt blocks when room
 
 search input box
 
-session card stays highlighted when no editor selected
-
 show results as markdown live while streaming
 
 results scrolling box shrinks to short height
 
 ======================
+
+session card stays highlighted when no editor selected
 
 i might be wrong but generating the results seems slower than in the claude extension
 
