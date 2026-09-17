@@ -1,6 +1,11 @@
 export const CLAUDE2_CONTEXT_WINDOW = 256000;
 export const DEFAULT_MODEL = "claude-opus-5";
-export const DEFAULT_EFFORT = "xhigh";
+export const DEFAULT_EFFORT = "high";
+
+// U+2063 INVISIBLE SEPARATOR, prefixed to every tool-call line in a response. It is what the
+// conversation view hides on: bold alone is not the tell, since the model opens its own prose with
+// **bold** runs too. Zero width, so it shows as nothing wherever a response is read as plain text.
+export const TOOL_LINE_MARK = "⁣";
 
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];

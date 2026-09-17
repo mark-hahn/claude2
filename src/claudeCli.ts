@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { EFFORT_OPTIONS, MODEL_OPTIONS, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
+import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -452,7 +452,7 @@ function sanitizeModel(model: string): string {
 }
 
 function sanitizeEffort(effort: string): string {
-  return EFFORT_OPTIONS.includes(effort) ? effort : "xhigh";
+  return EFFORT_OPTIONS.includes(effort) ? effort : DEFAULT_EFFORT;
 }
 
 function phaseForBlock(blockType: string): ClaudePhase {
@@ -474,9 +474,9 @@ function toolUseLine(block: Record<string, unknown>): string {
   const detail = input ? detailKeys.map((key) => stringOf(input[key])).find((value) => value.trim()) ?? "" : "";
   const oneLine = detail.replace(/\s+/g, " ").trim();
   if (!oneLine) {
-    return `**${name}**`;
+    return `${TOOL_LINE_MARK}**${name}**`;
   }
-  return `**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
+  return `${TOOL_LINE_MARK}**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
 function usageTotals(usage: Record<string, unknown>): { input: number; output: number; context: number } {

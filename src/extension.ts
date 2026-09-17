@@ -81,6 +81,11 @@ class Claude2Controller implements vscode.Disposable {
     return this.store.all();
   }
 
+  // The session whose editor is up front; the sidebar tints that card.
+  public selectedSessionId(): string {
+    return this.lastConversationId;
+  }
+
   public async handleSidebarMessage(message: unknown): Promise<void> {
     const record = recordOf(message);
     const type = stringOf(record?.type);
@@ -193,6 +198,7 @@ class Claude2Controller implements vscode.Disposable {
       panel.onDidChangeViewState(() => {
         if (panel?.active) {
           this.lastConversationId = sessionId;
+          this.refreshSidebar();
         }
       });
       panel.onDidDispose(() => {
@@ -201,6 +207,7 @@ class Claude2Controller implements vscode.Disposable {
         if (this.lastConversationId === sessionId) {
           this.lastConversationId = "";
         }
+        this.refreshSidebar();
       });
       this.conversationPanels.set(sessionId, panel);
     }
@@ -654,7 +661,11 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
   }
 
   public refresh(): void {
-    void this.view?.webview.postMessage({ type: "sessions", sessions: this.controller.sessions() });
+    void this.view?.webview.postMessage({
+      type: "sessions",
+      sessions: this.controller.sessions(),
+      selectedId: this.controller.selectedSessionId(),
+    });
   }
 }
 

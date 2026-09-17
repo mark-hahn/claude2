@@ -1,11 +1,23 @@
 
-highlight session card for currently visible editor pane
+session card stays selected when no editor selected
+
+
+i might be wrong but generating the results seems slower than in the claude extension
+
+show results as markdown live while streaming
+
+when an editor pane is focused move the matching selected session card into view
+
+scrolling is not sticky in results scrolling box
+
+results scrolling box shrinks to short height
+
+======================
+
+highlight session card with light-yellow background for currently selected session editor
 
 add a button `md` between + and close
 -- when clicked display the selected response box text formatted as markdown in the management pane
-
-
-======================
 
 describe status variables available from response, like turns, context, etc, and whether they are for the entire conversation or just the last response. which would be useful for display and whether they should be total or last response?
 

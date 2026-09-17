@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS } from "./types";
+import { DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "graft" | "markdown";
 
@@ -38,6 +38,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
     .card { position: relative; box-sizing: border-box; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
     .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .card.selected { background: #fbf3c4; border-color: #ddd08a; }
+    .card.selected:hover { background: linear-gradient(var(--wash), var(--wash)), #fbf3c4; }
     .card-actions { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 6px; }
     .card-trash { display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
@@ -71,6 +73,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     let sessions = [];
+    let selectedId = '';
+    let scrolledId = '';
     let showTrash = false;
     // An inline rename owns its card until it commits, so a background refresh waits
     // rather than yanking the input out from under the typing.
@@ -97,6 +101,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       const message = event.data;
       if (message.type === 'sessions') {
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
+        selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
         if (editingId) {
           pendingRender = true;
           return;
@@ -107,6 +112,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
 
     function render() {
       list.replaceChildren();
+      let selectedCard = null;
       const visible = sessions.filter((session) => (session.trashed === true) === showTrash);
       if (visible.length === 0) {
         const empty = document.createElement('div');
@@ -118,6 +124,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
       for (const session of visible) {
         const card = document.createElement('div');
         card.className = showTrash ? 'card trashed' : 'card';
+        if (session.id === selectedId) {
+          card.classList.add('selected');
+          selectedCard = card;
+        }
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
         const name = document.createElement('span');
@@ -181,6 +191,12 @@ export function sidebarHtml(webview: vscode.Webview): string {
           vscode.postMessage({ type: 'openSession', sessionId: session.id });
         });
         list.appendChild(card);
+      }
+      // Only chase the selection when it actually moves: a refresh mid-stream must not
+      // yank the list back while the user is scrolling through other cards.
+      if (selectedCard && selectedId !== scrolledId) {
+        scrolledId = selectedId;
+        selectedCard.scrollIntoView({ block: 'nearest' });
       }
     }
 
@@ -250,6 +266,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const maxTurns = JSON.stringify(defaults.maxTurns);
+  // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
+  // generated script would be an unreadable blank in any view of this page's source.
+  const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   return `<!doctype html>
 <html lang="en" style="--z: ${z}">
 <head>
@@ -313,6 +332,7 @@ ${zoomScript(z)}
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
     const maxTurns = ${maxTurns};
+    const TOOL_LINE_MARK = ${toolLineMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     let expanded = new Set();
@@ -425,8 +445,8 @@ ${zoomScript(z)}
       promptBox.focus();
     }
 
-    // Response text is plain, except for a leading **bold** run on a line, which tool-call lines use
-    // for the tool name. Built as text nodes so nothing else in the response is treated as markup.
+    // Response text is plain, except for a leading **bold** run on a line, used for a tool name and by
+    // the model's own prose alike. Built as text nodes so nothing else in the response is treated as markup.
     // A toggle re-renders every response, so hiding tool groups drops those lines at build time:
     // no leading blanks, and runs of blank lines collapse to a single one. The streaming response
     // keeps its tool lines either way, since they are how the run's progress reads.
@@ -449,6 +469,7 @@ ${zoomScript(z)}
     }
 
     function appendFormattedLine(box, line) {
+        if (isToolLine(line)) line = line.slice(TOOL_LINE_MARK.length);
         const bold = /^\\*\\*([^*]+)\\*\\*/.exec(line);
         if (!bold) {
           box.appendChild(document.createTextNode(line));
@@ -460,8 +481,10 @@ ${zoomScript(z)}
         box.appendChild(document.createTextNode(line.slice(bold[0].length)));
     }
 
+    // Tool lines carry an invisible marker from the runner. Bold alone is not the tell: the model
+    // opens its own prose with **bold** runs too, and those are answer text that must never hide.
     function isToolLine(line) {
-      return /^\\*\\*[^*]+\\*\\*/.test(line);
+      return line.startsWith(TOOL_LINE_MARK);
     }
 
     function render() {

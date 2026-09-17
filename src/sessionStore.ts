@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import { CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn } from "./types";
 
 const sessionsKey = "claude2.sessions.v1";
 
@@ -12,7 +12,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     createdAt: typeof turn.createdAt === "number" ? turn.createdAt : Date.now(),
     completedAt: typeof turn.completedAt === "number" ? turn.completedAt : null,
     model: typeof turn.model === "string" ? turn.model : "fable",
-    effort: typeof turn.effort === "string" ? turn.effort : "xhigh",
+    effort: typeof turn.effort === "string" ? turn.effort : DEFAULT_EFFORT,
     tokensIn: typeof turn.tokensIn === "number" ? turn.tokensIn : 0,
     tokensOut: typeof turn.tokensOut === "number" ? turn.tokensOut : 0,
     contextWindow: typeof turn.contextWindow === "number" ? turn.contextWindow : CLAUDE2_CONTEXT_WINDOW,
