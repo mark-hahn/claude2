@@ -1,11 +1,9 @@
 
-
-
 stack prompt blocks when room
 
-remove diag line from credits graph
-
 ======================
+
+remove diag line from credits graph
 
 which of these do our stats use: usage.input_tokens, usage.output_tokens, usage.cache_read_input_tokens, and usage.cache_creation_input_tokens
 

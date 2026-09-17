@@ -1534,9 +1534,9 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
     .graphs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; min-height: 0; overflow: auto; }
-    .graphs.single { display: flex; flex: 1; min-height: 0; }
+    .graphs.single { display: flex; flex: 1; min-height: 0; justify-content: center; align-items: flex-start; }
     .graph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 11px; min-width: 0; }
-    .graphs.single .graph { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .graphs.single .graph { flex: none; display: flex; flex-direction: column; min-height: 0; max-width: 100%; }
     .graph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
     .graph-name { font-weight: 700; }
     .legend { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(14px * var(--z)); }
@@ -1545,7 +1545,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     .period { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
     .period button { min-height: 26px; padding: 2px 8px; }
     .plot { position: relative; width: 100%; aspect-ratio: 320 / 200; border: 1px solid var(--border); cursor: pointer; background: #fff; }
-    .graphs.single .plot { flex: 1; min-height: 260px; aspect-ratio: auto; }
+    .graphs.single .plot { flex: none; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; }
     svg text { font-size: calc(14px * var(--z)); fill: var(--muted); text-anchor: end; }
     .figures { margin-top: 8px; color: var(--muted); font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
@@ -1711,18 +1711,32 @@ ${zoomScript(z)}
       if (resizeObserver) resizeObserver.disconnect();
       resizeObserver = null;
       if (!expanded) return;
-      const plot = document.querySelector('.plot');
-      if (!plot || typeof ResizeObserver === 'undefined') return;
-      resizeObserver = new ResizeObserver((entries) => {
-        const rect = entries[0].contentRect;
-        const width = Math.max(320, Math.floor(rect.width));
-        const height = Math.max(200, Math.floor(rect.height));
-        if (width !== measured.width || height !== measured.height) {
-          measured = { width, height };
-          render();
-        }
-      });
-      resizeObserver.observe(plot);
+      fitExpanded();
+      const container = document.getElementById('graphs');
+      if (!container || typeof ResizeObserver === 'undefined') return;
+      resizeObserver = new ResizeObserver(() => fitExpanded());
+      resizeObserver.observe(container);
+    }
+
+    // The expanded card keeps the small graphs' 320x200 plot shape, so its width is whatever
+    // the leftover height allows (capped by the pane width); the flex row then centres it.
+    function fitExpanded() {
+      const container = document.getElementById('graphs');
+      const card = container && container.querySelector('.graph');
+      const plot = card && card.querySelector('.plot');
+      if (!card || !plot) return;
+      const styles = getComputedStyle(card);
+      const frameX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight) + parseFloat(styles.borderLeftWidth) + parseFloat(styles.borderRightWidth);
+      const chromeY = card.getBoundingClientRect().height - plot.getBoundingClientRect().height;
+      const roomWidth = container.clientWidth - frameX;
+      const roomHeight = container.clientHeight - chromeY;
+      const width = Math.max(320, Math.floor(Math.min(roomWidth, roomHeight * (320 / 200))));
+      const height = Math.round(width * (200 / 320));
+      card.style.width = (width + frameX) + 'px';
+      if (Math.abs(width - measured.width) > 1 || Math.abs(height - measured.height) > 1) {
+        measured = { width, height };
+        render();
+      }
     }
 
     function buildWindowGraph(key, title, lengthMs, seriesDefs, rows) {
