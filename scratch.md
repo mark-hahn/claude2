@@ -1,5 +1,11 @@
 
+move everything in the footer lines below the prompt editor to the right of that editor so the editor bottom is at the bottom of the window
 
+alt-click
+
+- add a button `Cap` to the right of the load button.
+- when clicked:
+  - 
 
 stack prompt blocks when room
 
