@@ -81,9 +81,19 @@ class Claude2Controller implements vscode.Disposable {
     return this.store.all();
   }
 
-  // The session whose editor is up front; the sidebar tints that card.
+  // The session whose editor is up front; the sidebar tints that card. Visibility decides
+  // it rather than `lastConversationId`, which stays put once another editor takes over
+  // the column and would leave a card tinted with no session showing.
   public selectedSessionId(): string {
-    return this.lastConversationId;
+    if (this.conversationPanels.get(this.lastConversationId)?.visible) {
+      return this.lastConversationId;
+    }
+    for (const [sessionId, panel] of this.conversationPanels) {
+      if (panel.visible) {
+        return sessionId;
+      }
+    }
+    return "";
   }
 
   public async handleSidebarMessage(message: unknown): Promise<void> {
@@ -198,8 +208,9 @@ class Claude2Controller implements vscode.Disposable {
       panel.onDidChangeViewState(() => {
         if (panel?.active) {
           this.lastConversationId = sessionId;
-          this.refreshSidebar();
         }
+        // Losing visibility has to refresh too, otherwise the card keeps its tint.
+        this.refreshSidebar();
       });
       panel.onDidDispose(() => {
         this.conversationPanels.delete(sessionId);
@@ -336,6 +347,28 @@ class Claude2Controller implements vscode.Disposable {
     }
 
     let streamedResponse = "";
+    // Streaming is throttled: deltas collect for one short window and go out as a single small
+    // turnDelta message, instead of a full-session post per token. The full post per token is
+    // what made long responses render slower and slower as they grew.
+    let pendingDelta = "";
+    let streamDirty = false;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushStream = (): void => {
+      flushTimer = null;
+      if (!streamDirty) {
+        return;
+      }
+      streamDirty = false;
+      const delta = pendingDelta;
+      pendingDelta = "";
+      this.postTurnDelta(sessionId, turn.id, delta);
+    };
+    const queueStream = (): void => {
+      streamDirty = true;
+      if (flushTimer === null) {
+        flushTimer = setTimeout(flushStream, 80);
+      }
+    };
     try {
       const result = await this.runner.runPrompt({
         sessionId,
@@ -350,9 +383,10 @@ class Claude2Controller implements vscode.Disposable {
         onText: (text) => {
           streamedResponse += text;
           this.store.patchTurn(sessionId, turn.id, { response: streamedResponse }, false);
-          this.postConversationState(sessionId);
+          pendingDelta += text;
+          queueStream();
         },
-        onStatus: () => this.postConversationState(sessionId),
+        onStatus: queueStream,
       });
       this.store.patchTurn(sessionId, turn.id, {
         response: streamedResponse || result.text,
@@ -376,6 +410,14 @@ class Claude2Controller implements vscode.Disposable {
       }, true);
       await this.store.flush();
     } finally {
+      // A delta still in flight after the closing full post would re-append text the
+      // webview already has, so the throttle is drained before that post goes out.
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      streamDirty = false;
+      pendingDelta = "";
       this.postConversationState(sessionId);
       this.refreshSidebar();
       void this.quota.history(false);
@@ -594,6 +636,12 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "" });
     this.refreshSidebar();
+  }
+
+  // Streaming update: only the new text and the run status cross to the webview, and the
+  // sidebar (whose cards show nothing live) is left alone until the run ends.
+  private postTurnDelta(sessionId: string, turnId: string, delta: string): void {
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "turnDelta", turnId, delta, status: this.runner.status(sessionId) });
   }
 
   private refreshSidebar(): void {

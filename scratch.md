@@ -1,18 +1,21 @@
 
-session card stays selected when no editor selected
+stack prompt blocks when room
 
+search input box
 
-i might be wrong but generating the results seems slower than in the claude extension
+session card stays highlighted when no editor selected
 
 show results as markdown live while streaming
-
-when an editor pane is focused move the matching selected session card into view
-
-scrolling is not sticky in results scrolling box
 
 results scrolling box shrinks to short height
 
 ======================
+
+i might be wrong but generating the results seems slower than in the claude extension
+
+scrolling is not sticky in results scrolling box
+
+when an editor pane is focused move the matching selected session card into view
 
 highlight session card with light-yellow background for currently selected session editor
 

@@ -371,6 +371,8 @@ ${zoomScript(z)}
         }
         document.title = session.name || 'Claude2';
         render();
+      } else if (message.type === 'turnDelta') {
+        applyTurnDelta(message);
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
       }
@@ -582,6 +584,12 @@ ${zoomScript(z)}
       keepScroll = false;
       requestAnimationFrame(() => syncSelectedBlock(align, responseToBottom, responseToTop ? 0 : selectedResponseTop));
       noteSelection();
+      renderStatus();
+    }
+
+    function renderStatus() {
+      const active = status && status.active;
+      const turns = Array.isArray(session.turns) ? session.turns : [];
       const latest = turns[turns.length - 1];
       // Totals for the whole conversation, not just the latest prompt.
       const inTokens = turns.reduce((sum, turn) => sum + (turn.tokensIn || 0), 0);
@@ -602,6 +610,37 @@ ${zoomScript(z)}
         finish.className = 'indicator';
         finish.textContent = 'Ready';
       }
+    }
+
+    // A streaming delta refills only the one growing response box. The full render, with its
+    // whole-history rebuild, is kept for structure: the first delta of a run (which anchors and
+    // opens the new block), a box not in the DOM, or a reopened webview that lost the session
+    // and has to ask for all of it again.
+    function applyTurnDelta(message) {
+      const turns = Array.isArray(session.turns) ? session.turns : [];
+      const turn = turns.find((entry) => entry.id === message.turnId);
+      if (!turn) {
+        vscode.postMessage({ type: 'conversationReady', sessionId });
+        return;
+      }
+      status = message.status || status;
+      if (message.delta) turn.response = (turn.response || '') + message.delta;
+      const node = historyBox.querySelector('[data-turn-id="' + message.turnId + '"]');
+      const response = node ? node.querySelector('.response') : null;
+      if (!response || (status && status.active && status.turnId !== shownActiveTurn)) {
+        render();
+        return;
+      }
+      if (message.delta) {
+        const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
+        const savedTop = response.scrollTop;
+        response.replaceChildren();
+        fillResponse(response, turn.response || '', true);
+        if (Number(node.dataset.index) === anchorIndex) {
+          requestAnimationFrame(() => syncSelectedBlock(false, atBottom, savedTop));
+        }
+      }
+      renderStatus();
     }
 
     // The md pane renders whichever response box is selected here, so every move of the
