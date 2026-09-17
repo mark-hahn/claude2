@@ -642,7 +642,7 @@ ${zoomScript(z)}
           wrapper.dataset.turnId = turn.id;
           const bar = document.createElement('button');
           bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) ? ' prompt-expanded' : '');
-          if (matchesSearch(turn.prompt)) bar.classList.add('search-hit');
+          if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
           bar.addEventListener('click', (event) => {

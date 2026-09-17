@@ -1,7 +1,11 @@
 
+when the model or effort is changed in session then that should be persistant for every opening of the session later
+
 the results scrolling container height isn't responsive to editor size changes
 
 stack prompt blocks when room
+
+======================
 
 # search input box
 - add a text input box searchBox below the 2 button rows in sidebar
@@ -29,10 +33,6 @@ stack prompt blocks when room
   - clicking on a session card should not clear search mode
     - session editors should open as normal
     - you need to be able to see highlighted lines in responses
-
-results scrolling box shrinks to short height
-
-======================
 
 show results as markdown live while streaming
 
