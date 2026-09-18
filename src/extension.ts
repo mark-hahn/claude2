@@ -688,10 +688,18 @@ class Claude2Controller implements vscode.Disposable {
       this.noteDraft(sessionId, prompt);
       return;
     }
+    // The saved draft goes now, not when the turn starts: stopping a run below makes that run
+    // repost session state, and a draft still stored at that moment lands back in the empty box.
+    if (this.drafts.delete(sessionId)) {
+      this.saveDrafts();
+    }
     const pending = this.runs.get(sessionId);
-    if (pending) {
+    if (pending || this.runner.isRunning(sessionId)) {
+      // Ctrl-Enter during a run means "drop that answer, take this one instead".
       this.runner.stop(sessionId);
-      await pending;
+      if (pending) {
+        await pending;
+      }
     }
     if (this.runner.isRunning(sessionId)) {
       void vscode.window.showWarningMessage("Claude is already responding in this session.");
