@@ -414,9 +414,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     button { cursor: pointer; }
     button:hover:not(:disabled), select:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
-    /* Stop sits disabled for most of the pane's life, so it keeps the normal fill and fades its own
-       label and border instead. Opacity rather than a grey ink, so the same rule holds at any zoom. */
-    #stop:disabled { background: var(--surface); opacity: 0.4; }
+    /* Stop is a glyph, not a word: it keeps a white fill at all times and says "unavailable" by
+       greying icon and border together, so the two never disagree about the run state. */
+    #stop { display: inline-flex; align-items: center; justify-content: center; background: #fff; color: #000; border-color: #000; font-size: calc(16px * var(--z)); line-height: 1; }
+    #stop:disabled { background: #fff; color: #9b9b9b; border-color: #9b9b9b; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
@@ -442,7 +443,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       <div class="dock-controls">
         <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
-          <div class="group"><button id="stop">Stop</button><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
@@ -624,7 +625,9 @@ ${zoomScript(z)}
 
     function submitPrompt() {
       const prompt = promptBox.value;
-      if (!prompt.trim() || (status && status.active)) return;
+      // Sending during a run is allowed: the extension stops the running turn and takes this
+      // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
+      if (!prompt.trim()) return;
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
       draftSent = '';

@@ -1,19 +1,23 @@
 
 fork prompt
 
-compaction indicator
-
-change prompt bar to 2 lines if needed.
-
-never lose prompt typing
+when a compaction is done show indicator by changing background of context 
 
 show model in prompt bar
-
-compacting indicator
 
 stack prompt blocks when room
 
 ======================
+
+# never lose prompt typing
+- make in-memory `Map` persistant across reload
+  - when the map text is submitted clear Map
+    - so it still matches editor contents
+- in any of the actions you mentioned above happen:
+  - set a flag promptTextLost which is also persistent
+  - when promptTextLost is set and a new session is created then load map into editor
+    - and clear flag but keep map
+- typing Ctrl+Enter while a run is active should stop the run and enter the new prompt
 
 # new editor page footer
 - change top buttons row
