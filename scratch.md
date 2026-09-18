@@ -1,19 +1,19 @@
 
+fork prompt
+
 compaction indicator
 
 change prompt bar to 2 lines if needed.
 
-- add a model change button `M` to the right of stop button
-  - style should match status letter button
-  - it should cycle through these fixed model/effort settings:
-    - claude-opus-5 and high
-    - claude-fable-5 and xhigh
-- normal selectors of model/effort should be unchanged
-- default should be the same claude-opus-5 and high
-
 never lose prompt typing
 
 show model in prompt bar
+
+compacting indicator
+
+stack prompt blocks when room
+
+======================
 
 # new editor page footer
 - change top buttons row
@@ -23,11 +23,13 @@ show model in prompt bar
   - replace top, bottom, prev, and next buttons
     -the new should be ▲ (was prev), ▼ (was next), ▲▲ (was top), and ▼▼ (was bottom)
 
-compacting indicator
-
-stack prompt blocks when room
-
-======================
+- add a model change button `M` to the right of stop button
+  - style should match status letter button
+  - it should cycle through these fixed model/effort settings:
+    - claude-opus-5 and high
+    - claude-fable-5 and xhigh
+- normal selectors of model/effort should be unchanged
+- default should be the same claude-opus-5 and high
 
 remove diag line from credits graph
 
