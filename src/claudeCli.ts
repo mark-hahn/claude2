@@ -108,6 +108,7 @@ export class ClaudeCliRunner {
       graftSaved: 0,
       codeLines: 0,
       phase: "thinking",
+      compactedAt: null,
       elapsedMs: 0,
       startedAt: Date.now(),
     };
@@ -372,6 +373,7 @@ export class ClaudeCliRunner {
             const after = numberOf(meta?.post_tokens);
             const before = numberOf(meta?.pre_tokens);
             status.phase = "working";
+            status.compactedAt = Date.now();
             if (typeof after === "number" && after > 0) {
               contextTokens = after;
               status.contextTokens = after;

@@ -64,6 +64,9 @@ export interface RunningStatus {
   graftSaved: number;
   codeLines: number;
   phase: ClaudePhase;
+  // When the conversation was last compacted in this run, so the gauge can flag that the level
+  // it shows just dropped for a reason. Null until a compaction happens.
+  compactedAt: number | null;
   elapsedMs: number;
   startedAt: number;
 }

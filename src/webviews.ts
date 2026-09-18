@@ -433,6 +433,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     #stop { display: inline-flex; align-items: center; justify-content: center; background: #fff; color: #000; border-color: #000; font-size: calc(16px * var(--z)); line-height: 1; }
     #stop:disabled { background: #fff; color: #9b9b9b; border-color: #9b9b9b; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The context gauge flags a just-finished compaction: the level it shows dropped because the
+       conversation was summarised, not because the run shrank. Clears itself, or on a click. */
+    #context.compacted { background: var(--yellow); border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
        changes and pushes the prompt editor around. */
@@ -832,6 +835,26 @@ ${zoomScript(z)}
       renderStatus();
     }
 
+    // Which compaction the gauge has already flagged, and the timer that takes the flag back off.
+    let compactSeen = 0;
+    let compactTimer = null;
+
+    function flagCompaction() {
+      document.getElementById('context').classList.add('compacted');
+      if (compactTimer !== null) window.clearTimeout(compactTimer);
+      compactTimer = window.setTimeout(clearCompaction, 15000);
+    }
+
+    function clearCompaction() {
+      if (compactTimer !== null) {
+        window.clearTimeout(compactTimer);
+        compactTimer = null;
+      }
+      document.getElementById('context').classList.remove('compacted');
+    }
+
+    document.getElementById('context').addEventListener('click', clearCompaction);
+
     function renderStatus() {
       const active = status && status.active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
@@ -841,7 +864,14 @@ ${zoomScript(z)}
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
-      document.getElementById('context').textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
+      const contextBox = document.getElementById('context');
+      contextBox.textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
+      // Latched locally the moment a new compaction is reported: the run's status stops being
+      // posted once the turn ends, so the flag can't hang off it for its whole 15 seconds.
+      if (active && status.compactedAt && status.compactedAt !== compactSeen) {
+        compactSeen = status.compactedAt;
+        flagCompaction();
+      }
       const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
       const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
       document.getElementById('turns').textContent = turnsSoFar + '/' + turnLimit;
