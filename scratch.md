@@ -1,13 +1,13 @@
 
 fork prompt
 
-when a compaction is done show indicator by changing background of context 
-
 show model in prompt bar
 
 stack prompt blocks when room
 
 ======================
+
+when a compaction is done show indicator by changing background of context 
 
 # never lose prompt typing
 - make in-memory `Map` persistant across reload

@@ -412,6 +412,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .turn.selected .prompt-bar { outline: 1px solid #6d6527; outline-offset: -1px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
+    /* Appears only after a long hover on a bar that has runs after it: clicking it drops those runs.
+       Its own hit box, so the click reads as "fork" rather than as the bar's expand toggle. */
+    .fork-mark { display: inline-block; margin-right: 6px; padding: 0 3px; border-radius: 3px; color: #000; font-weight: 700; cursor: pointer; }
+    .fork-mark:hover { background: #eadf90; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
     .response.error { border-left-color: #c62828; }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
@@ -719,7 +723,40 @@ ${zoomScript(z)}
       return line.startsWith(TOOL_LINE_MARK);
     }
 
+    // The bar the fork mark is on or is counting down for. One at a time: the pointer can only be
+    // over one bar, and a re-render throws the bar away, so both are dropped there too.
+    let forkTimer = null;
+    let forkBar = null;
+
+    function armForkMark(bar) {
+      clearForkMark();
+      if (status && status.active) return;
+      forkBar = bar;
+      forkTimer = window.setTimeout(() => {
+        forkTimer = null;
+        if (forkBar !== bar || !bar.isConnected) return;
+        const mark = document.createElement('span');
+        mark.className = 'fork-mark';
+        mark.textContent = '\\u27F2';
+        mark.title = 'Fork here: drop every run after this one';
+        bar.insertBefore(mark, bar.firstChild);
+      }, 3000);
+    }
+
+    function clearForkMark() {
+      if (forkTimer !== null) {
+        window.clearTimeout(forkTimer);
+        forkTimer = null;
+      }
+      if (forkBar) {
+        const mark = forkBar.querySelector('.fork-mark');
+        if (mark) mark.remove();
+        forkBar = null;
+      }
+    }
+
     function render() {
+      clearForkMark();
       const active = status && status.active;
       stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
@@ -767,7 +804,18 @@ ${zoomScript(z)}
           if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
           bar.title = turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
+          // Long hover offers the fork mark, but only where forking would do something: a bar with
+          // runs after it, and no run in flight to cut off mid-stream.
+          if (index < turns.length - 1) {
+            bar.addEventListener('mouseenter', () => armForkMark(bar));
+            bar.addEventListener('mouseleave', clearForkMark);
+          }
           bar.addEventListener('click', (event) => {
+            if (event.target && event.target.classList && event.target.classList.contains('fork-mark')) {
+              clearForkMark();
+              vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
+              return;
+            }
             if (event.altKey) {
               vscode.postMessage({ type: 'copyText', sessionId, text: turn.prompt || '' });
               return;

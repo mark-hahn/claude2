@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { captureScreen } from "./capture";
-import { ClaudeCliRunner, type RunLimits } from "./claudeCli";
+import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
@@ -397,6 +397,8 @@ class Claude2Controller implements vscode.Disposable {
       this.postConversationState(sessionId);
     } else if (type === "copyText") {
       await this.copyToClipboard(stringOf(record?.text));
+    } else if (type === "forkTurn") {
+      await this.forkTurn(sessionId, stringOf(record?.turnId));
     } else if (type === "selectionChanged") {
       const index = record?.index;
       this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
@@ -404,6 +406,41 @@ class Claude2Controller implements vscode.Disposable {
         this.postSelectedResponse();
       }
     }
+  }
+
+  // The ⟲ mark on a prompt bar: the conversation goes back to just after that run, here and in the
+  // CLI's own transcript, so the next prompt continues as if the dropped runs never happened.
+  private async forkTurn(sessionId: string, turnId: string): Promise<void> {
+    const session = this.store.get(sessionId);
+    const index = session?.turns.findIndex((turn) => turn.id === turnId) ?? -1;
+    if (!session || index < 0 || index === session.turns.length - 1) {
+      return;
+    }
+    if (this.runner.isRunning(sessionId)) {
+      void vscode.window.showWarningMessage("Claude is still responding in this session; stop it before forking.");
+      return;
+    }
+    const count = session.turns.length - index - 1;
+    const answer = await vscode.window.showWarningMessage(
+      `Fork the conversation here, dropping the ${count} run${count === 1 ? "" : "s"} after this one?`,
+      { modal: true, detail: "Claude forgets them too. The previous transcript is kept as a .bak file beside it." },
+      "Fork",
+    );
+    if (answer !== "Fork") {
+      return;
+    }
+    const droppedPrompt = session.turns[index + 1].prompt;
+    const result = await this.store.keepThrough(sessionId, turnId);
+    if (!result) {
+      return;
+    }
+    if (!truncateSessionTranscript(this.workspacePath(), sessionId, result.kept, droppedPrompt)) {
+      this.channel.appendLine(`Fork: no CLI transcript cut for session ${sessionId}; the dropped runs may still be in Claude's context.`);
+    }
+    this.selectedTurns.set(sessionId, index);
+    this.postConversationState(sessionId);
+    this.refreshSidebar();
+    this.postSelectedResponse();
   }
 
   private async copyToClipboard(text: string): Promise<void> {

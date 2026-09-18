@@ -147,6 +147,21 @@ export class SessionStore {
     await this.save();
   }
 
+  // Forking: the named turn and everything before it stays, everything after it goes. Returns the
+  // prompts that survive, which is what the CLI transcript has to be cut back to as well.
+  public async keepThrough(sessionId: string, turnId: string): Promise<{ kept: number; dropped: ClaudeTurn[] } | undefined> {
+    const session = this.get(sessionId);
+    const index = session?.turns.findIndex((candidate) => candidate.id === turnId) ?? -1;
+    if (!session || index < 0) {
+      return undefined;
+    }
+    const dropped = session.turns.slice(index + 1);
+    session.turns = session.turns.slice(0, index + 1);
+    session.updatedAt = Date.now();
+    await this.save();
+    return { kept: session.turns.length, dropped };
+  }
+
   public patchTurn(sessionId: string, turnId: string, patch: Partial<ClaudeTurn>, persist: boolean): ClaudeTurn | undefined {
     const session = this.get(sessionId);
     const turn = session?.turns.find((candidate) => candidate.id === turnId);

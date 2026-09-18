@@ -512,11 +512,70 @@ function sanitizePermissionMode(mode: string): string {
 }
 
 // Claude Code stores transcripts under <config dir>/projects/<cwd with non-alphanumerics as "-">/<session id>.jsonl.
-function sessionTranscriptExists(workspacePath: string, sessionId: string): boolean {
+function transcriptPath(workspacePath: string, sessionId: string): string {
   const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
   const projectKey = workspacePath.replace(/[^a-zA-Z0-9]/g, "-");
+  return path.join(configDir, "projects", projectKey, `${sessionId}.jsonl`);
+}
+
+function sessionTranscriptExists(workspacePath: string, sessionId: string): boolean {
   try {
-    return fs.existsSync(path.join(configDir, "projects", projectKey, `${sessionId}.jsonl`));
+    return fs.existsSync(transcriptPath(workspacePath, sessionId));
+  } catch {
+    return false;
+  }
+}
+
+// Forking a conversation only means anything to Claude if the CLI forgets the dropped runs too:
+// the next prompt resumes from this file, so it is cut at the prompt that starts the first dropped
+// run. keepPrompts is how many prompts stay; droppedPrompt is the text of the first one to go, used
+// to confirm the cut lands where the pane thinks it does. The old file is kept alongside as .bak.
+export function truncateSessionTranscript(workspacePath: string, sessionId: string, keepPrompts: number, droppedPrompt: string): boolean {
+  const file = transcriptPath(workspacePath, sessionId);
+  let lines: string[];
+  try {
+    lines = fs.readFileSync(file, "utf8").split("\n");
+  } catch {
+    return false;
+  }
+  // Line numbers of the real prompts, in order. Tool results and subagent traffic are user entries
+  // too, so a prompt is the narrower thing: top-level, plain text, and sourced from a caller.
+  const promptLines: number[] = [];
+  lines.forEach((line, index) => {
+    if (!line.trim()) {
+      return;
+    }
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>;
+      const message = entry.message as { content?: unknown } | undefined;
+      if (entry.type === "user" && entry.isSidechain !== true && entry.promptSource && typeof message?.content === "string") {
+        promptLines.push(index);
+      }
+    } catch {
+      // A half-written line is not a prompt; the scan carries on past it.
+    }
+  });
+  // The prompt at the keep boundary, unless the transcript disagrees with the pane's count — then
+  // the first later prompt whose text matches the run being dropped.
+  let cut = promptLines.length > keepPrompts ? promptLines[keepPrompts] : -1;
+  const textAt = (index: number): string => {
+    try {
+      return String((JSON.parse(lines[index]) as { message?: { content?: unknown } }).message?.content ?? "");
+    } catch {
+      return "";
+    }
+  };
+  if (droppedPrompt && (cut < 0 || textAt(cut) !== droppedPrompt)) {
+    const match = promptLines.find((index) => textAt(index) === droppedPrompt);
+    cut = match === undefined ? -1 : match;
+  }
+  if (cut < 0) {
+    return false;
+  }
+  try {
+    fs.copyFileSync(file, `${file}.bak`);
+    fs.writeFileSync(file, lines.slice(0, cut).join("\n") + "\n", "utf8");
+    return true;
   } catch {
     return false;
   }
