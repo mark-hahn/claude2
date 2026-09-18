@@ -76,7 +76,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
         <button id="close" title="Close every session tab but the current one">Close</button>
-        <button id="trash" title="Show trashed sessions">Trash</button>
+        <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
       </div>
       <div class="search-row">
         <input id="searchBox" type="text" placeholder="Search" spellcheck="false">
@@ -111,12 +111,19 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
-    trashButton.addEventListener('click', () => {
+    trashButton.addEventListener('click', (event) => {
+      // Ctrl-click on the active list is the bulk sweep: everything goes to the trash at once.
+      if (event.ctrlKey && !showTrash) {
+        clearSearch();
+        vscode.postMessage({ type: 'discardEmpty' });
+        vscode.postMessage({ type: 'trashAllSessions' });
+        return;
+      }
       clearSearch();
       vscode.postMessage({ type: 'discardEmpty' });
       showTrash = !showTrash;
       trashButton.classList.toggle('active', showTrash);
-      trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions';
+      trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions (ctrl-click to trash every session)';
       render();
     });
     searchBox.addEventListener('keydown', (event) => {
@@ -216,11 +223,18 @@ export function sidebarHtml(webview: vscode.Webview): string {
         trash.className = 'card-trash';
         trash.textContent = '\u{1F5D1}';
         // Same icon, two meanings: one hop to the trash, then gone for good.
-        trash.title = trashed ? 'Delete this session permanently' : 'Move this session to the trash';
+        trash.title = trashed
+          ? 'Delete this session permanently (ctrl-click to skip the confirmation)'
+          : 'Move this session to the trash';
         trash.addEventListener('pointerdown', (event) => event.stopPropagation());
         trash.addEventListener('click', (event) => {
           event.stopPropagation();
-          vscode.postMessage({ type: trashed ? 'deleteSession' : 'trashSession', sessionId: session.id });
+          if (trashed) {
+            // Permanent delete asks first, unless ctrl says the user already means it.
+            vscode.postMessage({ type: 'deleteSession', sessionId: session.id, confirm: !event.ctrlKey });
+            return;
+          }
+          vscode.postMessage({ type: 'trashSession', sessionId: session.id });
         });
         if (trashed) {
           const restore = document.createElement('button');

@@ -180,11 +180,22 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "trashSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), true);
       this.refreshSidebar();
+    } else if (type === "trashAllSessions") {
+      for (const session of this.store.all()) {
+        if (!session.trashed) {
+          await this.store.setTrashed(session.id, true);
+        }
+      }
+      this.refreshSidebar();
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
     } else if (type === "deleteSession") {
-      await this.deleteSession(stringOf(record?.sessionId));
+      const sessionId = stringOf(record?.sessionId);
+      if (record?.confirm !== false && !(await this.confirmDelete(sessionId))) {
+        return;
+      }
+      await this.deleteSession(sessionId);
     } else if (type === "searchChanged") {
       this.setSearch(stringOf(record?.text));
     } else if (type === "login") {
@@ -245,6 +256,16 @@ class Claude2Controller implements vscode.Disposable {
   // The trash icon on a trashed card is the permanent one: the session is forgotten outright,
   // not just hidden, so its tab goes with it. Its unsent draft does not: it is held as the lost
   // one, and the next new session opens with that text already in the box.
+  private async confirmDelete(sessionId: string): Promise<boolean> {
+    const name = this.store.get(sessionId)?.name || "this session";
+    const answer = await vscode.window.showWarningMessage(
+      `Permanently delete "${name}"?`,
+      { modal: true, detail: "This cannot be undone. Ctrl-click the trash icon to skip this prompt." },
+      "Delete",
+    );
+    return answer === "Delete";
+  }
+
   private async deleteSession(sessionId: string): Promise<void> {
     if (!sessionId) {
       return;
