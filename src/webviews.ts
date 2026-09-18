@@ -60,7 +60,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
     .card-hits { display: block; color: #0b5ed7; font-size: 14px; margin-top: 3px; }
     .empty { border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); padding: 14px 10px; text-align: center; }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="shell">
@@ -87,6 +87,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+${tooltipScript()}
     let sessions = [];
     let selectedId = '';
     let scrolledId = '';
@@ -448,13 +449,13 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* Same pill, but the letter reads as a control rather than as state, so it stays at dock weight. */
     #cycle { font-size: inherit; font-weight: 400; }
     /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
-    #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 400; white-space: nowrap; z-index: 5; }
+    #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: max(11.2px, calc(14px * var(--z) * 0.68)); font-weight: 400; white-space: nowrap; z-index: 5; }
     .indicator.done { background: #fff; }
     .indicator.active { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
     .footer { display: flex; gap: 8px; align-items: center; }
     #cap.armed { background: var(--yellow); border-color: #d6b642; font-weight: 700; }
     @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="shell">
@@ -476,6 +477,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
+${tooltipScript()}
     const sessionId = ${safeSessionId};
     const models = ${models};
     const efforts = ${efforts};
@@ -802,13 +804,21 @@ ${zoomScript(z)}
           const bar = document.createElement('button');
           bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) ? ' prompt-expanded' : '');
           if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
-          bar.title = turn.prompt;
+          // The hover leads with the model and effort this prompt actually ran under, which is not
+          // necessarily what the dock is set to now.
+          const ranAs = [turn.model, turn.effort].filter(Boolean).join(' / ');
+          bar.title = ranAs ? ranAs + '\\n' + turn.prompt : turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
           // Long hover offers the fork mark, but only where forking would do something: a bar with
           // runs after it, and no run in flight to cut off mid-stream.
           if (index < turns.length - 1) {
             bar.addEventListener('mouseenter', () => armForkMark(bar));
-            bar.addEventListener('mouseleave', clearForkMark);
+            // Inserting the mark reflows the bar, and Chromium can answer that with a boundary event
+            // even though the pointer never moved. A leave into the bar's own subtree is not a leave.
+            bar.addEventListener('mouseleave', (event) => {
+              if (event.relatedTarget && bar.contains(event.relatedTarget)) return;
+              clearForkMark();
+            });
           }
           bar.addEventListener('click', (event) => {
             if (event.target && event.target.classList && event.target.classList.contains('fork-mark')) {
@@ -1155,7 +1165,7 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .frame { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
     img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="pane">
@@ -1165,6 +1175,7 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
+${tooltipScript()}
     const img = document.getElementById('shot');
     const empty = document.getElementById('empty');
     const pathLabel = document.getElementById('path');
@@ -1251,7 +1262,7 @@ function instructionsHtml(webview: vscode.Webview, zoom: number): string {
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
     .error { background: var(--error); border: 1px solid var(--border); border-left: 3px solid #c62828; border-radius: 8px; margin: 16px 0 0; padding: 10px 14px; }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="pane">
@@ -1444,7 +1455,7 @@ function markdownHtml(webview: vscode.Webview, zoom: number): string {
     .doc th, .doc td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
     .doc th { background: rgba(0,0,0,0.05); }
     .empty { font-size: calc(16px * var(--z)); }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="pane">
@@ -1454,6 +1465,7 @@ function markdownHtml(webview: vscode.Webview, zoom: number): string {
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
+${tooltipScript()}
     const docBox = document.getElementById('doc');
     const promptLabel = document.getElementById('prompt');
     const pending = new Map();
@@ -1689,7 +1701,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
     @media (max-width: 900px) { .graphs { grid-template-columns: 1fr; } .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
-  </style>
+${tooltipStyle()}  </style>
 </head>
 <body>
   <div id="pane" class="pane">
@@ -2091,6 +2103,73 @@ function zoomScript(initial: number): string {
     });
 
     applyZoom(zoom);
+`;
+}
+
+// Tooltips are drawn by the pane, not by the browser: a native `title` bubble renders at a fixed
+// OS size that no stylesheet can reach, and these have to read at the pane's own (larger) size.
+// Paired with tooltipScript(), which is what actually harvests the `title` attributes.
+function tooltipStyle(): string {
+  return `
+    #tip { position: fixed; left: 0; top: 0; z-index: 9999; display: none; max-width: 60ch; padding: 4px 9px; border: 1px solid var(--border, #d9d8d1); border-radius: 6px; background: var(--surface, #fcfcfb); color: var(--ink, #000); font-size: calc(11.2px * var(--z, 1)); line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0,0,0,0.18); pointer-events: none; }
+    #tip.shown { display: block; }
+`;
+}
+
+// Any element carrying `title` gets the styled bubble instead of the native one. The attribute is
+// only moved aside at hover time, so code that keeps assigning `.title` later still works: a fresh
+// attribute simply overwrites the stashed copy on the next hover.
+function tooltipScript(): string {
+  return `
+    const TIP_DELAY = 400;
+    const tipNode = document.createElement('div');
+    tipNode.id = 'tip';
+    document.body.appendChild(tipNode);
+    let tipTimer = 0;
+
+    function hideTip() {
+      clearTimeout(tipTimer);
+      tipNode.classList.remove('shown');
+    }
+
+    // Anchored to the hovered element's box, not to the cursor: a cursor-anchored bubble that has to
+    // flip upward for room lands back on top of the element it describes, hiding whatever is drawn
+    // there -- the prompt bar's fork mark, for one.
+    function showTip(text, node, x) {
+      tipNode.textContent = text;
+      tipNode.classList.add('shown');
+      const box = tipNode.getBoundingClientRect();
+      const host = node.getBoundingClientRect();
+      let left = x + 4;
+      let top = host.bottom + 6;
+      if (left + box.width > window.innerWidth - 6) left = Math.max(6, window.innerWidth - 6 - box.width);
+      if (top + box.height > window.innerHeight - 6) top = Math.max(6, host.top - 6 - box.height);
+      tipNode.style.left = left + 'px';
+      tipNode.style.top = top + 'px';
+    }
+
+    document.addEventListener('mouseover', (event) => {
+      const node = event.target && event.target.closest ? event.target.closest('[title], [data-tip]') : null;
+      if (!node) {
+        hideTip();
+        return;
+      }
+      if (node.hasAttribute('title')) {
+        node.dataset.tip = node.getAttribute('title');
+        node.removeAttribute('title');
+      }
+      const text = node.dataset.tip || '';
+      hideTip();
+      if (!text) return;
+      const x = event.clientX;
+      tipTimer = setTimeout(() => { if (node.isConnected) showTip(text, node, x); }, TIP_DELAY);
+    });
+
+    document.addEventListener('mouseout', (event) => { if (!event.relatedTarget) hideTip(); });
+    document.addEventListener('mousedown', hideTip, true);
+    document.addEventListener('keydown', hideTip, true);
+    window.addEventListener('scroll', hideTip, true);
+    window.addEventListener('blur', hideTip);
 `;
 }
 

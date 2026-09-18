@@ -1,11 +1,13 @@
 
-shen session is streaming and prompt text is ctrl-entered then stop and post prompt and then clear prompt editor
 
-show model in prompt bar
+when hovering over prompt bar and tooltip shows the prompt text then prepend the prompt text with the model/effort set when that prompt was posted -- make tool tip text everywhere 20% larger 
+
 
 stack prompt blocks when room
 
 ======================
+
+shen session is streaming and prompt text is ctrl-entered then stop and post prompt and then clear prompt editor
 
 fork prompt
 
