@@ -165,12 +165,14 @@ class Claude2Controller implements vscode.Disposable {
     }
     // A session created by "+" that never got a prompt is scratch: drop it as soon as
     // attention moves to any other sidebar control or session card. "Close" keeps the
-    // current tab, so its session survives the sweep even when it is still empty.
+    // current tab, so its session survives the sweep even when it is still empty --
+    // unless it is the last one, where "Close" takes it down with the rest.
     const requestedSessionId = stringOf(record?.sessionId);
-    const keepId = requestedSessionId || (type === "closeOtherSessions" ? this.activeConversationId() : "");
+    const sessionPaneCount = this.conversationPanels.size;
+    const keepId = requestedSessionId || (type === "closeOtherSessions" && sessionPaneCount > 1 ? this.activeConversationId() : "");
     await this.discardEmptySessions(keepId);
     if (type === "closeOtherSessions") {
-      this.closeOtherSessions(keepId);
+      this.closeSessionPanes(keepId, sessionPaneCount);
     } else if (type === "newSession") {
       await this.newSession();
     } else if (type === "openSession") {
@@ -358,7 +360,15 @@ class Claude2Controller implements vscode.Disposable {
     return true;
   }
 
-  private closeOtherSessions(keepId: string): void {
+  // "Close" works down a ladder: with several session tabs open it keeps the current one,
+  // with a single one left it closes that too, and once no session tab remains the click
+  // closes the management pane. `paneCount` is the count from before empty sessions were
+  // swept, so the sweep itself cannot promote a close into a management-pane close.
+  private closeSessionPanes(keepId: string, paneCount: number): void {
+    if (paneCount === 0) {
+      this.managementPanel?.dispose();
+      return;
+    }
     for (const [sessionId, panel] of [...this.conversationPanels]) {
       if (sessionId !== keepId) {
         panel.dispose();

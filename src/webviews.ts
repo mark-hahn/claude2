@@ -75,7 +75,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
-        <button id="close" title="Close every session tab but the current one">Close</button>
+        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane">Close</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
       </div>
       <div class="search-row">

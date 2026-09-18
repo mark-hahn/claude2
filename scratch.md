@@ -1,11 +1,13 @@
 
-fork prompt
+shen session is streaming and prompt text is ctrl-entered then stop and post prompt and then clear prompt editor
 
 show model in prompt bar
 
 stack prompt blocks when room
 
 ======================
+
+fork prompt
 
 when a compaction is done show indicator by changing background of context 
 
