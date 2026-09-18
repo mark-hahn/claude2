@@ -55,12 +55,19 @@ class Claude2Controller implements vscode.Disposable {
   private lastConversationId = "";
   // Sidebar search text; non-empty means search mode, and every conversation pane tints matching lines.
   private searchText = "";
+  // The Login button drives one "claude auth login" at a time.
+  private loginInFlight = false;
+  // Set when a turn died on expired OAuth; the sidebar shows a red Re-Auth button until a
+  // sign-in succeeds. It lives in globalState so the button survives reloads and reboots,
+  // and so every window on this machine shows it — the credentials it reflects are shared.
+  private authNeeded = false;
   private instructionsWatcher: vscode.FileSystemWatcher | null = null;
 
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
     this.store = new SessionStore(context);
     this.runner = new ClaudeCliRunner((line) => this.channel.appendLine(line));
     this.quota = new QuotaService(context, this.workspacePath(), (line) => this.channel.appendLine(line));
+    this.authNeeded = context.globalState.get<boolean>(authNeededKey, false);
   }
 
   public activate(): void {
@@ -140,6 +147,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.deleteSession(stringOf(record?.sessionId));
     } else if (type === "searchChanged") {
       this.setSearch(stringOf(record?.text));
+    } else if (type === "login") {
+      await this.loginToAnthropic();
     } else if (type === "openPane") {
       const pane = paneOf(record?.pane);
       if (pane) {
@@ -370,6 +379,177 @@ class Claude2Controller implements vscode.Disposable {
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "capState", armed: this.pendingCaptures.has(sessionId) });
   }
 
+  // The Login button re-runs the CLI's OAuth sign-in without a terminal. "claude auth login"
+  // needs no TTY: it prints the sign-in URL on stdout and reads the one-time code on stdin, and
+  // the browser redirect ends on an Anthropic-hosted page that shows the code (never localhost),
+  // so the identical flow works on Windows, in WSL, and over Remote-SSH. Turns already running
+  // are unaffected; each turn spawns a fresh CLI process that re-reads the credentials file.
+  private async loginToAnthropic(): Promise<boolean> {
+    if (this.loginInFlight) {
+      void vscode.window.showWarningMessage("A Claude sign-in is already in progress.");
+      return false;
+    }
+    this.loginInFlight = true;
+    try {
+      const account = await this.runLoginFlow();
+      if (account !== null) {
+        this.setAuthNeeded(false);
+        void vscode.window.showInformationMessage(`Signed in to Claude as ${account}.`);
+        return true;
+      }
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Claude sign-in failed: ${errorMessage(error)}`);
+    } finally {
+      this.loginInFlight = false;
+    }
+    return false;
+  }
+
+  // A turn just died on expired OAuth: say so once and raise the red Re-Auth button, which
+  // stays up until a sign-in succeeds. The notification carries no buttons because the button
+  // in the sidebar is the durable version of the same offer.
+  private noteAuthFailure(): void {
+    if (this.authNeeded) {
+      return;
+    }
+    this.setAuthNeeded(true);
+    // showWarningMessage stays up until clicked away; a progress notification can close itself.
+    // Ten seconds to be read, then gone — the red Re-Auth button is the durable signal.
+    void vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Authorization expired. Click Re-Auth in the Claude2 sidebar to sign in again." },
+      () => new Promise<void>((resolve) => setTimeout(resolve, 10000)),
+    );
+  }
+
+  private setAuthNeeded(value: boolean): void {
+    if (this.authNeeded === value) {
+      return;
+    }
+    this.authNeeded = value;
+    void this.context.globalState.update(authNeededKey, value ? true : undefined);
+    this.refreshSidebar();
+  }
+
+  public isAuthNeeded(): boolean {
+    return this.authNeeded;
+  }
+
+  // Resolves to the signed-in account summary, or null when the user cancelled the code box.
+  private async runLoginFlow(): Promise<string | null> {
+    const child = spawn("claude", ["auth", "login"], { cwd: this.workspacePath(), env: cliEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.on("error", () => undefined);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    let stdoutText = "";
+    let stderrText = "";
+    child.stderr.on("data", (chunk: string) => {
+      stderrText += chunk;
+    });
+    let exitCode: number | null | undefined;
+    const exited = new Promise<void>((resolve) => {
+      child.on("close", (code) => {
+        exitCode = code;
+        resolve();
+      });
+      child.on("error", () => resolve());
+    });
+
+    const url = await new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error("The claude CLI did not print a sign-in URL within 30 seconds."));
+      }, 30000);
+      child.stdout.on("data", (chunk: string) => {
+        stdoutText += chunk;
+        const match = stdoutText.match(/https:\/\/\S+/);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(match[0]);
+        }
+      });
+      child.on("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.on("close", () => {
+        clearTimeout(timeout);
+        reject(new Error(stderrText.trim() || "The claude CLI exited before printing a sign-in URL."));
+      });
+    });
+
+    // The CLI tries to open a browser itself; over Remote-SSH only this openExternal reaches one.
+    if (!(await vscode.env.openExternal(vscode.Uri.parse(url)))) {
+      void vscode.window.showWarningMessage("No browser could be opened for the sign-in URL.", "Copy URL").then((pick) => {
+        if (pick === "Copy URL") {
+          void vscode.env.clipboard.writeText(url);
+        }
+      });
+    }
+    const code = await vscode.window.showInputBox({
+      title: "Claude sign-in",
+      prompt: "Approve in the browser, then paste the code it shows.",
+      placeHolder: "authorization code",
+      ignoreFocusOut: true,
+    });
+    if (!code?.trim()) {
+      child.kill("SIGTERM");
+      return null;
+    }
+    child.stdin.write(code.trim() + "\n");
+    child.stdin.end();
+
+    const timelyExit = await Promise.race([exited.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 30000))]);
+    if (!timelyExit) {
+      child.kill("SIGTERM");
+      throw new Error("The claude CLI did not finish within 30 seconds of the code being entered.");
+    }
+    if (exitCode !== 0) {
+      throw new Error(stderrText.trim() || `claude auth login exited with code ${exitCode ?? "unknown"}.`);
+    }
+    return await this.signedInAccount();
+  }
+
+  private signedInAccount(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("claude", ["auth", "status"], { cwd: this.workspacePath(), env: cliEnv(), stdio: ["ignore", "pipe", "pipe"] });
+      let stdoutText = "";
+      let stderrText = "";
+      const timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error("claude auth status timed out."));
+      }, 15000);
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdoutText += chunk;
+      });
+      child.stderr.on("data", (chunk: string) => {
+        stderrText += chunk;
+      });
+      child.on("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.on("close", (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(new Error(stderrText.trim() || `claude auth status exited with code ${code ?? "unknown"}.`));
+          return;
+        }
+        try {
+          const status = JSON.parse(stdoutText) as { loggedIn?: boolean; email?: string; subscriptionType?: string };
+          if (status.loggedIn !== true) {
+            reject(new Error("claude auth status still reports logged out."));
+            return;
+          }
+          resolve(`${status.email ?? "unknown account"} (${status.subscriptionType ?? "unknown"} plan)`);
+        } catch {
+          reject(new Error(`claude auth status returned unexpected output: ${stdoutText.trim().slice(0, 120)}`));
+        }
+      });
+    });
+  }
+
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
     const session = this.store.get(sessionId);
     if (!session || !prompt.trim()) {
@@ -491,17 +671,27 @@ class Claude2Controller implements vscode.Disposable {
       }, true);
       await this.store.flush();
     } catch (error) {
-      this.store.patchTurn(sessionId, turn.id, {
-        error: errorMessage(error),
-        completedAt: Date.now(),
-        contextUsed: lastContext,
-        durationMs: Math.max(0, Date.now() - turn.createdAt),
-        graftSaved: lastGraftSaved,
-        turns: lastTurns,
-        finished: true,
-        stopped: false,
-      }, true);
-      await this.store.flush();
+      const text = errorMessage(error);
+      if (/failed to authenticate|oauth session expired/i.test(text)) {
+        // An auth-failed turn is noise: drop it and put the prompt back in the box, so the
+        // conversation reads as if it was never sent. The Re-Auth flow owns the messaging,
+        // and the finally below reposts the restored state, draft included.
+        await this.store.removeTurn(sessionId, turn.id);
+        this.noteDraft(sessionId, prompt);
+        this.noteAuthFailure();
+      } else {
+        this.store.patchTurn(sessionId, turn.id, {
+          error: text,
+          completedAt: Date.now(),
+          contextUsed: lastContext,
+          durationMs: Math.max(0, Date.now() - turn.createdAt),
+          graftSaved: lastGraftSaved,
+          turns: lastTurns,
+          finished: true,
+          stopped: false,
+        }, true);
+        await this.store.flush();
+      }
     } finally {
       // A delta still in flight after the closing full post would re-append text the
       // webview already has, so the throttle is drained before that post goes out.
@@ -838,6 +1028,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       type: "sessions",
       sessions: this.controller.sessions(),
       selectedId: this.controller.selectedSessionId(),
+      authNeeded: this.controller.isAuthNeeded(),
     });
   }
 }
@@ -862,6 +1053,16 @@ function firstWords(text: string): string {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+const authNeededKey = "authNeeded";
+
+// A stray key would send the CLI to API-key auth instead of the subscription OAuth flow.
+function cliEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  return env;
 }
 
 function errorMessage(error: unknown): string {

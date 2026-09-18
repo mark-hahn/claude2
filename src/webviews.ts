@@ -31,6 +31,9 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #instructions { width: 52px; }
     #graft { width: 52px; }
     #markdown { width: 30px; }
+    #login { width: 64px; display: none; }
+    #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
+    #login.needed:hover { background: #f5c7c7; }
     #close { width: 56px; }
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
@@ -67,6 +70,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
         <button id="instructions" title="Instructions">Instr</button>
         <button id="graft" title="Graft graph">Graft</button>
         <button id="cap" title="Show the latest screen capture">Cap</button>
+        <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
         <button id="markdown" title="Show the selected response as markdown">md</button>
       </div>
       <div class="row">
@@ -105,6 +109,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     document.getElementById('graft').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'graft' }); });
     document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
     document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
+    document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     trashButton.addEventListener('click', () => {
       clearSearch();
@@ -145,6 +150,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
       if (message.type === 'sessions') {
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
+        document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
         if (editingId) {
           pendingRender = true;
           return;
@@ -408,11 +414,15 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     button { cursor: pointer; }
     button:hover:not(:disabled), select:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
+    /* Stop sits disabled for most of the pane's life, so it keeps the normal fill and fades its own
+       label and border instead. Opacity rather than a grey ink, so the same rule holds at any zoom. */
+    #stop:disabled { background: var(--surface); opacity: 0.4; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
        changes and pushes the prompt editor around. */
-    #finish { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; }
+    /* A fifth larger than the rest of the dock: one letter has to carry the whole run state. */
+    #finish { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; font-size: max(16.8px, calc(14px * var(--z) * 0.85 * 1.2)); }
     /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
     #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 400; white-space: nowrap; z-index: 5; }
     .indicator.done { background: #fff; }
@@ -430,11 +440,11 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       <div class="dock-controls">
         <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
-          <div class="group"><select id="model"></select><select id="effort"></select><button id="send">Send</button><button id="stop">Stop</button></div>
+          <div class="group"><button id="stop">Stop</button><select id="model"></select><select id="effort"></select></div>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="top">Top</button><button id="bottom">Bottom</button><button id="prev">Prev</button><button id="next">Next</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — Ctrl-click hides this window for the shot">Cap</button></div>
+          <div class="group"><button id="prev" title="Previous response">▲</button><button id="next" title="Next response">▼</button><button id="top" title="First response">▲▲</button><button id="bottom" title="Last response">▼▼</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — Ctrl-click hides this window for the shot">Cap</button></div>
         </div>
       </div>
     </div>
@@ -530,7 +540,6 @@ ${zoomScript(z)}
       window.clearTimeout(draftTimer);
       sendDraft('draftBlur');
     });
-    document.getElementById('send').addEventListener('click', submitPrompt);
     stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
     document.getElementById('top').addEventListener('click', () => selectBlock(0));
     document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
@@ -787,10 +796,10 @@ ${zoomScript(z)}
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
-      document.getElementById('context').textContent = 'ctx ' + Math.round((used || 0) / 1000) + '/' + inK(compactAt);
+      document.getElementById('context').textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
       const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
       const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
-      document.getElementById('turns').textContent = 'turns ' + turnsSoFar + '/' + turnLimit;
+      document.getElementById('turns').textContent = turnsSoFar + '/' + turnLimit;
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);

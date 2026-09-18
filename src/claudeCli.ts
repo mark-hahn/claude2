@@ -393,8 +393,10 @@ export class ClaudeCliRunner {
             // run, so it runs far past the window. Only a stream_event carries a real context level.
           }
           const resultText = stringOf(message.result);
-          // Tool lines alone do not count as a response, so the result text still has to land after them.
-          if (!sawTextDelta && resultText) {
+          const isError = message.is_error === true;
+          // Tool lines alone do not count as a response, so the result text still has to land after
+          // them. An error result's text is the error itself and is reported there instead.
+          if (!sawTextDelta && resultText && !isError) {
             closeToolBatch();
             responseText += resultText;
             options.onText(resultText);
@@ -408,8 +410,11 @@ export class ClaudeCliRunner {
             emitStatus();
           }
           stopReason = stringOf(message.stop_reason) || stringOf(message.terminal_reason);
-          if (message.is_error === true) {
-            resultError = readableResultError(stringOf(message.subtype), options.limits.maxTurns);
+          if (isError) {
+            const subtype = stringOf(message.subtype);
+            // An auth failure arrives as is_error under subtype "success", with the real story in
+            // the result text; only a true error_ subtype has a readable form of its own.
+            resultError = subtype.startsWith("error_") ? readableResultError(subtype, options.limits.maxTurns) : resultText || readableResultError(subtype, options.limits.maxTurns);
           }
         }
       };

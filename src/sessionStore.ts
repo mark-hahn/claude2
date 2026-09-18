@@ -137,6 +137,16 @@ export class SessionStore {
     return turn;
   }
 
+  public async removeTurn(sessionId: string, turnId: string): Promise<void> {
+    const session = this.get(sessionId);
+    if (!session) {
+      return;
+    }
+    session.turns = session.turns.filter((candidate) => candidate.id !== turnId);
+    session.updatedAt = Date.now();
+    await this.save();
+  }
+
   public patchTurn(sessionId: string, turnId: string, patch: Partial<ClaudeTurn>, persist: boolean): ClaudeTurn | undefined {
     const session = this.get(sessionId);
     const turn = session?.turns.find((candidate) => candidate.id === turnId);
