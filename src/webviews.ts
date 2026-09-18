@@ -422,7 +422,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
        changes and pushes the prompt editor around. */
     /* A fifth larger than the rest of the dock: one letter has to carry the whole run state. */
-    #finish { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; font-size: max(16.8px, calc(14px * var(--z) * 0.85 * 1.2)); }
+    #finish, #cycle { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; font-size: max(16.8px, calc(14px * var(--z) * 0.85 * 1.2)); }
+    /* Same pill, but the letter reads as a control rather than as state, so it stays at dock weight. */
+    #cycle { font-size: inherit; font-weight: 400; }
     /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
     #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 400; white-space: nowrap; z-index: 5; }
     .indicator.done { background: #fff; }
@@ -440,7 +442,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
       <div class="dock-controls">
         <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
-          <div class="group"><button id="stop">Stop</button><select id="model"></select><select id="effort"></select></div>
+          <div class="group"><button id="stop">Stop</button><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
@@ -491,6 +493,14 @@ ${zoomScript(z)}
     const stopButton = document.getElementById('stop');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
+    const cycleButton = document.getElementById('cycle');
+
+    // The two pairings worth a one-click switch. The pickers themselves stay free: this only steps
+    // between these, and lands back on the first from anything else.
+    const PICK_PRESETS = [
+      { model: 'claude-opus-5', effort: 'high' },
+      { model: 'claude-fable-5', effort: 'xhigh' },
+    ];
 
     fillSelect(modelSelect, models, defaultModel);
     fillSelect(effortSelect, efforts, defaultEffort);
@@ -498,6 +508,8 @@ ${zoomScript(z)}
     // reopening this session later comes up on the same model and effort.
     modelSelect.addEventListener('change', sendPicks);
     effortSelect.addEventListener('change', sendPicks);
+    cycleButton.addEventListener('click', cyclePicks);
+    describePicks();
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -584,7 +596,23 @@ ${zoomScript(z)}
     }
 
     function sendPicks() {
+      describePicks();
       vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value });
+    }
+
+    // Step to the next preset. A pairing set by hand through the pickers matches none of them, so
+    // findIndex gives -1 and the first preset is where the next click lands.
+    function cyclePicks() {
+      const at = PICK_PRESETS.findIndex((preset) => preset.model === modelSelect.value && preset.effort === effortSelect.value);
+      const next = PICK_PRESETS[(at + 1) % PICK_PRESETS.length];
+      modelSelect.value = next.model;
+      effortSelect.value = next.effort;
+      sendPicks();
+    }
+
+    // The letter says nothing about what is selected, so the hover does.
+    function describePicks() {
+      cycleButton.title = modelSelect.value + ' / ' + effortSelect.value + ' — click for the next preset';
     }
 
     function sendDraft(type) {
