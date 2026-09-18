@@ -1,4 +1,6 @@
 
+compacting indicator
+
 stack prompt blocks when room
 
 ======================
