@@ -424,6 +424,7 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
     this.postConversationState(sessionId);
+    this.refreshSidebar();
     if (focusPrompt) {
       // A brand-new panel's webview has not loaded yet, so the message would be dropped;
       // `conversationReady` replays it. Posting now covers a panel that is already up.
@@ -599,6 +600,8 @@ class Claude2Controller implements vscode.Disposable {
       if (this.managementPane === "cap") {
         void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
       }
+      // The first picture of the session turns the sidebar's Cap button on.
+      this.refreshSidebar();
     } catch (error) {
       this.pendingCaptures.delete(sessionId);
       void vscode.window.showErrorMessage(`Screen capture failed: ${errorMessage(error)}`);
@@ -663,6 +666,23 @@ class Claude2Controller implements vscode.Disposable {
 
   public isAuthNeeded(): boolean {
     return this.authNeeded;
+  }
+
+  // What the sidebar's Close button works down: a session tab, or the management pane once
+  // none are left. With neither up there is nothing to close and the button greys out.
+  public hasOpenPanes(): boolean {
+    return this.conversationPanels.size > 0 || this.managementPanel !== null;
+  }
+
+  // The Cap pane has no picture to show until a capture has been taken this session.
+  public hasCapture(): boolean {
+    return this.lastCapture !== null;
+  }
+
+  // The md pane shows the selected response, so an editor pane with no turn in it leaves
+  // the sidebar's md button with nothing to open.
+  public hasSelectedResponse(): boolean {
+    return this.selectedResponse() !== null;
   }
 
   // Resolves to the signed-in account summary, or null when the user cancelled the code box.
@@ -873,6 +893,8 @@ class Claude2Controller implements vscode.Disposable {
     };
     await this.store.appendTurn(sessionId, turn);
     this.postConversationState(sessionId);
+    // The first turn gives the sidebar's md button something to show.
+    this.refreshSidebar();
     if (wasFirstPrompt) {
       void this.nameSessionFromPrompt(sessionId, prompt, selectedModel);
     }
@@ -1081,6 +1103,8 @@ class Claude2Controller implements vscode.Disposable {
           resolver(false);
         }
         this.leaveResolvers.clear();
+        // Closing the last pane leaves the sidebar's Close button with nothing to do.
+        this.refreshSidebar();
       });
     }
     this.managementPane = pane;
@@ -1092,6 +1116,7 @@ class Claude2Controller implements vscode.Disposable {
     this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Graft";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage, this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
+    this.refreshSidebar();
   }
 
   // `graft viz --export` packages the graph into one self-contained html page; no
@@ -1402,6 +1427,9 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       sessions: this.controller.sessions(),
       selectedId: this.controller.selectedSessionId(),
       authNeeded: this.controller.isAuthNeeded(),
+      panesOpen: this.controller.hasOpenPanes(),
+      hasCapture: this.controller.hasCapture(),
+      hasResponse: this.controller.hasSelectedResponse(),
     });
   }
 }

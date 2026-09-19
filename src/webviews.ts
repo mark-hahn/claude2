@@ -26,7 +26,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .row { display: flex; flex-wrap: wrap; gap: 7px; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; min-height: 31px; cursor: pointer; }
     .top button { height: 25px; min-height: 0; flex: none; padding: 0; }
-    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    /* The same grey-out the footer's dock controls use: label and border fade together, so the
+       two never disagree about whether the button does anything. */
+    button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
     #graft { width: 52px; }
@@ -69,13 +72,13 @@ ${tooltipStyle()}  </style>
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
         <button id="graft" title="Graft graph">Graft</button>
-        <button id="cap" title="Show the latest screen capture">Cap</button>
+        <button id="cap" title="Show the latest screen capture" disabled>Cap</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
-        <button id="markdown" title="Show the selected response as markdown">md</button>
+        <button id="markdown" title="Show the selected response as markdown" disabled>md</button>
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
-        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane">Close</button>
+        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
         <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
       </div>
@@ -163,6 +166,12 @@ ${tooltipScript()}
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
+        // Close has nothing to close with no Claude2 pane up, and Cap nothing to show
+        // until a screenshot has been taken.
+        document.getElementById('close').disabled = message.panesOpen !== true;
+        document.getElementById('cap').disabled = message.hasCapture !== true;
+        // md opens the selected response, so an editor pane with no turn in it leaves it dead.
+        document.getElementById('markdown').disabled = message.hasResponse !== true;
         if (editingId) {
           pendingRender = true;
           return;
