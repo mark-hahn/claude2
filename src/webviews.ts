@@ -194,8 +194,10 @@ ${tooltipScript()}
         list.appendChild(empty);
         return;
       }
-      for (const session of visible) {
+      visible.forEach((session, index) => {
         const trashed = searchText ? session.trashed === true : showTrash;
+        // Everything the trash list shows below this card, oldest end first: the ctrl-click sweep.
+        const olderIds = trashed ? visible.slice(index + 1).filter((other) => other.trashed === true).map((other) => other.id) : [];
         const card = document.createElement('div');
         card.className = trashed ? 'card trashed' : 'card';
         if (session.id === selectedId) {
@@ -227,14 +229,23 @@ ${tooltipScript()}
         trash.textContent = '\u{1F5D1}';
         // Same icon, two meanings: one hop to the trash, then gone for good.
         trash.title = trashed
-          ? 'Delete this session permanently (ctrl-click to skip the confirmation)'
+          ? (olderIds.length > 0
+            ? 'Delete this session permanently (ctrl-click to delete the ' + olderIds.length + ' older session' + (olderIds.length === 1 ? '' : 's') + ' below it instead)'
+            : 'Delete this session permanently')
           : 'Move this session to the trash';
         trash.addEventListener('pointerdown', (event) => event.stopPropagation());
         trash.addEventListener('click', (event) => {
           event.stopPropagation();
           if (trashed) {
-            // Permanent delete asks first, unless ctrl says the user already means it.
-            vscode.postMessage({ type: 'deleteSession', sessionId: session.id, confirm: !event.ctrlKey });
+            // Ctrl-click sweeps the older half of the trash: every card below this one goes,
+            // this one stays. Either way the extension asks before anything is forgotten.
+            if (event.ctrlKey) {
+              if (olderIds.length > 0) {
+                vscode.postMessage({ type: 'deleteSessions', sessionIds: olderIds });
+              }
+              return;
+            }
+            vscode.postMessage({ type: 'deleteSession', sessionId: session.id });
             return;
           }
           vscode.postMessage({ type: 'trashSession', sessionId: session.id });
@@ -288,7 +299,7 @@ ${tooltipScript()}
           vscode.postMessage({ type: 'openSession', sessionId: session.id });
         });
         list.appendChild(card);
-      }
+      });
       // Only chase the selection when it actually moves: a refresh mid-stream must not
       // yank the list back while the user is scrolling through other cards.
       if (selectedCard && selectedId !== scrolledId) {

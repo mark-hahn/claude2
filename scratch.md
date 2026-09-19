@@ -1,4 +1,7 @@
 
+crop
+
+delete all sess cards below trash ctrl-click
 
 ======================
 

@@ -195,12 +195,15 @@ class Claude2Controller implements vscode.Disposable {
       this.refreshSidebar();
     } else if (type === "deleteAllTrashed") {
       await this.deleteAllTrashed();
+    } else if (type === "deleteSessions") {
+      const ids = Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf).filter((id) => id !== "") : [];
+      await this.deleteTrashedSessions(ids, `Permanently delete the ${ids.length} older session${ids.length === 1 ? "" : "s"} below this one?`);
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
     } else if (type === "deleteSession") {
       const sessionId = stringOf(record?.sessionId);
-      if (record?.confirm !== false && !(await this.confirmDelete(sessionId))) {
+      if (!(await this.confirmDelete(sessionId))) {
         return;
       }
       await this.deleteSession(sessionId);
@@ -268,30 +271,36 @@ class Claude2Controller implements vscode.Disposable {
     const name = this.store.get(sessionId)?.name || "this session";
     const answer = await vscode.window.showWarningMessage(
       `Permanently delete "${name}"?`,
-      { modal: true, detail: "This cannot be undone. Ctrl-click the trash icon to skip this prompt." },
+      { modal: true, detail: "This cannot be undone." },
       "Delete",
     );
     return answer === "Delete";
   }
 
-  // Ctrl-click on the trash button while the trash list is showing empties it for good. One
-  // prompt covers the whole sweep, and each session then goes the same way as a single
-  // permanent delete: forgotten outright, tab and all.
+  // Ctrl-click on the trash button while the trash list is showing empties it for good.
   private async deleteAllTrashed(): Promise<void> {
-    const trashed = this.store.all().filter((session) => session.trashed);
-    if (trashed.length === 0) {
+    const ids = this.store.all().filter((session) => session.trashed).map((session) => session.id);
+    await this.deleteTrashedSessions(ids, `Permanently delete ${ids.length} trashed session${ids.length === 1 ? "" : "s"}?`);
+  }
+
+  // The bulk sweeps of the trash. One prompt covers the whole run, and each session then goes
+  // the same way as a single permanent delete: forgotten outright, tab and all. Only trashed
+  // sessions are ever taken, so a stale id list from the sidebar cannot reach a live session.
+  private async deleteTrashedSessions(sessionIds: readonly string[], question: string): Promise<void> {
+    const ids = sessionIds.filter((id) => this.store.get(id)?.trashed === true);
+    if (ids.length === 0) {
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `Permanently delete ${trashed.length} trashed session${trashed.length === 1 ? "" : "s"}?`,
+      question,
       { modal: true, detail: "This cannot be undone." },
       "Delete",
     );
     if (answer !== "Delete") {
       return;
     }
-    for (const session of trashed) {
-      await this.deleteSession(session.id);
+    for (const id of ids) {
+      await this.deleteSession(id);
     }
   }
 
