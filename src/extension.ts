@@ -14,6 +14,12 @@ import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type Convers
 let output: vscode.OutputChannel | undefined;
 let controller: Claude2Controller | undefined;
 
+// What the Cap pane is shown: the picture, where it lives, how many crops it is deep, and
+// whether it is still armed to ride with the next prompt (if not, the pane offers Send Again).
+type CaptureView = { path: string | null; dataUri: string | null; depth: number; armed: boolean };
+
+const PNG_DATA_URI = "data:image/png;base64,";
+
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Claude2");
   context.subscriptions.push(output);
@@ -59,6 +65,9 @@ class Claude2Controller implements vscode.Disposable {
   private readonly pendingCaptures = new Map<string, string>();
   // Most recent capture taken, kept after submit or discard so the Cap pane can still show it.
   private lastCapture: string | null = null;
+  // The pictures each crop in the Cap pane started from, oldest first: a plain click in a cropped
+  // image pops one back. A fresh capture, or toggling Cap off, empties it.
+  private readonly cropStack: string[] = [];
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
@@ -242,14 +251,22 @@ class Claude2Controller implements vscode.Disposable {
     this.saveDrafts();
   }
 
-  // Forget every session with neither a turn nor an unsent draft, except `exceptId`.
+  // Forget every session with nothing in it -- no turn, no unsent draft, no armed capture --
+  // except `exceptId`. An armed screenshot counts the same as typed text: it is content waiting
+  // to be sent, and the Cap pane is reached through the sidebar, which is what runs this sweep.
   private async discardEmptySessions(exceptId = ""): Promise<void> {
     // The sidebar click and the prompt box's blur race each other across two webviews;
     // let the blur's draft message land first so a typed draft is never dropped.
     await new Promise((resolve) => setTimeout(resolve, 60));
     const stale = this.store
       .all()
-      .filter((session) => session.id !== exceptId && session.turns.length === 0 && !this.drafts.get(session.id));
+      .filter(
+        (session) =>
+          session.id !== exceptId &&
+          session.turns.length === 0 &&
+          !this.drafts.get(session.id) &&
+          !this.pendingCaptures.has(session.id),
+      );
     if (stale.length === 0) {
       return;
     }
@@ -428,6 +445,7 @@ class Claude2Controller implements vscode.Disposable {
       await this.captureForSession(sessionId, record?.hideWindow === true);
     } else if (type === "discardCapture") {
       this.pendingCaptures.delete(sessionId);
+      this.cropStack.length = 0;
       this.postCapState(sessionId);
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
@@ -534,6 +552,8 @@ class Claude2Controller implements vscode.Disposable {
       const file = await captureScreen(hideWindow);
       this.pendingCaptures.set(sessionId, file);
       this.lastCapture = file;
+      // A new picture starts its own crop history; the old stack's files are not in it.
+      this.cropStack.length = 0;
       if (this.managementPane === "cap") {
         void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
       }
@@ -1119,6 +1139,10 @@ class Claude2Controller implements vscode.Disposable {
       this.managementPanel?.dispose();
       return;
     }
+    if (type === "sendCaptureAgain") {
+      this.sendCaptureAgain();
+      return;
+    }
     if (type === "loadInstructions") {
       await this.reply(requestId, async () => await this.instructions.read());
     } else if (type === "saveInstructions") {
@@ -1131,17 +1155,84 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => this.selectedResponse());
     } else if (type === "loadCapture") {
       await this.reply(requestId, async () => await this.captureView());
+    } else if (type === "cropCapture") {
+      await this.reply(requestId, async () => await this.cropCapture(stringOf(record?.dataUri)));
+    } else if (type === "undoCrop") {
+      await this.reply(requestId, async () => await this.undoCrop());
     }
   }
 
   // The Cap pane's image, as a data URI: the PNG sits in a temp dir outside any root the
   // webview may load file URIs from, and this also works when it was taken on another machine.
-  private async captureView(): Promise<{ path: string | null; dataUri: string | null }> {
+  // depth is how many crops deep the picture is, so the pane knows whether a click can undo one.
+  private async captureView(): Promise<CaptureView> {
     if (!this.lastCapture) {
-      return { path: null, dataUri: null };
+      return { path: null, dataUri: null, depth: 0, armed: false };
     }
     const bytes = await fs.readFile(this.lastCapture);
-    return { path: this.lastCapture, dataUri: `data:image/png;base64,${bytes.toString("base64")}` };
+    return {
+      path: this.lastCapture,
+      dataUri: `data:image/png;base64,${bytes.toString("base64")}`,
+      depth: this.cropStack.length,
+      armed: this.pendingCaptures.get(this.capTargetId()) === this.lastCapture,
+    };
+  }
+
+  // The conversation the Cap pane steps back to, and so the one its picture arms.
+  private capTargetId(): string {
+    return this.conversationPanels.has(this.lastConversationId)
+      ? this.lastConversationId
+      : [...this.conversationPanels.keys()].pop() ?? "";
+  }
+
+  // "Send Again": the picture already went out with a prompt, which left its Cap button off.
+  // Arming it again and stepping back to the conversation puts the cursor where the next
+  // prompt is typed, and that one carries the same picture -- crops and all.
+  private sendCaptureAgain(): void {
+    const sessionId = this.capTargetId();
+    if (!this.lastCapture || !sessionId) {
+      return;
+    }
+    this.pendingCaptures.set(sessionId, this.lastCapture);
+    this.postCapState(sessionId);
+    this.managementPanel?.dispose();
+    this.revealConversation();
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
+  }
+
+  // A drag in the Cap pane. The webview cut the rectangle out on a canvas, so all that is left is
+  // to land the PNG beside the picture it came from -- same temp dir, so the CLI reads it exactly
+  // the way it reads a capture -- and remember what it replaced.
+  private async cropCapture(dataUri: string): Promise<CaptureView> {
+    const base64 = dataUri.startsWith(PNG_DATA_URI) ? dataUri.slice(PNG_DATA_URI.length) : "";
+    if (!this.lastCapture || !base64) {
+      return await this.captureView();
+    }
+    const file = path.join(path.dirname(this.lastCapture), `claude2-crop-${Date.now()}.png`);
+    await fs.writeFile(file, Buffer.from(base64, "base64"));
+    this.cropStack.push(this.lastCapture);
+    this.showCapture(file);
+    return await this.captureView();
+  }
+
+  private async undoCrop(): Promise<CaptureView> {
+    const previous = this.cropStack.pop();
+    if (previous) {
+      this.showCapture(previous);
+    }
+    return await this.captureView();
+  }
+
+  // The picture on top takes the old one's place everywhere: the pane shows it, and a session
+  // holding the old one armed now sends this one with its next prompt.
+  private showCapture(file: string): void {
+    const previous = this.lastCapture;
+    this.lastCapture = file;
+    for (const [sessionId, armed] of this.pendingCaptures) {
+      if (armed === previous) {
+        this.pendingCaptures.set(sessionId, file);
+      }
+    }
   }
 
   private async reply(requestId: string, work: () => Promise<unknown>): Promise<void> {

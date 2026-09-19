@@ -1,9 +1,21 @@
 
-crop
-
-delete all sess cards below trash ctrl-click
+when i open an empty session and do a capture and open the capture pane and close the pane the editor pane is gone so i can't add a prompt text to send with the image -- what conditions close an empty editor pane?
 
 ======================
+
+# screen capture cropping
+- when cap button in sidebar is clicked the pending image is shown
+- we want to be able to crop the image before sending it with a prompt
+- the steps to crop are:
+  - open image
+  - click and drag a rectangle on the image
+    - it can be dragged in any direction
+  - when released then crop the image so only the image in the rectangle is preserved
+- a cropped image may be cropped again to shrink it more
+  - on each crop put the previous image before the crop on a stack cropStack
+  - on a non-drag click in a cropped image undo the last crop by popping cropStack
+- a prompt send includes the top cropped image
+- toggling off the cap button in the footer disables sending the image and clears cropStack
 
 when in trash mode and trash button in sidebar is ctrl-clicked then all sessions in the trash should be permanently deleted after a confirmation dialog
 

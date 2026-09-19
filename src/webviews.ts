@@ -1212,23 +1212,34 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    .frame { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
-    img { max-width: 100%; max-height: 100%; object-fit: contain; }
+    .hint { flex: none; font-size: calc(14px * var(--z)); }
+    /* position: relative so the crop rectangle can be laid over the picture; the image stays a
+       direct grid item, which is what lets its max-height resolve against the frame. */
+    .frame { position: relative; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; user-select: none; -webkit-user-drag: none; touch-action: none; }
+    .sel { position: absolute; border: 2px solid #1a6fd4; background: rgba(26,111,212,0.16); pointer-events: none; }
 ${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Capture</h1><span id="path" class="path"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
-    <div class="frame"><img id="shot" hidden><div id="empty" hidden></div></div>
+    <div class="title"><h1>Capture</h1><span id="path" class="path"></span><span id="hint" class="hint"></span><div class="actions"><button id="again" hidden>Send Again</button><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="frame" id="frame"><img id="shot" hidden><div id="sel" class="sel" hidden></div><div id="empty" hidden></div></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
 ${tooltipScript()}
     const img = document.getElementById('shot');
+    const frame = document.getElementById('frame');
+    const sel = document.getElementById('sel');
     const empty = document.getElementById('empty');
     const pathLabel = document.getElementById('path');
+    const hint = document.getElementById('hint');
+    const again = document.getElementById('again');
     const pending = new Map();
+    // How many crops deep the shown picture is; a plain click can only undo when that is above 0.
+    let depth = 0;
+    let drag = null;
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -1239,6 +1250,9 @@ ${tooltipScript()}
         void load();
       }
     });
+    // Send Again hands the picture back to the conversation's Cap button and closes this pane,
+    // so the next prompt typed there carries it.
+    again.addEventListener('click', () => vscode.postMessage({ type: 'sendCaptureAgain' }));
     document.getElementById('reload').addEventListener('click', () => void load());
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     void load();
@@ -1249,20 +1263,113 @@ ${tooltipScript()}
     }
 
     async function load() {
-      const reply = await request('loadCapture', {});
+      show(await request('loadCapture', {}));
+    }
+
+    function show(reply) {
       const payload = reply.ok ? reply.payload : null;
+      depth = payload && typeof payload.depth === 'number' ? payload.depth : 0;
       if (payload && payload.dataUri) {
         img.src = payload.dataUri;
         img.hidden = false;
         empty.hidden = true;
         pathLabel.textContent = payload.path || '';
+        hint.textContent = depth > 0 ? 'drag to crop · click to undo a crop' : 'drag to crop';
+        // Already sent (or the Cap button was turned off): offer to arm it for another prompt.
+        again.hidden = payload.armed === true;
       } else {
         img.removeAttribute('src');
         img.hidden = true;
         empty.hidden = false;
         empty.textContent = reply.ok ? 'No capture to show yet — click Cap in a conversation.' : 'Could not load the capture: ' + (reply.error || 'unknown error');
         pathLabel.textContent = '';
+        hint.textContent = '';
+        again.hidden = true;
       }
+      sel.hidden = true;
+    }
+
+    // Where the picture actually sits inside the img box, and how many of its own pixels one
+    // screen pixel covers: object-fit letterboxes it, so the box alone does not say.
+    function geometry() {
+      const box = img.getBoundingClientRect();
+      const scale = Math.min(box.width / img.naturalWidth, box.height / img.naturalHeight);
+      const width = img.naturalWidth * scale;
+      const height = img.naturalHeight * scale;
+      return { left: box.left + (box.width - width) / 2, top: box.top + (box.height - height) / 2, width, height, scale };
+    }
+
+    function clamp(value, low, high) {
+      return Math.min(high, Math.max(low, value));
+    }
+
+    // The rectangle from the drag's start to the pointer, in the picture's own pixels,
+    // however it was dragged.
+    function dragRect(from, to) {
+      const g = geometry();
+      const x1 = (clamp(from.x, g.left, g.left + g.width) - g.left) / g.scale;
+      const y1 = (clamp(from.y, g.top, g.top + g.height) - g.top) / g.scale;
+      const x2 = (clamp(to.clientX, g.left, g.left + g.width) - g.left) / g.scale;
+      const y2 = (clamp(to.clientY, g.top, g.top + g.height) - g.top) / g.scale;
+      return { g, x: Math.round(Math.min(x1, x2)), y: Math.round(Math.min(y1, y2)), w: Math.round(Math.abs(x2 - x1)), h: Math.round(Math.abs(y2 - y1)) };
+    }
+
+    // Pointer events with capture, not mouse events: this pane is an iframe, and a drag that
+    // leaves it stops delivering mousemove/mouseup here -- the rectangle freezes at the edge it
+    // was clamped to and the release is never seen. Capture keeps every move and the release
+    // coming to the image no matter where the pointer ends up.
+    img.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !img.getAttribute('src')) return;
+      event.preventDefault();
+      img.setPointerCapture(event.pointerId);
+      drag = { x: event.clientX, y: event.clientY, moved: false };
+      sel.hidden = true;
+    });
+    img.addEventListener('pointermove', (event) => {
+      if (!drag) return;
+      // The button is already up: a release went somewhere that swallowed it, so end the drag
+      // on this move rather than leaving it stuck armed.
+      if ((event.buttons & 1) === 0) {
+        void finish(event);
+        return;
+      }
+      if (!drag.moved && Math.abs(event.clientX - drag.x) < 4 && Math.abs(event.clientY - drag.y) < 4) return;
+      drag.moved = true;
+      const rect = dragRect(drag, event);
+      // The rectangle is placed against the frame's padding box, which is what it scrolls within.
+      const frameBox = frame.getBoundingClientRect();
+      sel.style.left = (rect.g.left - frameBox.left + frame.scrollLeft + rect.x * rect.g.scale) + 'px';
+      sel.style.top = (rect.g.top - frameBox.top + frame.scrollTop + rect.y * rect.g.scale) + 'px';
+      sel.style.width = (rect.w * rect.g.scale) + 'px';
+      sel.style.height = (rect.h * rect.g.scale) + 'px';
+      sel.hidden = false;
+    });
+    img.addEventListener('pointerup', (event) => void finish(event));
+    img.addEventListener('pointercancel', () => {
+      drag = null;
+      sel.hidden = true;
+    });
+
+    async function finish(event) {
+      if (!drag) return;
+      const started = drag;
+      drag = null;
+      sel.hidden = true;
+      if (!img.getAttribute('src')) return;
+      // A click that never moved undoes the last crop instead of making one.
+      if (!started.moved) {
+        if (depth > 0) show(await request('undoCrop', {}));
+        return;
+      }
+      const rect = dragRect(started, event);
+      if (rect.w < 2 || rect.h < 2) return;
+      // Cutting the rectangle out here rather than in the extension keeps the picture in one
+      // place: the extension only ever writes the PNG this hands it.
+      const canvas = document.createElement('canvas');
+      canvas.width = rect.w;
+      canvas.height = rect.h;
+      canvas.getContext('2d').drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+      show(await request('cropCapture', { dataUri: canvas.toDataURL('image/png') }));
     }
   </script>
 </body>
