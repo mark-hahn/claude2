@@ -1,7 +1,8 @@
 
-delete all
 
-delete session card logic
+======================
+
+when in trash mode and trash button in sidebar is ctrl-clicked then all sessions in the trash should be permanently deleted after a confirmation dialog
 
 # footer cleanup
 - remove ▲,, ▼, and ▲▲ buttons.
@@ -23,9 +24,6 @@ delete session card logic
   - the background of all buttons should always be white
   - when disabled all of button should be 50% gray
     - this overrides the instruction that there are no grays
-
-
-======================
 
 don't close a tool tip when pane scrolls -- only close it when mouse leaves
 

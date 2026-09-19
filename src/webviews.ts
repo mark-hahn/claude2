@@ -113,18 +113,20 @@ ${tooltipScript()}
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     trashButton.addEventListener('click', (event) => {
-      // Ctrl-click on the active list is the bulk sweep: everything goes to the trash at once.
-      if (event.ctrlKey && !showTrash) {
+      // Ctrl-click is the bulk action for whichever list is showing: on the active list
+      // everything goes to the trash at once, on the trash list everything in it is
+      // deleted for good (the extension asks first).
+      if (event.ctrlKey) {
         clearSearch();
         vscode.postMessage({ type: 'discardEmpty' });
-        vscode.postMessage({ type: 'trashAllSessions' });
+        vscode.postMessage({ type: showTrash ? 'deleteAllTrashed' : 'trashAllSessions' });
         return;
       }
       clearSearch();
       vscode.postMessage({ type: 'discardEmpty' });
       showTrash = !showTrash;
       trashButton.classList.toggle('active', showTrash);
-      trashButton.title = showTrash ? 'Show active sessions' : 'Show trashed sessions (ctrl-click to trash every session)';
+      trashButton.title = showTrash ? 'Show active sessions (ctrl-click to permanently delete every trashed session)' : 'Show trashed sessions (ctrl-click to trash every session)';
       render();
     });
     searchBox.addEventListener('keydown', (event) => {
