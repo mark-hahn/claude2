@@ -8,7 +8,7 @@ import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./cl
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -473,6 +473,8 @@ class Claude2Controller implements vscode.Disposable {
   // The response box the conversation has selected, as the md pane wants it. The pane opens from
   // the sidebar, so the conversation it reads from is the last one focused. The turn id rides
   // along so the pane can tell a growing response apart from a different one and keep its scroll.
+  // Tool groups never reach the pane: their lines drop here the same way the conversation hides
+  // them — no leading blanks, and runs of blank lines collapse to a single one.
   private selectedResponse(): { turnId: string; prompt: string; text: string } | null {
     const session = this.store.get(this.lastConversationId);
     if (!session || !session.turns.length) {
@@ -482,7 +484,7 @@ class Claude2Controller implements vscode.Disposable {
     const turn = session.turns[index];
     // Same as the conversation pane: a failed turn keeps its partial text and gains the reason.
     const text = turn.error ? `${turn.response}${turn.response ? "\n\n" : ""}${turn.error}` : turn.response;
-    return { turnId: turn.id, prompt: turn.prompt, text };
+    return { turnId: turn.id, prompt: turn.prompt, text: stripToolLines(text) };
   }
 
   private postSelectedResponse(): void {
@@ -1214,6 +1216,25 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       authNeeded: this.controller.isAuthNeeded(),
     });
   }
+}
+
+// Drops the runner's marked tool lines, keeping the blank-line shape the conversation pane
+// produces when tool groups are hidden.
+function stripToolLines(text: string): string {
+  const kept: string[] = [];
+  for (const line of text.split("\n")) {
+    if (line.startsWith(TOOL_LINE_MARK)) {
+      continue;
+    }
+    if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) {
+      continue;
+    }
+    kept.push(line);
+  }
+  while (kept.length && !kept[kept.length - 1].trim()) {
+    kept.pop();
+  }
+  return kept.join("\n");
 }
 
 function paneOf(value: unknown): ManagementPane | null {

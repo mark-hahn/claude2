@@ -1,5 +1,5 @@
 
-don't close a tool tip because pane scrolls -- only close it when mouse leaves
+don't close a tool tip when pane scrolls -- only close it when mouse leaves
 
 ======================
 
