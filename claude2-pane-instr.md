@@ -38,8 +38,10 @@
 - when a block is opened or closed the scrolling should be the minimum possible
 - clicking anywhere in the box toggles the visibility of the tool groups in its own text
   - this is the same as it is now except only in the one box
-  - the default initial state is tool groups visible
-  - the state of the tool visibility in the box is persistant until the extension is reloaded
+  - when a closed box is opened its tool groups are always hidden
+  - the streaming box is the exception: it always shows tool groups, even when the box is clicked
+    - when streaming finishes the box responds to clicks again and follows the rule of
+      having tool groups hidden when the box is opened
 
 ## auto-scrolling rules:
 - scrolling amount should be the minimum amount to follow these rules

@@ -494,10 +494,10 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
-    // Turn ids whose tool groups are hidden. Mirrored to the extension so the set outlives
-    // this webview and comes back when the conversation tab is reopened.
-    let toolsHidden = new Set();
-    let toolsHiddenLoaded = false;
+    // Tool-group visibility for the one open box. Every fresh open starts hidden; the
+    // streaming box forces them shown, and they stay shown once the run ends until the
+    // box is clicked or closed.
+    let toolsVisible = false;
     let shownActiveTurn = null;
     let anchorIndex = 0;
     // At most one box is ever open: the selected block's, and only while this is true.
@@ -548,12 +548,6 @@ ${tooltipScript()}
           draftSent = message.draft;
         }
         if (typeof message.search === 'string') searchText = message.search;
-        // The extension's copy of the hidden-tools set is the persistent one; it is taken
-        // once, at load, so a toggle made here is never clobbered by a state echo.
-        if (!toolsHiddenLoaded && Array.isArray(message.toolsHidden)) {
-          toolsHiddenLoaded = true;
-          toolsHidden = new Set(message.toolsHidden);
-        }
         document.title = session.name || 'Claude2';
         render();
       } else if (message.type === 'turnDelta') {
@@ -781,11 +775,13 @@ ${tooltipScript()}
         anchorIndex = turns.length - 1;
         boxOpen = true;
         boxScrollNext = 'bottom';
+        toolsVisible = false;
       }
       if (pendingTurnCount && turns.length >= pendingTurnCount) {
         anchorIndex = pendingTurnCount - 1;
         boxOpen = true;
         boxScrollNext = 'bottom';
+        toolsVisible = false;
         pendingTurnCount = 0;
       }
       // A run that just started selects and opens its new block. The user is free to move
@@ -857,7 +853,11 @@ ${tooltipScript()}
               return;
             }
             boxOpen = !boxOpen;
-            if (boxOpen) boxScrollNext = 'bottom';
+            if (boxOpen) {
+              boxScrollNext = 'bottom';
+              // Every fresh open starts with the tool groups hidden.
+              toolsVisible = false;
+            }
             render();
           });
           wrapper.appendChild(bar);
@@ -867,9 +867,13 @@ ${tooltipScript()}
           if (index === anchorIndex && boxOpen) {
             const response = document.createElement('div');
             response.className = 'response' + (turn.error ? ' error' : '');
+            // The streaming box always shows its tool groups — they are the run's progress
+            // display. Written into the flag, not just the render, so the lines are still up
+            // when the run ends and stay until the box is clicked or closed.
+            if (isActiveTurn) toolsVisible = true;
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
-            fillResponse(response, turn.response || '', !toolsHidden.has(turn.id) || isActiveTurn);
+            fillResponse(response, turn.response || '', toolsVisible);
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';
@@ -886,15 +890,12 @@ ${tooltipScript()}
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
-              if (toolsHidden.has(turn.id)) {
-                toolsHidden.delete(turn.id);
-              } else {
-                toolsHidden.add(turn.id);
-                // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
-                // start the condensed prose from its first line.
-                boxScrollNext = 'top';
-              }
-              vscode.postMessage({ type: 'toolsHiddenChanged', sessionId, turnIds: Array.from(toolsHidden) });
+              // The streaming box does not answer the toggle; its tool lines stay up.
+              if (status && status.active && status.turnId === turn.id) return;
+              toolsVisible = !toolsVisible;
+              // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
+              // start the condensed prose from its first line.
+              if (!toolsVisible) boxScrollNext = 'top';
               render();
             });
             wrapper.appendChild(response);
@@ -1078,9 +1079,11 @@ ${tooltipScript()}
       pendingTurnCount = 0;
       if (nextIndex === anchorIndex) return;
       anchorIndex = nextIndex;
-      // A selection change always opens the newly selected block, scrolled to its bottom.
+      // A selection change always opens the newly selected block, scrolled to its bottom
+      // and with its tool groups hidden.
       boxOpen = true;
       boxScrollNext = 'bottom';
+      toolsVisible = false;
       render();
     }
 

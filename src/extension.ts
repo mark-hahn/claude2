@@ -50,9 +50,6 @@ class Claude2Controller implements vscode.Disposable {
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
   private readonly selectedTurns = new Map<string, number>();
-  // Turn ids whose tool groups are hidden, per session. Deliberately not persisted to disk:
-  // the setting outlives any one webview but resets when the extension reloads.
-  private readonly toolsHidden = new Map<string, string[]>();
   // Screenshot armed by the Cap button, per session: the PNG path rides along with the next
   // prompt submitted, then the entry clears. Toggling Cap off clears it without sending.
   private readonly pendingCaptures = new Map<string, string>();
@@ -418,9 +415,6 @@ class Claude2Controller implements vscode.Disposable {
       if (sessionId === this.lastConversationId) {
         this.postSelectedResponse();
       }
-    } else if (type === "toolsHiddenChanged") {
-      const turnIds = record?.turnIds;
-      this.toolsHidden.set(sessionId, Array.isArray(turnIds) ? turnIds.filter((id): id is string => typeof id === "string") : []);
     }
   }
 
@@ -1119,7 +1113,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, toolsHidden: this.toolsHidden.get(sessionId) ?? [] });
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText });
     if (sessionId === this.lastConversationId) {
       this.postSelectedResponse();
     }

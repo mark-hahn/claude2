@@ -1,4 +1,8 @@
 
+don't close a tool tip because pane scrolls -- only close it when mouse leaves
+
+======================
+
 # change to conversation pane behavior
 
 ## terminology in these instructions
@@ -77,15 +81,6 @@
   - write the problems to claude2-pane-problems.md and stop
   - make no changes other than writing to claude2-pane-problems.md
 - otherwise implement these instructions immediately
-
-
-
-
-
-
-stack prompt blocks when room
-
-======================
 
 when hovering over prompt bar and tooltip shows the prompt text then prepend the prompt text with the model/effort set when that prompt was posted -- make tool tip text everywhere 20% larger 
 
