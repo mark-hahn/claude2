@@ -2195,9 +2195,12 @@ function tooltipScript(): string {
     tipNode.id = 'tip';
     document.body.appendChild(tipNode);
     let tipTimer = 0;
+    let tipHost = null;
+    let tipX = 0;
 
     function hideTip() {
       clearTimeout(tipTimer);
+      tipHost = null;
       tipNode.classList.remove('shown');
     }
 
@@ -2207,6 +2210,8 @@ function tooltipScript(): string {
     function showTip(text, node, x) {
       tipNode.textContent = text;
       tipNode.classList.add('shown');
+      tipHost = node;
+      tipX = x;
       const box = tipNode.getBoundingClientRect();
       const host = node.getBoundingClientRect();
       let left = x + 4;
@@ -2237,7 +2242,16 @@ function tooltipScript(): string {
     document.addEventListener('mouseout', (event) => { if (!event.relatedTarget) hideTip(); });
     document.addEventListener('mousedown', hideTip, true);
     document.addEventListener('keydown', hideTip, true);
-    window.addEventListener('scroll', hideTip, true);
+    // A scroll under the cursor is not a reason to drop the tip -- only the mouse leaving is. The
+    // bubble is anchored to the host's box, so it has to be re-placed as that box moves.
+    window.addEventListener('scroll', () => {
+      if (!tipHost) return;
+      if (!tipHost.isConnected) {
+        hideTip();
+        return;
+      }
+      showTip(tipNode.textContent || '', tipHost, tipX);
+    }, true);
     window.addEventListener('blur', hideTip);
 `;
 }
