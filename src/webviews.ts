@@ -2180,7 +2180,7 @@ function zoomScript(initial: number): string {
 // Paired with tooltipScript(), which is what actually harvests the `title` attributes.
 function tooltipStyle(): string {
   return `
-    #tip { position: fixed; left: 0; top: 0; z-index: 9999; display: none; max-width: 60ch; padding: 4px 9px; border: 1px solid var(--border, #d9d8d1); border-radius: 6px; background: var(--surface, #fcfcfb); color: var(--ink, #000); font-size: calc(11.2px * var(--z, 1)); line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0,0,0,0.18); pointer-events: none; }
+    #tip { position: fixed; left: 0; top: 0; z-index: 9999; display: none; max-width: 60ch; padding: 4px 9px; border: 1px solid var(--border, #d9d8d1); border-radius: 6px; background: var(--surface, #fcfcfb); color: var(--ink, #000); font-size: calc(12.32px * var(--z, 1)); line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0,0,0,0.18); pointer-events: none; }
     #tip.shown { display: block; }
 `;
 }
