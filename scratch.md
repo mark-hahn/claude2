@@ -1,7 +1,9 @@
 
-don't show graft status line and end of response -- it starts with 🌱
+
 
 ======================
+
+don't show graft status line and end of response -- it starts with 🌱
 
 when i open an empty session and do a capture and open the capture pane and close the pane the editor pane is gone so i can't add a prompt text to send with the image -- what conditions close an empty editor pane?
 

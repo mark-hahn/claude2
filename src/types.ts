@@ -12,6 +12,10 @@ export const DEFAULT_EFFORT = "high";
 // **bold** runs too. Zero width, so it shows as nothing wherever a response is read as plain text.
 export const TOOL_LINE_MARK = "⁣";
 
+// Graft has the model close a response with a savings tally line opening with this sprout. That
+// line is run bookkeeping, not answer text, so every view of a response drops lines starting with it.
+export const GRAFT_TALLY_MARK = "🌱";
+
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
 

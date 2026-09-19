@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
+import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, GRAFT_TALLY_MARK, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "graft" | "markdown" | "cap";
 
@@ -408,6 +408,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
+  const graftTallyMark = JSON.stringify(GRAFT_TALLY_MARK);
   return `<!doctype html>
 <html lang="en" style="--z: ${z}">
 <head>
@@ -505,6 +506,7 @@ ${tooltipScript()}
     const compactAt = Math.max(1000, contextWindow - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
+    const GRAFT_TALLY_MARK = ${graftTallyMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     // When the last status arrived, so the elapsed time it carries can be run forward locally
@@ -710,7 +712,8 @@ ${tooltipScript()}
     // of blank lines collapse to a single one. The streaming response keeps its tool lines
     // either way, since they are how the run's progress reads.
     function fillResponse(box, text, showTools) {
-      let lines = text.split('\\n');
+      // Graft's closing tally line is run bookkeeping, not answer text; no box ever shows it.
+      let lines = text.split('\\n').filter((line) => !line.startsWith(GRAFT_TALLY_MARK));
       if (!showTools) {
         const kept = [];
         for (const line of lines) {

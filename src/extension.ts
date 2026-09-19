@@ -8,7 +8,7 @@ import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./cl
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -1406,12 +1406,12 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
-// Drops the runner's marked tool lines, keeping the blank-line shape the conversation pane
-// produces when tool groups are hidden.
+// Drops the runner's marked tool lines and graft's closing tally line, keeping the blank-line
+// shape the conversation pane produces when tool groups are hidden.
 function stripToolLines(text: string): string {
   const kept: string[] = [];
   for (const line of text.split("\n")) {
-    if (line.startsWith(TOOL_LINE_MARK)) {
+    if (line.startsWith(TOOL_LINE_MARK) || line.startsWith(GRAFT_TALLY_MARK)) {
       continue;
     }
     if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) {
