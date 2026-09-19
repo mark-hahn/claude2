@@ -38,13 +38,14 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
+    #sessionCounts { margin-left: 10px; align-self: center; font-size: 15.12px; color: var(--ink); }
     .search-row { display: flex; gap: 7px; }
     #searchBox { flex: 1; min-width: 0; box-sizing: border-box; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
     #searchBox::placeholder { color: var(--ink); }
     #searchBox.searching { background: #cfe8ff; }
     #searchClear { width: 25px; }
     .sessions { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
-    .card { position: relative; box-sizing: border-box; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
+    .card { position: relative; box-sizing: border-box; flex: none; width: 100%; text-align: left; white-space: normal; min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; }
     .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .card.selected { background: #fbf3c4; border-color: #ddd08a; }
     .card.selected:hover { background: linear-gradient(var(--wash), var(--wash)), #fbf3c4; }
@@ -54,7 +55,6 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-trash:hover { background: #fbd9d9; }
     .card-restore { display: none; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
     .card:hover .card-restore { display: block; }
-    .card.trashed { padding-bottom: 34px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
     .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
@@ -77,6 +77,7 @@ ${tooltipStyle()}  </style>
         <button id="new" title="New Claude2 session">+</button>
         <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane">Close</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
+        <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
       </div>
       <div class="search-row">
         <input id="searchBox" type="text" placeholder="Search" spellcheck="false">
@@ -98,6 +99,7 @@ ${tooltipScript()}
     let pendingRender = false;
     const list = document.getElementById('sessions');
     const trashButton = document.getElementById('trash');
+    const sessionCounts = document.getElementById('sessionCounts');
     const searchBox = document.getElementById('searchBox');
     // Search mode is on while this is non-empty. Enter in the box starts it; the X, an
     // empty Enter, or any top button ends it. Card clicks leave it alone on purpose, so
@@ -171,6 +173,9 @@ ${tooltipScript()}
 
     function render() {
       list.replaceChildren();
+      // Header tally: active sessions over trashed ones, whichever list is showing.
+      const trashCount = sessions.filter((session) => session.trashed === true).length;
+      sessionCounts.textContent = (sessions.length - trashCount) + '/' + trashCount;
       let selectedCard = null;
       let visible;
       const counts = new Map();
