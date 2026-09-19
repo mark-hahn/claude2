@@ -535,7 +535,6 @@ ${tooltipScript()}
     let programmaticScroll = false;
     let resizeTimer = 0;
     let draftSent = '';
-    let draftTimer = 0;
     let selectionSent = -1;
     const historyBox = document.getElementById('history');
     const promptBox = document.getElementById('prompt');
@@ -603,15 +602,12 @@ ${tooltipScript()}
         submitPrompt();
       }
     });
-    promptBox.addEventListener('input', () => {
-      window.clearTimeout(draftTimer);
-      draftTimer = window.setTimeout(() => sendDraft('draftChanged'), 250);
-    });
+    // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
+    // webview, and a debounce here is a window in which typing exists nowhere else. The message
+    // is small and the receiving end only writes a map entry; the disk write is coalesced there.
+    promptBox.addEventListener('input', () => sendDraft('draftChanged'));
     // Losing focus is the cue to name the session after an unsent draft.
-    promptBox.addEventListener('blur', () => {
-      window.clearTimeout(draftTimer);
-      sendDraft('draftBlur');
-    });
+    promptBox.addEventListener('blur', () => sendDraft('draftBlur'));
     stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
     document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
     forkButton.addEventListener('click', forkSelectedBlock);
@@ -694,7 +690,6 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
       draftSent = '';
-      window.clearTimeout(draftTimer);
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;

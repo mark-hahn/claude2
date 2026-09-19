@@ -1,4 +1,5 @@
 
+don't show graft status line and end of response -- it starts with 🌱
 
 ======================
 

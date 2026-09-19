@@ -29,8 +29,10 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(controller);
 }
 
-export function deactivate(): void {
-  // The controller is in context.subscriptions, so VS Code disposes it; only log here.
+// Awaited by VS Code, which is the last chance to get unsent prompt text to disk: the
+// controller is in context.subscriptions and `dispose` is too late to await anything.
+export async function deactivate(): Promise<void> {
+  await controller?.flush();
   output?.appendLine("Claude2 deactivated");
 }
 
@@ -43,15 +45,21 @@ class Claude2Controller implements vscode.Disposable {
   private readonly leaveResolvers = new Map<string, (go: boolean) => void>();
   // Unsent prompt text per session, and the draft each auto-generated name was built from.
   // Drafts live in workspaceState next to the sessions, so a reload puts every unsent prompt
-  // back in its box; an entry is dropped only once its text has actually been submitted.
+  // back in its box; an entry is dropped only once its text has been submitted, emptied by hand,
+  // or permanently deleted along with the trashed session holding it. Every
+  // entry is keyed by a session that exists -- a draft left without one is given a session of
+  // its own (see `rescueDraft`), since the box of its session is the only way back to the text.
   private readonly drafts = new Map<string, string>();
   // The turn currently running in each session, settled once its bookkeeping is written. A
   // prompt sent mid-run awaits this, so the stopped turn is complete before the next one starts.
   private readonly runs = new Map<string, Promise<void>>();
-  // Set when a draft went down with its session — deleted, or swept away before the typing
-  // arrived. The text stays in `drafts`, and the next new session opens with it in the box.
-  private promptTextLost = "";
   private readonly draftNames = new Map<string, string>();
+  // Sessions permanently deleted in this window. Their drafts went with them, so late typing
+  // from a panel already torn down is dropped instead of being rescued into a new session.
+  private readonly discarded = new Set<string>();
+  // The pending coalesced write of `drafts`, and the last one handed to workspaceState.
+  private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftSave: Thenable<unknown> = Promise.resolve();
   // Sessions whose panel should put the caret in the prompt box once its webview loads.
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
@@ -93,33 +101,71 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // Drafts saved by an earlier window come back keyed by session. An entry whose session is
-  // gone is kept only when it is the lost one waiting to be recovered; the rest are dropped so
-  // the store does not grow a tail of dead sessions' typing.
+  // gone is orphaned typing: it is kept for now and `rescueOrphanDrafts` gives it a session of
+  // its own once the window is up, since a draft with no session can never be reached.
   private loadDrafts(): void {
     const saved = this.context.workspaceState.get<Record<string, string>>(draftsKey, {});
-    this.promptTextLost = this.context.workspaceState.get<string>(promptTextLostKey, "");
     for (const [sessionId, text] of Object.entries(saved)) {
-      if (typeof text === "string" && text && (this.store.get(sessionId) || sessionId === this.promptTextLost)) {
+      if (typeof text === "string" && text) {
         this.drafts.set(sessionId, text);
       }
     }
-    if (this.promptTextLost && !this.drafts.has(this.promptTextLost)) {
-      this.promptTextLost = "";
-    }
+    // Written by an older build that parked one draft outside the sessions; the entry it points
+    // at is now an orphan like any other, so the key itself has nothing left to say.
+    void this.context.workspaceState.update(promptTextLostKey, undefined);
     this.saveDrafts();
   }
 
+  // The map is the live copy and takes every keystroke; the write behind it is coalesced, since
+  // a memento write per character would be exactly that. Nothing is at risk in the gap -- a
+  // reopened panel is filled from the map, and blur, panel close and shutdown all flush -- so
+  // only an extension host killed outright inside the window can cost anything.
   private saveDrafts(): void {
-    void this.context.workspaceState.update(draftsKey, Object.fromEntries(this.drafts));
-    void this.context.workspaceState.update(promptTextLostKey, this.promptTextLost || undefined);
+    if (this.draftSaveTimer) {
+      return;
+    }
+    this.draftSaveTimer = setTimeout(() => this.flushDrafts(), 250);
   }
 
-  // A draft whose session is going away: the text stays put and the flag marks it for the next
-  // new session, so typing is never lost to a click that removed the session under it.
-  private noteDraftLost(sessionId: string): void {
-    if (this.drafts.has(sessionId)) {
-      this.promptTextLost = sessionId;
-      this.saveDrafts();
+  private flushDrafts(): Thenable<unknown> {
+    if (this.draftSaveTimer) {
+      clearTimeout(this.draftSaveTimer);
+      this.draftSaveTimer = null;
+    }
+    this.draftSave = this.context.workspaceState.update(draftsKey, Object.fromEntries(this.drafts));
+    return this.draftSave;
+  }
+
+  // Awaited by `deactivate`, so a window closing on unsent text still writes it out.
+  public async flush(): Promise<void> {
+    await this.flushDrafts();
+    await this.store.flush();
+  }
+
+  // The one rule that keeps typing reachable: every draft belongs to a session that exists. A
+  // draft whose session is going away is moved into a session created for it here -- an ordinary
+  // session in every respect, named from the text and sitting in the list with the others. It is
+  // opened like any other session, and the text is waiting in its prompt box.
+  private async rescueDraft(sessionId: string): Promise<void> {
+    const text = this.drafts.get(sessionId) ?? "";
+    if (!text.trim()) {
+      return;
+    }
+    this.drafts.delete(sessionId);
+    const session = await this.store.create();
+    this.drafts.set(session.id, text);
+    this.saveDrafts();
+    this.refreshSidebar();
+    await this.nameSessionFromDraft(session.id);
+  }
+
+  // Drafts left stranded by an earlier window -- its session deleted while the text was in
+  // flight, or parked by the old lost-draft key -- get their sessions on the way up.
+  private async rescueOrphanDrafts(): Promise<void> {
+    for (const sessionId of [...this.drafts.keys()]) {
+      if (!this.store.get(sessionId)) {
+        await this.rescueDraft(sessionId);
+      }
     }
   }
 
@@ -133,6 +179,7 @@ class Claude2Controller implements vscode.Disposable {
     );
     this.quota.start();
     this.watchInstructions();
+    void this.rescueOrphanDrafts();
   }
 
   public dispose(): void {
@@ -234,21 +281,8 @@ class Claude2Controller implements vscode.Disposable {
     }
     await this.discardEmptySessions();
     const session = await this.store.create();
-    this.recoverLostDraft(session.id);
     this.refreshSidebar();
     await this.openConversation(session.id, true);
-  }
-
-  // A draft that went down with its session comes back in the next new session's box. The flag
-  // clears so it is handed over once, while the original entry stays in the store: if this
-  // session is itself swept away, the same text is still there to recover.
-  private recoverLostDraft(sessionId: string): void {
-    const lost = this.promptTextLost ? this.drafts.get(this.promptTextLost) : "";
-    this.promptTextLost = "";
-    if (lost) {
-      this.drafts.set(sessionId, lost);
-    }
-    this.saveDrafts();
   }
 
   // Forget every session with nothing in it -- no turn, no unsent draft, no armed capture --
@@ -273,17 +307,17 @@ class Claude2Controller implements vscode.Disposable {
     for (const session of stale) {
       this.conversationPanels.get(session.id)?.dispose();
       this.draftNames.delete(session.id);
-      // Belt and braces with the filter above: typing that arrived in the same instant is
-      // marked lost rather than swept out with the session.
-      this.noteDraftLost(session.id);
+      // Belt and braces with the filter above: typing that arrived in the same instant gets a
+      // session of its own rather than being swept out with this one.
+      await this.rescueDraft(session.id);
       await this.store.remove(session.id);
     }
     this.refreshSidebar();
   }
 
   // The trash icon on a trashed card is the permanent one: the session is forgotten outright,
-  // not just hidden, so its tab goes with it. Its unsent draft does not: it is held as the lost
-  // one, and the next new session opens with that text already in the box.
+  // not just hidden, so its tab and its unsent draft go with it. Deleting from the trash is the
+  // one deliberate way to throw typing away, alongside emptying the box.
   private async confirmDelete(sessionId: string): Promise<boolean> {
     const name = this.store.get(sessionId)?.name || "this session";
     const answer = await vscode.window.showWarningMessage(
@@ -328,7 +362,12 @@ class Claude2Controller implements vscode.Disposable {
     this.conversationPanels.get(sessionId)?.dispose();
     this.conversationPanels.delete(sessionId);
     this.draftNames.delete(sessionId);
-    this.noteDraftLost(sessionId);
+    // Both ways in are the permanent delete of a trashed session, which is as deliberate as
+    // clearing the box: the unsent text goes with the session rather than into one of its own.
+    this.discarded.add(sessionId);
+    if (this.drafts.delete(sessionId)) {
+      this.saveDrafts();
+    }
     await this.store.remove(sessionId);
     this.refreshSidebar();
   }
@@ -370,6 +409,8 @@ class Claude2Controller implements vscode.Disposable {
         this.refreshSidebar();
       });
       panel.onDidDispose(() => {
+        // The box that held the text is gone; what it last sent goes to disk now.
+        void this.flushDrafts();
         this.conversationPanels.delete(sessionId);
         this.selectedTurns.delete(sessionId);
         if (this.lastConversationId === sessionId) {
@@ -455,6 +496,7 @@ class Claude2Controller implements vscode.Disposable {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
       this.noteDraft(sessionId, stringOf(record?.draft));
+      void this.flushDrafts();
       await this.nameSessionFromDraft(sessionId);
     } else if (type === "stopPrompt") {
       this.runner.stop(sessionId);
@@ -957,11 +999,17 @@ class Claude2Controller implements vscode.Disposable {
   // draft comes back exactly as it was typed.
   private noteDraft(sessionId: string, draft: string): void {
     if (draft.trim()) {
+      // A message still in flight from the panel of a session deleted on purpose: the text was
+      // discarded with it, so it is not typing that has lost its home.
+      if (this.discarded.has(sessionId)) {
+        return;
+      }
       this.drafts.set(sessionId, draft);
       // Typing that lands after its session was swept away has nowhere to go back to, so it
-      // becomes the lost draft instead of sitting in the store unreachable.
+      // gets a session of its own rather than sitting in the store unreachable.
       if (!this.store.get(sessionId)) {
-        this.promptTextLost = sessionId;
+        void this.rescueDraft(sessionId);
+        return;
       }
     } else if (!this.drafts.delete(sessionId)) {
       return;
@@ -1402,6 +1450,7 @@ function stringOrNull(value: unknown): string | null {
 const authNeededKey = "authNeeded";
 // Unsent prompt text, kept per workspace alongside the sessions it belongs to.
 const draftsKey = "drafts";
+// Retired: an older build parked one draft here when its session went away. Cleared on load.
 const promptTextLostKey = "promptTextLost";
 
 // A stray key would send the CLI to API-key auth instead of the subscription OAuth flow.
