@@ -407,22 +407,21 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
-    .history { overflow: auto; min-height: 0; padding: 10px 12px 4px; }
+    .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
-    .turn.selected .prompt-bar { outline: 1px solid #6d6527; outline-offset: -1px; }
+    .turn.selected .prompt-bar { outline: 2px solid #f28b82; outline-offset: -2px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     /* Appears only after a long hover on a bar that has runs after it: clicking it drops those runs.
        Its own hit box, so the click reads as "fork" rather than as the bar's expand toggle. */
     .fork-mark { display: inline-block; margin-right: 6px; padding: 0 3px; border-radius: 3px; color: #000; font-weight: 700; cursor: pointer; }
     .fork-mark:hover { background: #eadf90; }
-    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; }
+    .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; overflow-x: hidden; }
     .response.error { border-left-color: #c62828; }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
-    .bottom-spacer { flex: none; height: 0; }
     textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; min-height: var(--edh); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
@@ -494,18 +493,21 @@ ${tooltipScript()}
     let statusAt = 0;
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
-    let expanded = new Set();
     let expandedPrompts = new Set();
-    let toolGroupsVisible = true;
+    // Turn ids whose tool groups are hidden. Mirrored to the extension so the set outlives
+    // this webview and comes back when the conversation tab is reopened.
+    let toolsHidden = new Set();
+    let toolsHiddenLoaded = false;
     let shownActiveTurn = null;
     let anchorIndex = 0;
-    let selectedResponseToBottom = false;
-    let selectedResponseToTop = false;
-    let keepScroll = false;
+    // At most one box is ever open: the selected block's, and only while this is true.
+    let boxOpen = true;
+    // Where the box contents land on the next render: 'bottom' after an open, 'top' after
+    // hiding tool groups, null to keep the current position.
+    let boxScrollNext = null;
     let initializedSelection = false;
     let pendingTurnCount = 0;
     let programmaticScroll = false;
-    let scrollTimer = 0;
     let resizeTimer = 0;
     let draftSent = '';
     let draftTimer = 0;
@@ -546,6 +548,12 @@ ${tooltipScript()}
           draftSent = message.draft;
         }
         if (typeof message.search === 'string') searchText = message.search;
+        // The extension's copy of the hidden-tools set is the persistent one; it is taken
+        // once, at load, so a toggle made here is never clobbered by a state echo.
+        if (!toolsHiddenLoaded && Array.isArray(message.toolsHidden)) {
+          toolsHiddenLoaded = true;
+          toolsHidden = new Set(message.toolsHidden);
+        }
         document.title = session.name || 'Claude2';
         render();
       } else if (message.type === 'turnDelta') {
@@ -592,19 +600,24 @@ ${tooltipScript()}
       // Ctrl-click minimizes this VS Code window for the shot, so it shows what was behind it.
       vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey === true });
     });
+    // Manual scrolling never changes the selection; it is free only inside the window the
+    // auto-scrolling rules allow (bordering bars and selected bar visible), so the scroll
+    // position is clamped rather than the selection moved.
     historyBox.addEventListener('scroll', () => {
       if (programmaticScroll || !session.turns.length) return;
-      window.clearTimeout(scrollTimer);
-      scrollTimer = window.setTimeout(selectTopVisibleBlock, 80);
+      const bounds = scrollBounds();
+      if (!bounds) return;
+      const clamped = Math.min(bounds.max, Math.max(bounds.min, historyBox.scrollTop));
+      if (clamped !== historyBox.scrollTop) historyBox.scrollTop = clamped;
     });
-    // The selected response's clamp and the bottom spacer are sized from the pane height,
-    // so a pane resize has to re-derive them or the old clamp sticks.
+    // The open box's clamp is sized from the pane height, so a pane resize has to
+    // re-derive it or the old clamp sticks.
     window.addEventListener('resize', () => {
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
         const response = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
         const atBottom = response ? response.scrollHeight - response.scrollTop - response.clientHeight < 18 : false;
-        syncSelectedBlock(false, atBottom, response ? response.scrollTop : 0);
+        syncSelectedBlock(atBottom ? 'bottom' : response ? response.scrollTop : 0);
       }, 80);
     });
 
@@ -655,11 +668,9 @@ ${tooltipScript()}
       promptBox.value = '';
       draftSent = '';
       window.clearTimeout(draftTimer);
-      // Older responses hide when a new prompt goes in; the new one shows while streaming and stays
-      // open when finished until the next prompt, so the answer never vanishes the moment it lands.
-      expanded = new Set();
+      // The new turn's block is selected and opened when it arrives; every other box closes
+      // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
-      selectedResponseToBottom = true;
     }
 
     function loadSelectedPrompt() {
@@ -673,9 +684,9 @@ ${tooltipScript()}
 
     // Response text is plain, except for a leading **bold** run on a line, used for a tool name and by
     // the model's own prose alike. Built as text nodes so nothing else in the response is treated as markup.
-    // A toggle re-renders every response, so hiding tool groups drops those lines at build time:
-    // no leading blanks, and runs of blank lines collapse to a single one. The streaming response
-    // keeps its tool lines either way, since they are how the run's progress reads.
+    // Hiding a box's tool groups drops those lines at build time: no leading blanks, and runs
+    // of blank lines collapse to a single one. The streaming response keeps its tool lines
+    // either way, since they are how the run's progress reads.
     function fillResponse(box, text, showTools) {
       let lines = text.split('\\n');
       if (!showTools) {
@@ -762,33 +773,37 @@ ${tooltipScript()}
       const active = status && status.active;
       stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
+      const wasAnchor = anchorIndex;
       anchorIndex = Math.max(0, Math.min(turns.length - 1, anchorIndex));
-      // First non-empty state after the webview opens: land on the newest block, response open.
+      // First non-empty state after the webview opens: land on the newest block, box open.
       if (!initializedSelection && turns.length) {
         initializedSelection = true;
         anchorIndex = turns.length - 1;
-        expanded.add(turns[anchorIndex].id);
-        selectedResponseToBottom = true;
+        boxOpen = true;
+        boxScrollNext = 'bottom';
       }
       if (pendingTurnCount && turns.length >= pendingTurnCount) {
         anchorIndex = pendingTurnCount - 1;
-        selectedResponseToBottom = true;
+        boxOpen = true;
+        boxScrollNext = 'bottom';
         pendingTurnCount = 0;
       }
+      // A run that just started selects and opens its new block. The user is free to move
+      // the selection or close the box afterwards, leaving the run to stream invisibly.
+      if (active && status.turnId !== shownActiveTurn) {
+        shownActiveTurn = status.turnId;
+        const activeIndex = turns.findIndex((turn) => turn.id === status.turnId);
+        if (activeIndex >= 0) {
+          anchorIndex = activeIndex;
+          boxOpen = true;
+          boxScrollNext = 'bottom';
+        }
+      }
+      // Rebuilding throws the open box's scroll away, so it is measured first and restored,
+      // still pinned to the bottom when it was there (how a streaming box follows its text).
       const selectedResponse = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
       const selectedResponseTop = selectedResponse ? selectedResponse.scrollTop : 0;
       const selectedResponseAtBottom = selectedResponse ? selectedResponse.scrollHeight - selectedResponse.scrollTop - selectedResponse.clientHeight < 18 : false;
-      let newActiveTurn = false;
-      if (active && status.turnId !== shownActiveTurn) {
-        shownActiveTurn = status.turnId;
-        expanded.add(status.turnId);
-        const activeIndex = turns.findIndex((turn) => turn.id === status.turnId);
-        if (activeIndex >= 0) {
-          selectedResponseToBottom = selectedResponseToBottom || activeIndex !== anchorIndex;
-          anchorIndex = activeIndex;
-        }
-        newActiveTurn = true;
-      }
       historyBox.replaceChildren();
       if (!turns.length) {
         const empty = document.createElement('div');
@@ -832,26 +847,29 @@ ${tooltipScript()}
             }
             if (event.ctrlKey) {
               if (expandedPrompts.has(turn.id)) expandedPrompts.delete(turn.id); else expandedPrompts.add(turn.id);
+              if (index === anchorIndex) render(); else selectBlock(index);
+              return;
+            }
+            // A click selects the block, which opens it; on the already-selected bar it is
+            // the open/close toggle instead, and closing it leaves every box closed.
+            if (index !== anchorIndex) {
               selectBlock(index);
               return;
             }
-            if (expanded.has(turn.id)) expanded.delete(turn.id); else expanded.add(turn.id);
-            // A bar other than the selected one opens where it sits: selection and scroll stay put.
-            if (index !== anchorIndex) {
-              keepScroll = true;
-              render();
-              return;
-            }
-            selectBlock(index);
+            boxOpen = !boxOpen;
+            if (boxOpen) boxScrollNext = 'bottom';
+            render();
           });
           wrapper.appendChild(bar);
           const isActiveTurn = active && status.turnId === turn.id;
-          if (expanded.has(turn.id) || isActiveTurn) {
+          // Only the selected block's box exists, and only while open. A streaming turn is no
+          // exception: moved away from or closed, its text keeps arriving invisibly.
+          if (index === anchorIndex && boxOpen) {
             const response = document.createElement('div');
             response.className = 'response' + (turn.error ? ' error' : '');
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
-            fillResponse(response, turn.response || '', toolGroupsVisible || isActiveTurn);
+            fillResponse(response, turn.response || '', !toolsHidden.has(turn.id) || isActiveTurn);
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';
@@ -868,27 +886,28 @@ ${tooltipScript()}
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
-              toolGroupsVisible = !toolGroupsVisible;
-              // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
-              // start the condensed prose from its first line.
-              if (!toolGroupsVisible) selectedResponseToTop = true;
+              if (toolsHidden.has(turn.id)) {
+                toolsHidden.delete(turn.id);
+              } else {
+                toolsHidden.add(turn.id);
+                // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
+                // start the condensed prose from its first line.
+                boxScrollNext = 'top';
+              }
+              vscode.postMessage({ type: 'toolsHiddenChanged', sessionId, turnIds: Array.from(toolsHidden) });
               render();
             });
             wrapper.appendChild(response);
           }
           historyBox.appendChild(wrapper);
         });
-        const spacer = document.createElement('div');
-        spacer.className = 'bottom-spacer';
-        historyBox.appendChild(spacer);
       }
-      const responseToTop = selectedResponseToTop;
-      selectedResponseToTop = false;
-      const responseToBottom = !responseToTop && (selectedResponseToBottom || selectedResponseAtBottom || newActiveTurn);
-      selectedResponseToBottom = false;
-      const align = !keepScroll;
-      keepScroll = false;
-      requestAnimationFrame(() => syncSelectedBlock(align, responseToBottom, responseToTop ? 0 : selectedResponseTop));
+      // A selection that moved for any other reason (a fork shrank the list) still lands
+      // its box scrolled to the bottom, the same as every other fresh open.
+      if (boxScrollNext === null && anchorIndex !== wasAnchor) boxScrollNext = 'bottom';
+      const boxScroll = boxScrollNext !== null ? boxScrollNext : selectedResponseAtBottom ? 'bottom' : selectedResponseTop;
+      boxScrollNext = null;
+      requestAnimationFrame(() => syncSelectedBlock(boxScroll));
       noteSelection();
       renderStatus();
     }
@@ -1019,10 +1038,17 @@ ${tooltipScript()}
       status = message.status || status;
       statusAt = Date.now();
       if (message.delta) turn.response = (turn.response || '') + message.delta;
+      // A turn this webview has not anchored yet: the full render selects and opens it.
+      if (status && status.active && status.turnId !== shownActiveTurn) {
+        render();
+        return;
+      }
       const node = historyBox.querySelector('[data-turn-id="' + message.turnId + '"]');
       const response = node ? node.querySelector('.response') : null;
-      if (!response || (status && status.active && status.turnId !== shownActiveTurn)) {
-        render();
+      // No box in the DOM means the streaming block is closed or unselected: the text keeps
+      // arriving in the session data, invisibly.
+      if (!response) {
+        renderStatus();
         return;
       }
       if (message.delta) {
@@ -1031,7 +1057,7 @@ ${tooltipScript()}
         response.replaceChildren();
         fillResponse(response, turn.response || '', true);
         if (Number(node.dataset.index) === anchorIndex) {
-          requestAnimationFrame(() => syncSelectedBlock(false, atBottom, savedTop));
+          requestAnimationFrame(() => syncSelectedBlock(atBottom ? 'bottom' : savedTop));
         }
       }
       renderStatus();
@@ -1048,41 +1074,39 @@ ${tooltipScript()}
     function selectBlock(index) {
       if (!session.turns.length) return;
       const nextIndex = Math.max(0, Math.min(session.turns.length - 1, index));
-      selectedResponseToBottom = selectedResponseToBottom || nextIndex !== anchorIndex;
       // Deliberate navigation outranks a submit's queued jump to the not-yet-arrived turn.
       pendingTurnCount = 0;
+      if (nextIndex === anchorIndex) return;
       anchorIndex = nextIndex;
+      // A selection change always opens the newly selected block, scrolled to its bottom.
+      boxOpen = true;
+      boxScrollNext = 'bottom';
       render();
     }
 
-    function selectTopVisibleBlock() {
-      const nodes = Array.from(historyBox.querySelectorAll('.turn'));
-      if (!nodes.length) return;
-      const historyTop = historyBox.getBoundingClientRect().top;
-      let bestIndex = anchorIndex;
-      let bestDistance = Number.POSITIVE_INFINITY;
-      for (const node of nodes) {
-        const rect = node.getBoundingClientRect();
-        if (rect.bottom < historyTop) continue;
-        const distance = Math.abs(rect.top - historyTop);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestIndex = Number(node.dataset.index) || 0;
-        }
-      }
-      if (bestIndex !== anchorIndex) {
-        anchorIndex = bestIndex;
-        syncSelectedBlock(true, true, 0);
-        noteSelection();
-      }
+    // The window the pane's scrollTop must stay in so the bar above the selected block, the
+    // whole selected block, and the bar below all sit inside the pane at once. min > max can
+    // only happen in a pane too short for that span; the bottom bar is given up first.
+    function scrollBounds() {
+      const node = historyBox.querySelector('[data-index="' + anchorIndex + '"]');
+      if (!node) return null;
+      const above = historyBox.querySelector('[data-index="' + (anchorIndex - 1) + '"]');
+      const below = historyBox.querySelector('[data-index="' + (anchorIndex + 1) + '"]');
+      const end = below || node;
+      // The turns' offsetParent is the body, not the history box, so its own offset is
+      // subtracted to land in the box's scroll coordinates.
+      const base = historyBox.offsetTop;
+      const max = Math.max(0, (above || node).offsetTop - base);
+      const min = Math.max(0, end.offsetTop + end.offsetHeight - base - historyBox.clientHeight);
+      return { min: Math.min(min, max), max };
     }
 
-    function syncSelectedBlock(align, responseToBottom, responseTop) {
-      const spacer = historyBox.querySelector('.bottom-spacer');
-      if (spacer) spacer.style.height = '0px';
-      // Only the selected block is clamped; scrub leftover clamps so a block deselected by
-      // manual scrolling (no re-render) returns to its natural size, and so the measurements
-      // below see this block's natural height.
+    // Applies the auto-scrolling rules: clamp the open box so its whole region (bordering
+    // bars included) fits the pane, then move the pane scroll the minimum distance into the
+    // allowed window. boxScroll positions the box contents afterwards: 'bottom', 'top', or
+    // a number restoring a kept offset.
+    function syncSelectedBlock(boxScroll) {
+      // Scrub old clamps first so the measurements below see natural heights.
       historyBox.querySelectorAll('.turn').forEach((turn) => {
         turn.classList.remove('selected');
         turn.querySelectorAll('.prompt-bar, .response').forEach((part) => {
@@ -1095,29 +1119,40 @@ ${tooltipScript()}
       node.classList.add('selected');
       const bar = node.querySelector('.prompt-bar');
       const response = node.querySelector('.response');
-      if (bar && bar.classList.contains('prompt-expanded') && node.offsetHeight > historyBox.clientHeight) {
+      const above = historyBox.querySelector('[data-index="' + (anchorIndex - 1) + '"]');
+      const below = historyBox.querySelector('[data-index="' + (anchorIndex + 1) + '"]');
+      const paneHeight = historyBox.clientHeight;
+      const spanHeight = () => {
+        const end = below || node;
+        return end.offsetTop + end.offsetHeight - (above || node).offsetTop;
+      };
+      // A ctrl-expanded prompt gives way first, down to three lines, before the box does.
+      if (bar && bar.classList.contains('prompt-expanded') && spanHeight() > paneHeight) {
         const lineHeight = parseFloat(getComputedStyle(bar).lineHeight) || 20;
         bar.style.maxHeight = Math.ceil(lineHeight * 3 + 4) + 'px';
         bar.style.overflowY = 'auto';
       }
-      if (response && node.offsetHeight > historyBox.clientHeight) {
-        const available = Math.max(48, historyBox.clientHeight - (bar ? bar.offsetHeight : 0) - 16);
-        response.style.maxHeight = available + 'px';
-        response.style.overflowY = 'auto';
+      if (response) {
+        const excess = spanHeight() - paneHeight;
+        if (excess > 0) {
+          const lineHeight = parseFloat(getComputedStyle(response).lineHeight) || 20;
+          response.style.maxHeight = Math.max(Math.ceil(lineHeight + 18), response.offsetHeight - excess) + 'px';
+          response.style.overflowY = 'auto';
+        }
       }
-      // Pad only enough for the selected block to reach the top: pane height minus everything
-      // from the selected block down. Sizing from the block alone bloats the pane whenever a
-      // short block is selected above taller ones.
-      if (spacer) spacer.style.height = Math.max(0, historyBox.clientHeight - (spacer.offsetTop - node.offsetTop)) + 'px';
-      if (align) {
-        programmaticScroll = true;
-        window.clearTimeout(scrollTimer);
-        node.scrollIntoView({ block: 'start' });
-        window.setTimeout(() => { programmaticScroll = false; }, 80);
+      const bounds = scrollBounds();
+      if (bounds) {
+        const target = Math.min(bounds.max, Math.max(bounds.min, historyBox.scrollTop));
+        if (target !== historyBox.scrollTop) {
+          programmaticScroll = true;
+          historyBox.scrollTop = target;
+          window.setTimeout(() => { programmaticScroll = false; }, 80);
+        }
       }
       if (response) {
-        if (responseToBottom && response.scrollHeight > response.clientHeight) response.scrollTop = response.scrollHeight;
-        else response.scrollTop = responseTop || 0;
+        if (boxScroll === 'bottom') response.scrollTop = response.scrollHeight;
+        else if (boxScroll === 'top') response.scrollTop = 0;
+        else response.scrollTop = boxScroll || 0;
       }
     }
 

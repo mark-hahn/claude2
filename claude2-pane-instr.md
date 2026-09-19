@@ -29,8 +29,13 @@
   - the bar in the selected block has a light-red 2px border
 
 ## expanding/closing rules:
-- clicking the bar toggles visibility of the box below it
-  - same as current behavior
+- only one block at a time has an open box
+- when the block selection changes the newly selected block is opened
+  - so the previously selected block is closed
+- clicking on a bar selects its block
+  - clicking the selected bar again will toggle the box open/closed
+  - when the selected block is closed then all blocks are closed
+- when a block is opened or closed the scrolling should be the minimum possible
 - clicking anywhere in the box toggles the visibility of the tool groups in its own text
   - this is the same as it is now except only in the one box
   - the default initial state is tool groups visible
@@ -39,27 +44,35 @@
 ## auto-scrolling rules:
 - scrolling amount should be the minimum amount to follow these rules
 - the pane contents should scroll so the selected bar is always visible
+- at least 1 bar is shown above the selected block and at least 1 below
+  - only if the bars exist
+  - there may be more than one above/below bar if the block is short
+  - clicking a above/below bar will move the selection up and down
+    - this is a natural consequence of the other rules
+  - the open block follows the rules below inside the region between the bordering bars
+    - the region is the pane area between the bordering bars, or the pane edge on a side with no bar
 - if the box in the selected block is open then:
   - the block should be scrolled high enough that:
     - the entire box is visible when possible
     - at least one line of the box is showing
-  - if the bar is at the top of the pane and it's box is partially hidden then:
-    - the box contents should be scrollable
-  - when box is opened the contents should always be scrolled to top
+  - if the box does not fit in its region then:
+    - the box is clamped to the space remaining in the region and its contents are scrollable
+  - when a box was closed and is opened then it should be scrolled to the bottom
 
 ## manual scrolling rules:
 - manual scrolling must always obey the auto-scrolling rules
+- manual scrolling never changes the block selection
+  - the selection changes only through bar clicks and the nav buttons
+  - this is a natural consequence of the other rules
 - when hovering of a partially visible box the scroll wheel should scroll the box contents
   - when the box is scrolled as far as it can go the wheel should scroll the entire pane instead
 - when hovering over the pane and not scrolling a box contents:
   - the mouse scroll wheel should scroll all contents of the pane
 
-## there is a box visibilty exception when the selected bar is below line 1 of the pane:
-- all boxes above the selected block are closed
-  - this will show a list of bars above it to make is easy to see the bar to scroll to
-- this is temporary and the box open state in each block is remembered
-- blocks below the selected block are not affected by this exception
-  - they will show the box based on their remembered open state
+## streaming rules
+- when a new prompt is entered and streaming starts then the new block is selected
+  - selection can still change while streaming
+- if the streaming block is closed then streaming is invisible
 
 ## scroll bars
 - there should be no horizontal scroll bar anywhere
@@ -74,6 +87,6 @@
 
 ## actions
 - if these instructions are ambiguous, incomplete or contradictory then:
-  - write the problems to claude2-pane-problems.md and stop
-  - make no changes other than writing to claude2-pane-problems.md
+  - write the problems to claude2-pane-problems2.md and stop
+  - make no changes other than writing to claude2-pane-problems2.md
 - otherwise implement these instructions immediately
