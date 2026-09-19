@@ -59,7 +59,9 @@
     - at least one line of the box is showing
   - if the box does not fit in its region then:
     - the box is clamped to the space remaining in the region and its contents are scrollable
-  - when a box was closed and is opened then it should be scrolled to the bottom
+  - when a box was closed and is opened its contents scroll position is restored
+    - each box's scroll position is persistent until the extension is reloaded
+    - when there is no remembered position the box is scrolled to the bottom
 
 ## manual scrolling rules:
 - manual scrolling must always obey the auto-scrolling rules

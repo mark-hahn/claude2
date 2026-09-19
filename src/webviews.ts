@@ -498,6 +498,12 @@ ${tooltipScript()}
     // streaming box forces them shown, and they stay shown once the run ends until the
     // box is clicked or closed.
     let toolsVisible = false;
+    // Each box's scroll position by turn id: a pixel offset, or 'bottom' to pin to the end.
+    // Mirrored to the extension so the memory outlives this webview; a reopened box restores
+    // from here and falls back to the bottom when no position is remembered.
+    let boxScrolls = {};
+    let boxScrollsLoaded = false;
+    let boxScrollTimer = 0;
     let shownActiveTurn = null;
     let anchorIndex = 0;
     // At most one box is ever open: the selected block's, and only while this is true.
@@ -548,6 +554,12 @@ ${tooltipScript()}
           draftSent = message.draft;
         }
         if (typeof message.search === 'string') searchText = message.search;
+        // The extension's copy of the scroll memory is the persistent one; it is taken once,
+        // at load, so a position noted here is never clobbered by a state echo.
+        if (!boxScrollsLoaded && message.boxScrolls && typeof message.boxScrolls === 'object') {
+          boxScrollsLoaded = true;
+          boxScrolls = message.boxScrolls;
+        }
         document.title = session.name || 'Claude2';
         render();
       } else if (message.type === 'turnDelta') {
@@ -774,13 +786,13 @@ ${tooltipScript()}
         initializedSelection = true;
         anchorIndex = turns.length - 1;
         boxOpen = true;
-        boxScrollNext = 'bottom';
+        boxScrollNext = 'restore';
         toolsVisible = false;
       }
       if (pendingTurnCount && turns.length >= pendingTurnCount) {
         anchorIndex = pendingTurnCount - 1;
         boxOpen = true;
-        boxScrollNext = 'bottom';
+        boxScrollNext = 'restore';
         toolsVisible = false;
         pendingTurnCount = 0;
       }
@@ -792,7 +804,7 @@ ${tooltipScript()}
         if (activeIndex >= 0) {
           anchorIndex = activeIndex;
           boxOpen = true;
-          boxScrollNext = 'bottom';
+          boxScrollNext = 'restore';
         }
       }
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
@@ -854,7 +866,7 @@ ${tooltipScript()}
             }
             boxOpen = !boxOpen;
             if (boxOpen) {
-              boxScrollNext = 'bottom';
+              boxScrollNext = 'restore';
               // Every fresh open starts with the tool groups hidden.
               toolsVisible = false;
             }
@@ -898,15 +910,22 @@ ${tooltipScript()}
               if (!toolsVisible) boxScrollNext = 'top';
               render();
             });
+            // Every scroll — the user's, a restore, or streaming's pin to the end — lands in
+            // the memory, so wherever the box is left is where it comes back.
+            response.addEventListener('scroll', () => noteBoxScroll(turn.id, response));
             wrapper.appendChild(response);
           }
           historyBox.appendChild(wrapper);
         });
       }
       // A selection that moved for any other reason (a fork shrank the list) still lands
-      // its box scrolled to the bottom, the same as every other fresh open.
-      if (boxScrollNext === null && anchorIndex !== wasAnchor) boxScrollNext = 'bottom';
-      const boxScroll = boxScrollNext !== null ? boxScrollNext : selectedResponseAtBottom ? 'bottom' : selectedResponseTop;
+      // its box on its remembered position, the same as every other fresh open.
+      if (boxScrollNext === null && anchorIndex !== wasAnchor) boxScrollNext = 'restore';
+      let boxScroll = boxScrollNext !== null ? boxScrollNext : selectedResponseAtBottom ? 'bottom' : selectedResponseTop;
+      if (boxScroll === 'restore') {
+        const saved = turns[anchorIndex] ? boxScrolls[turns[anchorIndex].id] : undefined;
+        boxScroll = saved === undefined ? 'bottom' : saved;
+      }
       boxScrollNext = null;
       requestAnimationFrame(() => syncSelectedBlock(boxScroll));
       noteSelection();
@@ -1064,6 +1083,18 @@ ${tooltipScript()}
       renderStatus();
     }
 
+    // Remember where a box sits, as 'bottom' when it is pinned there so it stays pinned even
+    // after the text grows. The debounced echo keeps the extension's copy — the one that
+    // outlives this webview — current without spamming it during a streaming run.
+    function noteBoxScroll(turnId, response) {
+      const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
+      boxScrolls[turnId] = atBottom ? 'bottom' : response.scrollTop;
+      window.clearTimeout(boxScrollTimer);
+      boxScrollTimer = window.setTimeout(() => {
+        vscode.postMessage({ type: 'boxScrollsChanged', sessionId, boxScrolls });
+      }, 250);
+    }
+
     // The md pane renders whichever response box is selected here, so every move of the
     // selection is reported; the extension holds the index until that pane asks for it.
     function noteSelection() {
@@ -1079,10 +1110,10 @@ ${tooltipScript()}
       pendingTurnCount = 0;
       if (nextIndex === anchorIndex) return;
       anchorIndex = nextIndex;
-      // A selection change always opens the newly selected block, scrolled to its bottom
-      // and with its tool groups hidden.
+      // A selection change always opens the newly selected block, on its remembered scroll
+      // position and with its tool groups hidden.
       boxOpen = true;
-      boxScrollNext = 'bottom';
+      boxScrollNext = 'restore';
       toolsVisible = false;
       render();
     }

@@ -50,6 +50,10 @@ class Claude2Controller implements vscode.Disposable {
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
   private readonly selectedTurns = new Map<string, number>();
+  // Each box's scroll position per session, keyed by turn id ('bottom' pins to the end).
+  // Deliberately not persisted to disk: the memory outlives any one webview but resets
+  // when the extension reloads.
+  private readonly boxScrolls = new Map<string, Record<string, unknown>>();
   // Screenshot armed by the Cap button, per session: the PNG path rides along with the next
   // prompt submitted, then the entry clears. Toggling Cap off clears it without sending.
   private readonly pendingCaptures = new Map<string, string>();
@@ -414,6 +418,11 @@ class Claude2Controller implements vscode.Disposable {
       this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
       if (sessionId === this.lastConversationId) {
         this.postSelectedResponse();
+      }
+    } else if (type === "boxScrollsChanged") {
+      const scrolls = recordOf(record?.boxScrolls);
+      if (scrolls) {
+        this.boxScrolls.set(sessionId, scrolls);
       }
     }
   }
@@ -1113,7 +1122,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText });
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {} });
     if (sessionId === this.lastConversationId) {
       this.postSelectedResponse();
     }
