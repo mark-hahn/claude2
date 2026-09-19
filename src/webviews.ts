@@ -426,6 +426,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
+    /* Three pixels narrower than the rest of the model row, taken off the side padding. */
+    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -440,7 +442,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; min-height: var(--edh); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
-    .stats { display: flex; gap: 12px; align-items: center; }
+    .stats { display: flex; gap: 12px; align-items: center; margin-right: 3px; }
     .sep { color: var(--muted); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
