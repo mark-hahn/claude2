@@ -413,10 +413,6 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .turn.selected .prompt-bar { outline: 2px solid #f28b82; outline-offset: -2px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
-    /* Appears only after a long hover on a bar that has runs after it: clicking it drops those runs.
-       Its own hit box, so the click reads as "fork" rather than as the bar's expand toggle. */
-    .fork-mark { display: inline-block; margin-right: 6px; padding: 0 3px; border-radius: 3px; color: #000; font-weight: 700; cursor: pointer; }
-    .fork-mark:hover { background: #eadf90; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; overflow-x: hidden; }
     .response.error { border-left-color: #c62828; }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
@@ -432,10 +428,15 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     button { cursor: pointer; }
     button:hover:not(:disabled), select:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
-    /* Stop is a glyph, not a word: it keeps a white fill at all times and says "unavailable" by
-       greying icon and border together, so the two never disagree about the run state. */
-    #stop { display: inline-flex; align-items: center; justify-content: center; background: #fff; color: #000; border-color: #000; font-size: calc(16px * var(--z)); line-height: 1; }
-    #stop:disabled { background: #fff; color: #9b9b9b; border-color: #9b9b9b; }
+    /* Every dock control keeps a white fill at all times -- enabled, hovered or disabled -- and says
+       "unavailable" by greying glyph, label and border together, so the two never disagree. */
+    .dock-controls button { background: #fff; }
+    .dock-controls button:hover:not(:disabled) { background: #fff; border-color: #000; }
+    .dock-controls button:disabled { background: #fff; color: #bfbfbf; border-color: #bfbfbf; }
+    #stop { display: inline-flex; align-items: center; justify-content: center; font-size: calc(16px * var(--z)); line-height: 1; }
+    /* Scoped to the enabled state on purpose: an id beats the .dock-controls disabled rule, so a
+       plain "#stop { color: #000 }" would keep the glyph black while the button is dead. */
+    #stop:not(:disabled) { color: #000; border-color: #000; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
@@ -464,11 +465,11 @@ ${tooltipStyle()}  </style>
       <div class="dock-controls">
         <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
+          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="prev" title="Previous response">▲</button><button id="next" title="Next response">▼</button><button id="top" title="First response">▲▲</button><button id="bottom" title="Last response">▼▼</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — Ctrl-click hides this window for the shot">Cap</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
         </div>
       </div>
     </div>
@@ -523,6 +524,9 @@ ${tooltipScript()}
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
+    const forkButton = document.getElementById('fork');
+    const bottomButton = document.getElementById('bottom');
+    const loadButton = document.getElementById('load');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
     const cycleButton = document.getElementById('cycle');
@@ -591,10 +595,8 @@ ${tooltipScript()}
       sendDraft('draftBlur');
     });
     stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
-    document.getElementById('top').addEventListener('click', () => selectBlock(0));
     document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
-    document.getElementById('prev').addEventListener('click', () => selectBlock(anchorIndex - 1));
-    document.getElementById('next').addEventListener('click', () => selectBlock(anchorIndex + 1));
+    forkButton.addEventListener('click', forkSelectedBlock);
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
     document.getElementById('cap').addEventListener('click', (event) => {
       // Armed means a screenshot is waiting to ride with the next Send; a second click discards it.
@@ -603,8 +605,9 @@ ${tooltipScript()}
         vscode.postMessage({ type: 'discardCapture', sessionId });
         return;
       }
-      // Ctrl-click minimizes this VS Code window for the shot, so it shows what was behind it.
-      vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey === true });
+      // A plain click minimizes this VS Code window for the shot, so it shows what was behind it.
+      // Ctrl-click leaves the window up, for a picture of the window itself.
+      vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey !== true });
     });
     // Manual scrolling never changes the selection; it is free only inside the window the
     // auto-scrolling rules allow (bordering bars and selected bar visible), so the scroll
@@ -742,42 +745,16 @@ ${tooltipScript()}
       return line.startsWith(TOOL_LINE_MARK);
     }
 
-    // The bar the fork mark is on or is counting down for. One at a time: the pointer can only be
-    // over one bar, and a re-render throws the bar away, so both are dropped there too.
-    let forkTimer = null;
-    let forkBar = null;
-
-    function armForkMark(bar) {
-      clearForkMark();
-      if (status && status.active) return;
-      forkBar = bar;
-      forkTimer = window.setTimeout(() => {
-        forkTimer = null;
-        if (forkBar !== bar || !bar.isConnected) return;
-        const mark = document.createElement('span');
-        mark.className = 'fork-mark';
-        mark.textContent = '\\u27F2';
-        mark.title = 'Fork here: drop every run after this one';
-        bar.insertBefore(mark, bar.firstChild);
-      }, 3000);
-    }
-
-    function clearForkMark() {
-      if (forkTimer !== null) {
-        window.clearTimeout(forkTimer);
-        forkTimer = null;
-      }
-      if (forkBar) {
-        const mark = forkBar.querySelector('.fork-mark');
-        if (mark) mark.remove();
-        forkBar = null;
-      }
+    // Forks at the selected block: every block below it is dropped. The extension asks for
+    // confirmation, so this only has to name the block.
+    function forkSelectedBlock() {
+      const turn = session.turns[anchorIndex];
+      if (!turn || anchorIndex >= session.turns.length - 1) return;
+      vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
     }
 
     function render() {
-      clearForkMark();
       const active = status && status.active;
-      stopButton.disabled = !active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
       const wasAnchor = anchorIndex;
       anchorIndex = Math.max(0, Math.min(turns.length - 1, anchorIndex));
@@ -807,6 +784,12 @@ ${tooltipScript()}
           boxScrollNext = 'restore';
         }
       }
+      // Nav row enablement, once the selection has settled: each button greys out when the move
+      // it offers would do nothing. Cap is the exception -- it is always live.
+      stopButton.disabled = !active;
+      bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
+      forkButton.disabled = !turns.length || anchorIndex >= turns.length - 1;
+      loadButton.disabled = !turns.length;
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
       // still pinned to the bottom when it was there (how a streaming box follows its text).
       const selectedResponse = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
@@ -832,23 +815,7 @@ ${tooltipScript()}
           const ranAs = [turn.model, turn.effort].filter(Boolean).join(' / ');
           bar.title = ranAs ? ranAs + '\\n' + turn.prompt : turn.prompt;
           bar.textContent = turn.prompt || '(empty prompt)';
-          // Long hover offers the fork mark, but only where forking would do something: a bar with
-          // runs after it, and no run in flight to cut off mid-stream.
-          if (index < turns.length - 1) {
-            bar.addEventListener('mouseenter', () => armForkMark(bar));
-            // Inserting the mark reflows the bar, and Chromium can answer that with a boundary event
-            // even though the pointer never moved. A leave into the bar's own subtree is not a leave.
-            bar.addEventListener('mouseleave', (event) => {
-              if (event.relatedTarget && bar.contains(event.relatedTarget)) return;
-              clearForkMark();
-            });
-          }
           bar.addEventListener('click', (event) => {
-            if (event.target && event.target.classList && event.target.classList.contains('fork-mark')) {
-              clearForkMark();
-              vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
-              return;
-            }
             if (event.altKey) {
               vscode.postMessage({ type: 'copyText', sessionId, text: turn.prompt || '' });
               return;
@@ -1342,6 +1309,7 @@ ${tooltipStyle()}  </style>
   <script nonce="${nonce}">
     // The pane saves as you type, like a VS Code editor with auto save: every edit is written to
     // CLAUDE.md after a short pause, Ctrl-S writes at once, and leaving the pane flushes first.
+    // Each write also copies CLAUDE.md to .github/copilot-instructions.md.
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
     const textBox = document.getElementById('text');
@@ -1354,11 +1322,13 @@ ${zoomScript(z)}
     let settled = '';
     let version = '';
     let filePath = 'CLAUDE.md';
+    let mirrorPaths = [];
     let loading = true;
     let saving = false;
     let error = null;
     let savedAt = null;
     let overwrote = false;
+    let mirrorError = null;
     let saveTimer = 0;
 
     window.addEventListener('message', (event) => {
@@ -1399,6 +1369,7 @@ ${zoomScript(z)}
         settled = text;
         version = reply.payload.version || '';
         filePath = reply.payload.path || 'CLAUDE.md';
+        mirrorPaths = reply.payload.mirrors || [];
         error = null;
         textBox.value = text;
         requestAnimationFrame(scrollBottom);
@@ -1425,6 +1396,7 @@ ${zoomScript(z)}
       textBox.setSelectionRange(Math.min(selectionStart, text.length), Math.min(selectionEnd, text.length));
       textBox.scrollTop = scrollTop;
       overwrote = false;
+      mirrorError = null;
       render();
     }
 
@@ -1456,6 +1428,7 @@ ${zoomScript(z)}
         settled = sending;
         savedAt = new Date();
         overwrote = reply.payload.stale === true;
+        mirrorError = reply.payload.mirrorError || null;
         error = null;
         render();
         if (dirty()) scheduleSave();
@@ -1474,8 +1447,10 @@ ${zoomScript(z)}
     }
     function render() {
       textBox.disabled = loading;
-      pathLabel.textContent = filePath;
-      if (loading) hint.textContent = ''; else if (saving) hint.textContent = 'Saving...'; else if (dirty()) hint.textContent = 'Unsaved changes'; else if (overwrote) hint.textContent = 'Saved over a change made on disk'; else if (savedAt) hint.textContent = 'Saved to ' + filePath; else hint.textContent = '';
+      // CLAUDE.md is the file being edited; the mirrors are copies of it, and the label names them
+      // all so it is plain that one save writes every one.
+      pathLabel.textContent = [filePath].concat(mirrorPaths).join(' + ');
+      if (loading) hint.textContent = ''; else if (saving) hint.textContent = 'Saving...'; else if (dirty()) hint.textContent = 'Unsaved changes'; else if (mirrorError) hint.textContent = 'Saved to ' + filePath + ', but the copy failed: ' + mirrorError; else if (overwrote) hint.textContent = 'Saved over a change made on disk'; else if (savedAt) hint.textContent = 'Saved'; else hint.textContent = '';
       errorNode.hidden = !error;
       errorNode.textContent = error || '';
     }
@@ -2206,7 +2181,7 @@ function tooltipScript(): string {
 
     // Anchored to the hovered element's box, not to the cursor: a cursor-anchored bubble that has to
     // flip upward for room lands back on top of the element it describes, hiding whatever is drawn
-    // there -- the prompt bar's fork mark, for one.
+    // there.
     function showTip(text, node, x) {
       tipNode.textContent = text;
       tipNode.classList.add('shown');

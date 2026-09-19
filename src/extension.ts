@@ -494,8 +494,9 @@ class Claude2Controller implements vscode.Disposable {
     void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
   }
 
-  // hideWindow is Ctrl-Cap: minimize this VS Code window for the length of the shot so the picture
-  // shows what it was covering. It comes back by itself, and the extension host never goes away.
+  // hideWindow is a plain Cap click: minimize this VS Code window for the length of the shot so the
+  // picture shows what it was covering. It comes back by itself, and the extension host never goes
+  // away. Ctrl-Cap is the opposite -- the window stays up and is in the picture.
   private async captureForSession(sessionId: string, hideWindow = false): Promise<void> {
     try {
       const file = await captureScreen(hideWindow);
@@ -1024,9 +1025,25 @@ class Claude2Controller implements vscode.Disposable {
         void this.managementPanel.webview.postMessage({ type: "instructionsChanged" });
       }
     };
-    this.instructionsWatcher.onDidChange(notify);
-    this.instructionsWatcher.onDidCreate(notify);
+    // The pane's own save mirrors as it writes; this covers every other way CLAUDE.md moves —
+    // another editor, a git checkout, a Claude edit — so the copies never drift from the authority.
+    const mirror = (): void => {
+      void this.instructions.syncMirrors().then((error) => {
+        if (error) {
+          this.channel.appendLine(`Instructions mirror failed: ${error}`);
+        }
+      });
+    };
+    this.instructionsWatcher.onDidChange(() => {
+      notify();
+      mirror();
+    });
+    this.instructionsWatcher.onDidCreate(() => {
+      notify();
+      mirror();
+    });
     this.instructionsWatcher.onDidDelete(notify);
+    mirror(); // CLAUDE.md may have moved while the extension was not running.
   }
 
   private async mayLeaveManagement(): Promise<boolean> {

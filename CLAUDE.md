@@ -42,3 +42,19 @@
 
 # more rules
 - don't deploy anything -- i will deploy before i test
+
+# conversation pane terminology
+- the editor window is the entire vscode editor pane below the editor tabs
+- the bar is the single line of prompt text in the conversation pane
+- a block is the combination of a bar with the results below it
+- a box is the text results in a block below the bar
+- a pane is the conversation pane containing nothing but blocks
+  - a pane does not include the prompt text editor or the stats/buttons to the right
+  - a pane is always the full width of the editor window
+- the prompt box is the text editor where prompt text is entered
+- the footer is the stats/buttons to the right of the prompt box
+  - the stats row is the top row in the footer with stats and no buttons
+  - the model row is the second row with presets button and model/effort selectors
+  - the nav row is the third bottom row with status indicator, stop, fork, load, and cap buttons
+
+# claude.md instructions are authorative and copilot-instructions.md should always be a copy of claude.md

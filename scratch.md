@@ -1,4 +1,28 @@
 
+delete all
+
+delete session card logic
+
+# footer cleanup
+- remove ▲,, ▼, and ▲▲ buttons.
+- move stop button to the right of the status indicator.
+ - add new `Fork` button to the right of the stop button.
+  - the fork button should fork the selected block
+    - this removes all blocks below the selected block
+  - this is the same as the old fork button in the bar
+    - remove the fork button in the bar
+- the nav row should now be status, stop, ▼▼, Fork, Load, and Cap.
+
+## disabled button logic in the nav row
+- the stop button should be disabled when the bottom block is not streaming
+- the ▼▼ button should be disabled when the pane has less than 2 blocks or the bottom block is selected
+- the fork button should be disabled when there is no block below the selected block
+- the load button should be disabled when there are no blocks
+- the cap button is never disabled
+- button appearance
+  - the background of all buttons should always be white
+  - when disabled all of button should be 50% gray
+    - this overrides the instruction that there are no grays
 
 
 ======================
