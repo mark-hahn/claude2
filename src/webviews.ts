@@ -1438,7 +1438,10 @@ ${zoomScript(z)}
       const sessions = Array.isArray(report.sessions) ? report.sessions : [];
       const ceilings = Array.isArray(report.ceilings) ? report.ceilings : [];
       const skipTotal = sessions.reduce((sum, session) => sum + session.skips.length, 0);
+      const sessionCount = report.sessionCount || 0;
+      const turnCount = report.turnCount || 0;
       document.getElementById('totals').textContent =
+        sessionCount + ' session' + (sessionCount === 1 ? '' : 's') + ' · ' + turnCount + ' turn' + (turnCount === 1 ? '' : 's') + ' · ' +
         skipTotal + ' skip' + (skipTotal === 1 ? '' : 's') + ' · ' + ceilings.length + ' ceiling' + (ceilings.length === 1 ? '' : 's');
       const sessionsBox = document.getElementById('sessions');
       sessionsBox.textContent = '';

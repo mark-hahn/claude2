@@ -6,6 +6,7 @@ import * as path from "path";
 import { captureScreen } from "./capture";
 import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
+import { PonyLedger } from "./ponyLedger";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn, type PonySkip } from "./types";
@@ -21,7 +22,7 @@ type CaptureView = { path: string | null; dataUri: string | null; depth: number;
 // The Pony pane's report: every stored skip grouped by session, plus the ponytail: ceiling
 // comments sitting in the workspace right now.
 type PonyCeiling = { file: string; line: number; text: string };
-type PonyReport = { sessions: { name: string; updatedAt: number; skips: PonySkip[] }[]; ceilings: PonyCeiling[] };
+type PonyReport = { sessions: { name: string; updatedAt: number; skips: PonySkip[] }[]; sessionCount: number; turnCount: number; ceilings: PonyCeiling[] };
 
 const PNG_DATA_URI = "data:image/png;base64,";
 
@@ -46,6 +47,7 @@ class Claude2Controller implements vscode.Disposable {
   private readonly runner: ClaudeCliRunner;
   private readonly instructions = new InstructionsFile();
   private readonly quota: QuotaService;
+  private readonly ledger: PonyLedger;
   private readonly conversationPanels = new Map<string, vscode.WebviewPanel>();
   private readonly leaveResolvers = new Map<string, (go: boolean) => void>();
   // Unsent prompt text per session, and the draft each auto-generated name was built from.
@@ -101,6 +103,9 @@ class Claude2Controller implements vscode.Disposable {
     this.store = new SessionStore(context);
     this.runner = new ClaudeCliRunner((line) => this.channel.appendLine(line));
     this.quota = new QuotaService(context, this.workspacePath(), (line) => this.channel.appendLine(line));
+    this.ledger = new PonyLedger(context, this.workspacePath());
+    const kept = this.store.all().filter((session) => session.turns.length > 0);
+    void this.ledger.seed({ sessions: kept.length, turns: kept.reduce((sum, session) => sum + session.turns.length, 0) });
     this.authNeeded = context.globalState.get<boolean>(authNeededKey, false);
     this.loadDrafts();
   }
@@ -897,6 +902,7 @@ class Claude2Controller implements vscode.Disposable {
       ponySkips: [],
     };
     await this.store.appendTurn(sessionId, turn);
+    void this.ledger.note(wasFirstPrompt);
     this.postConversationState(sessionId);
     // The first turn gives the sidebar's md button something to show.
     this.refreshSidebar();
@@ -1120,17 +1126,19 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // The Pony pane's data, gathered fresh on every load: skips out of the stored sessions,
-  // ceilings out of a workspace grep.
+  // ceilings out of a workspace grep, and the session/turn totals out of the shared ledger --
+  // those are lifetime and machine-wide, so they read the same in every window.
   private async ponyReport(): Promise<PonyReport> {
-    const sessions = this.store.all()
-      .filter((session) => !session.trashed)
+    const live = this.store.all().filter((session) => !session.trashed);
+    const sessions = live
       .map((session) => ({
         name: session.name,
         updatedAt: session.updatedAt,
         skips: session.turns.flatMap((turn) => turn.ponySkips),
       }))
       .filter((session) => session.skips.length > 0);
-    return { sessions, ceilings: await this.ponyCeilings() };
+    const tally = await this.ledger.total();
+    return { sessions, sessionCount: tally.sessions, turnCount: tally.turns, ceilings: await this.ponyCeilings() };
   }
 
   // Ponytail marks a deliberate corner cut in code with a "ponytail:" comment naming the ceiling

@@ -1,4 +1,8 @@
 
+Bash: graft ask "ponyCeilings workspace scan" --source --full 2>&1 | head -60
+
+
+add the total number of sessions and turns that pony has run on to the pony pane
 
 too many bars above block
 
