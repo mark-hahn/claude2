@@ -24,6 +24,43 @@ export interface PonySkip {
   y: string;
 }
 
+// The per-project on/off switches for the two agent plugins a spawned CLI run can carry.
+export interface PluginFlags {
+  graft: boolean;
+  ponytail: boolean;
+}
+
+// One install (host + workspace) of the extension: the running totals it owns on the
+// claude2-stats server. Every field but ponyCeilings is a counter that only ever grows;
+// ponyCeilings is a gauge of the workspace as it stands now. The On/Off pairs split turns
+// and cost by the plugin flags each turn actually ran with, for $/turn comparisons; they
+// start at the moment this shipped — no history assigns flags to older turns.
+export interface InstallStats {
+  host: string;
+  project: string;
+  path: string;
+  sessions: number;
+  turns: number;
+  wallMs: number;
+  costUsd: number;
+  tokensIn: number;
+  tokensOut: number;
+  ponySkips: number;
+  ponyCeilings: number;
+  graftCalls: number;
+  graftTokensSaved: number;
+  graftUsdSaved: number;
+  turnsPonyOn: number;
+  turnsPonyOff: number;
+  costPonyOn: number;
+  costPonyOff: number;
+  turnsGraftOn: number;
+  turnsGraftOff: number;
+  costGraftOn: number;
+  costGraftOff: number;
+  updatedAt: number;
+}
+
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
 

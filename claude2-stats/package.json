@@ -1,0 +1,12 @@
+{
+  "name": "claude2-stats",
+  "description": "Centralized plugin stats server for the claude2 extension; runs under pm2 as claude2-stats",
+  "version": "0.0.1",
+  "author": "Mark Hahn",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  }
+}

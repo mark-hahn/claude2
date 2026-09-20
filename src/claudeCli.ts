@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PonySkip, type RunningStatus } from "./types";
+import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -29,6 +29,7 @@ interface RunPromptOptions {
   // never drops to zero while the first API call of the run is still in flight.
   priorContextTokens: number;
   limits: RunLimits;
+  plugins: PluginFlags;
   onText: (text: string) => void;
   onStatus: (status: RunningStatus) => void;
 }
@@ -139,10 +140,15 @@ export class ClaudeCliRunner {
     if (options.limits.maxBudgetUsd > 0) {
       args.push("--max-budget-usd", String(options.limits.maxBudgetUsd));
     }
+    if (!options.plugins.ponytail) {
+      // Command-line settings outrank the user scope, so this turns the globally-enabled
+      // ponytail plugin off for just this run.
+      args.push("--settings", JSON.stringify({ enabledPlugins: { "ponytail@ponytail": false } }));
+    }
 
     const child = spawn("claude", args, {
       cwd: options.workspacePath,
-      env: childEnv(options.contextWindow),
+      env: childEnv(options.contextWindow, options.plugins.graft),
       stdio: ["pipe", "pipe", "pipe"],
     });
     const running: RunningProcess = { child, status, stopped: false };
@@ -474,11 +480,16 @@ function claude2SystemPrompt(contextWindow: number): string {
   ].join("\n");
 }
 
-function childEnv(autoCompactWindow: number | null = null): NodeJS.ProcessEnv {
+function childEnv(autoCompactWindow: number | null = null, graftEnabled = true): NodeJS.ProcessEnv {
   const env = { ...process.env };
   // A stray key would divert billing from the subscription to the API.
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
+  // The globally-hooked graft resolves its graph from GRAFT_DIR before <repo>/graft, so
+  // pointing it at a dir with no INDEX.md makes every graft hook a silent no-op for this run.
+  if (!graftEnabled) {
+    env.GRAFT_DIR = path.join(os.tmpdir(), "claude2-graft-off");
+  }
   // This CLI build has no --autocompact flag; the auto-compact window is set through the environment
   // (accepts 100k-1M tokens).
   if (autoCompactWindow !== null) {

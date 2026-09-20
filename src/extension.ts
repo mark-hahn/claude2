@@ -6,10 +6,10 @@ import * as path from "path";
 import { captureScreen } from "./capture";
 import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
-import { PonyLedger } from "./ponyLedger";
+import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn, type PonySkip } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -19,10 +19,11 @@ let controller: Claude2Controller | undefined;
 // whether it is still armed to ride with the next prompt (if not, the pane offers Send Again).
 type CaptureView = { path: string | null; dataUri: string | null; depth: number; armed: boolean };
 
-// The Pony pane's report: every stored skip grouped by session, plus the ponytail: ceiling
-// comments sitting in the workspace right now.
-type PonyCeiling = { file: string; line: number; text: string };
-type PonyReport = { sessions: { name: string; updatedAt: number; skips: PonySkip[] }[]; sessionCount: number; turnCount: number; ceilings: PonyCeiling[] };
+// The Plugins pane's table: one column per project rolled up from every install's record on
+// the stats server, with that project's plugin switches folded in. `offline` marks a table
+// built from the local record alone because the server could not be reached.
+type ProjectColumn = Omit<InstallStats, "host" | "path" | "updatedAt"> & { hosts: string; paths: string; graft: boolean; ponytail: boolean };
+type PluginsReport = { projects: ProjectColumn[]; offline: boolean };
 
 const PNG_DATA_URI = "data:image/png;base64,";
 
@@ -47,7 +48,7 @@ class Claude2Controller implements vscode.Disposable {
   private readonly runner: ClaudeCliRunner;
   private readonly instructions = new InstructionsFile();
   private readonly quota: QuotaService;
-  private readonly ledger: PonyLedger;
+  private readonly stats: PluginStats;
   private readonly conversationPanels = new Map<string, vscode.WebviewPanel>();
   private readonly leaveResolvers = new Map<string, (go: boolean) => void>();
   // Unsent prompt text per session, and the draft each auto-generated name was built from.
@@ -103,9 +104,10 @@ class Claude2Controller implements vscode.Disposable {
     this.store = new SessionStore(context);
     this.runner = new ClaudeCliRunner((line) => this.channel.appendLine(line));
     this.quota = new QuotaService(context, this.workspacePath(), (line) => this.channel.appendLine(line));
-    this.ledger = new PonyLedger(context, this.workspacePath());
-    const kept = this.store.all().filter((session) => session.turns.length > 0);
-    void this.ledger.seed({ sessions: kept.length, turns: kept.reduce((sum, session) => sum + session.turns.length, 0) });
+    this.stats = new PluginStats(context, this.workspacePath(), (line) => this.channel.appendLine(line));
+    void this.stats.seed(this.store.all());
+    // turn events queued while the stats server was unreachable drain on activation
+    void this.stats.flushTurns();
     this.authNeeded = context.globalState.get<boolean>(authNeededKey, false);
     this.loadDrafts();
   }
@@ -902,7 +904,9 @@ class Claude2Controller implements vscode.Disposable {
       ponySkips: [],
     };
     await this.store.appendTurn(sessionId, turn);
-    void this.ledger.note(wasFirstPrompt);
+    // Counted at the start so a stopped or crashed run still counts; the money and time land
+    // in a second bump when the run settles.
+    void this.stats.add({ sessions: wasFirstPrompt ? 1 : 0, turns: 1 });
     this.postConversationState(sessionId);
     // The first turn gives the sidebar's md button something to show.
     this.refreshSidebar();
@@ -936,6 +940,7 @@ class Claude2Controller implements vscode.Disposable {
         flushTimer = setTimeout(flushStream, 80);
       }
     };
+    const plugins = await this.stats.flags();
     try {
       const result = await this.runner.runPrompt({
         sessionId,
@@ -948,6 +953,7 @@ class Claude2Controller implements vscode.Disposable {
         hasPriorTurns: !wasFirstPrompt,
         priorContextTokens: priorContext,
         limits: this.runLimits(),
+        plugins,
         onText: (text) => {
           streamedResponse += text;
           this.store.patchTurn(sessionId, turn.id, { response: streamedResponse }, false);
@@ -976,6 +982,24 @@ class Claude2Controller implements vscode.Disposable {
         ponySkips: result.ponySkips,
       }, true);
       await this.store.flush();
+      void this.noteTurnStats(sessionId, {
+        wallMs: result.durationMs,
+        costUsd: result.costUsd ?? 0,
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        ponySkips: result.ponySkips.length,
+      }, {
+        plugins,
+        turnId: turn.id,
+        model: selectedModel,
+        effort: selectedEffort,
+        contextWindow: defaults.contextWindow,
+        contextTokens: result.contextTokens,
+        cliTurns: result.turns,
+        stopped: result.stopped,
+        stopReason: result.stopReason,
+        skips: result.ponySkips,
+      });
     } catch (error) {
       const text = errorMessage(error);
       if (/failed to authenticate|oauth session expired/i.test(text)) {
@@ -997,6 +1021,20 @@ class Claude2Controller implements vscode.Disposable {
           stopped: false,
         }, true);
         await this.store.flush();
+        void this.noteTurnStats(sessionId, {
+          wallMs: Math.max(0, Date.now() - turn.createdAt),
+          ponySkips: lastPonySkips.length,
+        }, {
+          plugins,
+          turnId: turn.id,
+          model: selectedModel,
+          effort: selectedEffort,
+          contextWindow: defaults.contextWindow,
+          contextTokens: lastContext,
+          cliTurns: lastTurns,
+          error: text.slice(0, 500),
+          skips: lastPonySkips,
+        });
       }
     } finally {
       // A delta still in flight after the closing full post would re-append text the
@@ -1119,31 +1157,90 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Claude2 Pony";
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Claude2 Plugins";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
   }
 
-  // The Pony pane's data, gathered fresh on every load: skips out of the stored sessions,
-  // ceilings out of a workspace grep, and the session/turn totals out of the shared ledger --
-  // those are lifetime and machine-wide, so they read the same in every window.
-  private async ponyReport(): Promise<PonyReport> {
-    const live = this.store.all().filter((session) => !session.trashed);
-    const sessions = live
-      .map((session) => ({
-        name: session.name,
-        updatedAt: session.updatedAt,
-        skips: session.turns.flatMap((turn) => turn.ponySkips),
-      }))
-      .filter((session) => session.skips.length > 0);
-    const tally = await this.ledger.total();
-    return { sessions, sessionCount: tally.sessions, turnCount: tally.turns, ceilings: await this.ponyCeilings() };
+  // A settled turn's numbers, folded into the shared record along with what graft banked for
+  // the session meanwhile and a fresh reading of the workspace's ceiling comments. The turn
+  // and its cost are also credited to the on or off side of each plugin, per the flags the
+  // run actually carried, and the whole turn ships as one raw event to the server's log —
+  // the extensive record future stats get computed from.
+  private async noteTurnStats(sessionId: string, delta: StatsDelta, info: { plugins: PluginFlags } & Record<string, unknown>): Promise<void> {
+    const graft = await this.stats.graftDelta(sessionId);
+    const ceilings = await this.ponyCeilingCount();
+    const split: StatsDelta = {};
+    split[info.plugins.ponytail ? "turnsPonyOn" : "turnsPonyOff"] = 1;
+    split[info.plugins.ponytail ? "costPonyOn" : "costPonyOff"] = delta.costUsd ?? 0;
+    split[info.plugins.graft ? "turnsGraftOn" : "turnsGraftOff"] = 1;
+    split[info.plugins.graft ? "costGraftOn" : "costGraftOff"] = delta.costUsd ?? 0;
+    await this.stats.add({ ...delta, ...graft, ...split }, ceilings);
+    void this.stats.logTurn({ sessionId, ...info, ...delta, ...graft, ponyCeilings: ceilings });
+  }
+
+  // The Plugins pane's table, rebuilt on every load: every install's record off the stats
+  // server folded into one column per project. The local record rides over its own pushed
+  // copy — it is never behind, and it carries a just-taken ceilings count.
+  private async pluginsReport(): Promise<PluginsReport> {
+    const remote = await this.stats.fetchAll();
+    const installs: Record<string, Partial<InstallStats>> = { ...(remote?.installs ?? {}) };
+    const local = this.stats.local();
+    local.ponyCeilings = await this.ponyCeilingCount();
+    installs[this.stats.installKey()] = local;
+    const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
+      "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
+    const projects = new Map<string, ProjectColumn>();
+    for (const record of Object.values(installs)) {
+      const name = typeof record.project === "string" ? record.project : "";
+      if (!name) {
+        continue;
+      }
+      const flags = remote?.flags?.[name] ?? {};
+      const column = projects.get(name) ?? {
+        project: name,
+        hosts: "",
+        paths: "",
+        sessions: 0,
+        turns: 0,
+        wallMs: 0,
+        costUsd: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        ponySkips: 0,
+        ponyCeilings: 0,
+        graftCalls: 0,
+        graftTokensSaved: 0,
+        graftUsdSaved: 0,
+        turnsPonyOn: 0,
+        turnsPonyOff: 0,
+        costPonyOn: 0,
+        costPonyOff: 0,
+        turnsGraftOn: 0,
+        turnsGraftOff: 0,
+        costGraftOn: 0,
+        costGraftOff: 0,
+        graft: flags.graft !== false,
+        ponytail: flags.ponytail !== false,
+      };
+      for (const field of counterFields) {
+        column[field] += Number(record[field]) || 0;
+      }
+      // the same repo checked out on two hosts keeps its bigger reading, not the sum
+      column.ponyCeilings = Math.max(column.ponyCeilings, Number(record.ponyCeilings) || 0);
+      const host = typeof record.host === "string" ? record.host : "";
+      column.hosts = column.hosts.includes(host) ? column.hosts : [column.hosts, host].filter(Boolean).join(" ");
+      const recordPath = typeof record.path === "string" ? record.path : "";
+      column.paths = column.paths.includes(recordPath) ? column.paths : [column.paths, recordPath].filter(Boolean).join("\n");
+      projects.set(name, column);
+    }
+    return { projects: [...projects.values()].sort((left, right) => left.project.localeCompare(right.project)), offline: remote === null };
   }
 
   // Ponytail marks a deliberate corner cut in code with a "ponytail:" comment naming the ceiling
   // and the upgrade path. grep exits 1 for "no matches", so any failure just reads as none found.
-  private ponyCeilings(): Promise<PonyCeiling[]> {
+  private ponyCeilingCount(): Promise<number> {
     return new Promise((resolve) => {
       const pattern = "(//|#|;|<!--|/\\*)[[:space:]]*ponytail:";
       const args = ["-rnIE", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", pattern, "."];
@@ -1153,17 +1250,8 @@ class Claude2Controller implements vscode.Disposable {
       child.stdout.on("data", (chunk: string) => {
         outputText += chunk;
       });
-      child.on("error", () => resolve([]));
-      child.on("close", () => {
-        const ceilings: PonyCeiling[] = [];
-        for (const line of outputText.split("\n")) {
-          const match = /^\.\/(.+?):(\d+):(.*)$/.exec(line);
-          if (match) {
-            ceilings.push({ file: match[1], line: Number(match[2]), text: match[3].trim() });
-          }
-        }
-        resolve(ceilings);
-      });
+      child.on("error", () => resolve(0));
+      child.on("close", () => resolve(outputText.split("\n").filter((line) => line.trim()).length));
     });
   }
 
@@ -1256,16 +1344,10 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.quota.history(true));
     } else if (type === "loadSelectedResponse") {
       await this.reply(requestId, async () => this.selectedResponse());
-    } else if (type === "loadPonyReport") {
-      await this.reply(requestId, async () => await this.ponyReport());
-    } else if (type === "openPonyFile") {
-      const file = stringOf(record?.file);
-      const line = Math.max(1, Math.floor(Number(record?.line) || 1));
-      if (file) {
-        const document = await vscode.workspace.openTextDocument(path.join(this.workspacePath(), file));
-        const position = new vscode.Position(Math.min(line - 1, document.lineCount - 1), 0);
-        await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
-      }
+    } else if (type === "loadPluginsReport") {
+      await this.reply(requestId, async () => await this.pluginsReport());
+    } else if (type === "setPluginFlag") {
+      await this.reply(requestId, async () => await this.stats.setFlag(stringOf(record?.project), stringOf(record?.plugin), record?.enabled === true));
     } else if (type === "loadCapture") {
       await this.reply(requestId, async () => await this.captureView());
     } else if (type === "cropCapture") {
@@ -1495,7 +1577,7 @@ function stripToolLines(text: string): string {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "pony" || value === "markdown" || value === "cap" ? value : null;
+  return value === "instructions" || value === "quota" || value === "plugins" || value === "markdown" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

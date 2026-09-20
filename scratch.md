@@ -1,16 +1,82 @@
 
-Bash: graft ask "ponyCeilings workspace scan" --source --full 2>&1 | head -60
+for each graph show line of % above/below
 
 
-add the total number of sessions and turns that pony has run on to the pony pane
+what did graft do other than report $x/y and graft pane
+
+restore graft to before ponytail change
+- restore $x/y
+- do not restore graft pane
+
+real forking
+
+markdown without sidebar
 
 too many bars above block
 
 show path to folder this is running in
 
-when turns reaches the limit and the session stops show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue
+when turns reaches the limit and the session stops show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue -- show last turn and new turn as one turn
 
 ======================
+
+- i'm just curious about why the dev extension host at /root/wsl-apps/test gives this error:
+`Plugins
+stats server unreachable — showing this workspace only`
+- this is not a big problem since it is just for testing
+
+- for report use `plugin-exp` column header instead of graft-ponytail-exp -- don't change name anywhere else
+- store dates so we can filter report by period selector
+- change label for plugins button in sidebar to `Plug`
+- when hovering over project name in report show tooltip with complete path to project
+
+# graft and ponytail agent extensions
+- i want to have the option of using the graft and/or ponytail agent extensions in this claude2 vscode extension
+  - for these instructions call them plugins
+  - graft should be re-enbled
+    - but there should be no graft UI like $ or graft pane
+  - i want to be able to control them and report their stats for individual projects
+    - their should be an on/off flag for each plugin in each workspace
+    - stats should be collected individually for each workspace but accesible to all
+
+- change the pony button label to `Plugins`
+  - it should open a `Plugin pane` in the management editor
+  - the pane should not include detailed data like individual Session skips or Repo ceilings
+  - the plugin pane should contain a table of stats and controls
+    - each cell should be a simple number or short text
+    - rows should be stats/info/control for the project, like these rows:
+      - host: windows, wsl, or server
+      - session count
+      - turn count
+      - wall time total
+      - $ total for all sessions
+      - graft 
+        - $ savings
+        - tool call count
+      - ponytail 
+        - shortcut comments
+        - ceilings?
+      - all other stats that can be expressed in simple numbers or short text
+      - there should be 2 control rows at bottom labeled `Enable graft` and `Enable ponytail`
+        - each cell in those rows should have a checkbox to enable the plugin for the project
+    - columns should be projects/workspaces, like claude2, tv, ...
+      - the names should be the final part of their folder path
+        - e.g. /root/apps/claude2 would be claude2
+      - there should be a summary column on the right with totals for all projects
+
+- stats should be managed using a centralized task on the server
+  - this is necessary for all projects to be able to show the same thing in the plugins pane
+  - each project should use server endpoints to send and receive stats
+  - the task should be in pm2 as claude2-stats
+  - claude2-stats should be a project maintained in the claude2 monorepo like claude2-cap
+
+- do a one-time backfill of stats obtainable from existing session storage
+
+- actions
+  - if these instructions are ambiguous, incomplete or contradictory then:
+    - write the problems to claude2-plugin-problems.md and stop
+    - make no changes other than writing to claude2-plugin-problems.md
+  - otherwise implement these instructions immediately
 
 # switch to ponytail
 - replace graft completely with ponytail.

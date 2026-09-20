@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, GRAFT_TALLY_MARK, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "pony" | "markdown" | "cap";
+export type ManagementPane = "instructions" | "quota" | "plugins" | "markdown" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -32,7 +32,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
-    #pony { width: 52px; }
+    #plugins { width: 52px; }
     #markdown { width: 30px; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
@@ -71,7 +71,7 @@ ${tooltipStyle()}  </style>
       <div class="row">
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
-        <button id="pony" title="Ponytail report: session skips and repo ceilings">Pony</button>
+        <button id="plugins" title="Plugin stats and controls for every project">Plug</button>
         <button id="cap" title="Show the latest screen capture" disabled>Cap</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
         <button id="markdown" title="Show the selected response as markdown" disabled>md</button>
@@ -112,7 +112,7 @@ ${tooltipScript()}
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
     document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
     document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
-    document.getElementById('pony').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'pony' }); });
+    document.getElementById('plugins').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'plugins' }); });
     document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
     document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
@@ -1166,8 +1166,8 @@ ${tooltipScript()}
 }
 
 export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1): string {
-  if (pane === "pony") {
-    return ponyHtml(webview, zoom);
+  if (pane === "plugins") {
+    return pluginsHtml(webview, zoom);
   }
   if (pane === "markdown") {
     return markdownHtml(webview, zoom);
@@ -1365,10 +1365,10 @@ ${tooltipScript()}
 </html>`;
 }
 
-// The Pony pane: every "skipped: X, add when Y" line ponytail left in stored responses, grouped
-// by session, plus the ponytail: ceiling comments sitting in the workspace. Data arrives from the
-// extension in the loadPonyReport reply; clicking a ceiling's file:line opens it in an editor.
-function ponyHtml(webview: vscode.Webview, zoom: number): string {
+// The Plugins pane: one table over every project the stats server knows — a column per
+// project plus an All column, stat rows above two checkbox rows that switch graft and
+// ponytail per project. Data arrives from the extension in the loadPluginsReport reply.
+function pluginsHtml(webview: vscode.Webview, zoom: number): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
   return `<!doctype html>
@@ -1384,30 +1384,24 @@ function ponyHtml(webview: vscode.Webview, zoom: number): string {
     .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 24px; }
     .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 8px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
-    #totals { font-size: calc(14px * var(--z)); }
+    #note { font-size: calc(14px * var(--z)); }
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    .scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
-    h2 { font-size: calc(16px * var(--z)); font-weight: 600; margin: 16px 0 8px; }
-    .session { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 8px 12px; margin-bottom: 8px; }
-    .session-name { font-weight: 600; }
-    .skip { margin: 4px 0 0 14px; }
-    .ceiling { display: flex; gap: 10px; align-items: baseline; margin: 0 0 6px; }
-    .loc { flex: none; border: none; background: none; padding: 0; min-height: 0; border-radius: 0; color: #0b5ed7; cursor: pointer; font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .loc:hover { text-decoration: underline; background: none; }
-    .ceiling-text { font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
+    table { border-collapse: collapse; background: var(--surface); font-size: calc(14px * var(--z)); }
+    th, td { border: 1px solid var(--border); padding: 5px 12px; text-align: right; white-space: nowrap; color: var(--ink); }
+    th { text-align: center; font-weight: 600; }
+    td:first-child { text-align: left; font-weight: 600; }
+    td:last-child, th:last-child { font-weight: 600; }
+    td.mid { text-align: center; }
+    input[type=checkbox] { width: calc(15px * var(--z)); height: calc(15px * var(--z)); margin: 0; }
   </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Ponytail</h1><span id="totals"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
-    <div class="scroll">
-      <h2>Session skips</h2>
-      <div id="sessions"></div>
-      <h2>Repo ceilings</h2>
-      <div id="ceilings"></div>
-    </div>
+    <div class="title"><h1>Plugins</h1><span id="note"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="scroll"><table id="table"></table></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -1430,56 +1424,99 @@ ${zoomScript(z)}
     }
 
     async function load() {
-      const reply = await request('loadPonyReport', {});
-      render(reply.ok && reply.payload ? reply.payload : { sessions: [], ceilings: [] });
+      const reply = await request('loadPluginsReport', {});
+      render(reply.ok && reply.payload ? reply.payload : { projects: [], offline: true });
+    }
+
+    function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)); }
+    function fmtUsd(n) { return '$' + n.toFixed(2); }
+    // ponytail: 20-turn floor before a $/turn shows; below that a couple of cheap turns would read as a finding
+    function perTurn(cost, turns) { return turns >= 20 ? '$' + (cost / turns).toFixed(2) : '—'; }
+    function fmtWall(ms) {
+      const minutes = Math.round(ms / 60000);
+      return minutes >= 60 ? Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm' : minutes + 'm';
     }
 
     function render(report) {
-      const sessions = Array.isArray(report.sessions) ? report.sessions : [];
-      const ceilings = Array.isArray(report.ceilings) ? report.ceilings : [];
-      const skipTotal = sessions.reduce((sum, session) => sum + session.skips.length, 0);
-      const sessionCount = report.sessionCount || 0;
-      const turnCount = report.turnCount || 0;
-      document.getElementById('totals').textContent =
-        sessionCount + ' session' + (sessionCount === 1 ? '' : 's') + ' · ' + turnCount + ' turn' + (turnCount === 1 ? '' : 's') + ' · ' +
-        skipTotal + ' skip' + (skipTotal === 1 ? '' : 's') + ' · ' + ceilings.length + ' ceiling' + (ceilings.length === 1 ? '' : 's');
-      const sessionsBox = document.getElementById('sessions');
-      sessionsBox.textContent = '';
-      if (!sessions.length) {
-        sessionsBox.appendChild(line('No skips recorded yet — they collect as ponytail declines to build things.'));
+      const projects = Array.isArray(report.projects) ? report.projects : [];
+      document.getElementById('note').textContent = report.offline ? 'stats server unreachable — showing this workspace only' : '';
+      const table = document.getElementById('table');
+      table.textContent = '';
+      if (!projects.length) {
+        document.getElementById('note').textContent = 'No stats yet — they collect as prompts run.';
+        return;
       }
-      for (const session of sessions) {
-        const card = document.createElement('div');
-        card.className = 'session';
-        card.appendChild(line(session.name, 'session-name'));
-        for (const skip of session.skips) {
-          card.appendChild(line('• ' + skip.x + (skip.y ? ' — add when ' + skip.y : ''), 'skip'));
+      const sum = (field) => projects.reduce((total, project) => total + (project[field] || 0), 0);
+      const header = document.createElement('tr');
+      header.appendChild(cell('th', ''));
+      for (const project of projects) {
+        // display alias only — the project keeps its real name everywhere else
+        const th = cell('th', project.project === 'graft-ponytail-exp' ? 'plugin-exp' : project.project);
+        th.title = project.paths || '';
+        header.appendChild(th);
+      }
+      header.appendChild(cell('th', 'All'));
+      table.appendChild(header);
+      const rows = [
+        ['Host', (project) => project.hosts, ''],
+        ['Sessions', (project) => project.sessions, sum('sessions')],
+        ['Turns', (project) => project.turns, sum('turns')],
+        ['Wall time', (project) => fmtWall(project.wallMs), fmtWall(sum('wallMs'))],
+        ['Total $', (project) => fmtUsd(project.costUsd), fmtUsd(sum('costUsd'))],
+        ['Tokens in', (project) => fmtTok(project.tokensIn), fmtTok(sum('tokensIn'))],
+        ['Tokens out', (project) => fmtTok(project.tokensOut), fmtTok(sum('tokensOut'))],
+        ['Graft $ savings', (project) => fmtUsd(project.graftUsdSaved), fmtUsd(sum('graftUsdSaved'))],
+        ['Graft tokens saved', (project) => fmtTok(project.graftTokensSaved), fmtTok(sum('graftTokensSaved'))],
+        ['Graft tool calls', (project) => project.graftCalls, sum('graftCalls')],
+        ['Graft $/turn on', (project) => perTurn(project.costGraftOn, project.turnsGraftOn), perTurn(sum('costGraftOn'), sum('turnsGraftOn'))],
+        ['Graft $/turn off', (project) => perTurn(project.costGraftOff, project.turnsGraftOff), perTurn(sum('costGraftOff'), sum('turnsGraftOff'))],
+        ['Ponytail skips', (project) => project.ponySkips, sum('ponySkips')],
+        ['Ponytail ceilings', (project) => project.ponyCeilings, sum('ponyCeilings')],
+        ['Ponytail $/turn on', (project) => perTurn(project.costPonyOn, project.turnsPonyOn), perTurn(sum('costPonyOn'), sum('turnsPonyOn'))],
+        ['Ponytail $/turn off', (project) => perTurn(project.costPonyOff, project.turnsPonyOff), perTurn(sum('costPonyOff'), sum('turnsPonyOff'))],
+      ];
+      for (const [label, valueOf, total] of rows) {
+        const row = document.createElement('tr');
+        row.appendChild(cell('td', label));
+        for (const project of projects) {
+          row.appendChild(cell('td', String(valueOf(project))));
         }
-        sessionsBox.appendChild(card);
+        row.appendChild(cell('td', String(total)));
+        table.appendChild(row);
       }
-      const ceilingsBox = document.getElementById('ceilings');
-      ceilingsBox.textContent = '';
-      if (!ceilings.length) {
-        ceilingsBox.appendChild(line('No ponytail: comments in the workspace.'));
-      }
-      for (const ceiling of ceilings) {
-        const row = document.createElement('div');
-        row.className = 'ceiling';
-        const loc = document.createElement('button');
-        loc.className = 'loc';
-        loc.textContent = ceiling.file + ':' + ceiling.line;
-        loc.addEventListener('click', () => vscode.postMessage({ type: 'openPonyFile', file: ceiling.file, line: ceiling.line }));
-        row.appendChild(loc);
-        row.appendChild(line(ceiling.text, 'ceiling-text'));
-        ceilingsBox.appendChild(row);
+      for (const plugin of ['graft', 'ponytail']) {
+        const row = document.createElement('tr');
+        row.appendChild(cell('td', 'Enable ' + plugin));
+        for (const project of projects) {
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = project[plugin] !== false;
+          // a flag the server cannot hear about would silently not stick
+          box.disabled = report.offline === true;
+          box.addEventListener('change', () => void toggle(box, project.project, plugin));
+          const holder = cell('td', '');
+          holder.className = 'mid';
+          holder.appendChild(box);
+          row.appendChild(holder);
+        }
+        row.appendChild(cell('td', ''));
+        table.appendChild(row);
       }
     }
 
-    function line(text, className) {
-      const div = document.createElement('div');
-      if (className) div.className = className;
-      div.textContent = text;
-      return div;
+    async function toggle(box, project, plugin) {
+      box.disabled = true;
+      const reply = await request('setPluginFlag', { project, plugin, enabled: box.checked });
+      if (!reply.ok || reply.payload !== true) {
+        box.checked = !box.checked;
+      }
+      box.disabled = false;
+    }
+
+    function cell(tag, text) {
+      const el = document.createElement(tag);
+      el.textContent = text;
+      return el;
     }
   </script>
 </body>
