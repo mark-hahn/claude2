@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type RunningStatus } from "./types";
+import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PonySkip, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -105,7 +105,7 @@ export class ClaudeCliRunner {
       maxTurns: options.limits.maxTurns,
       costUsd: null,
       contextTokens: Math.max(0, options.priorContextTokens),
-      graftSaved: 0,
+      ponySkips: [],
       codeLines: 0,
       phase: "thinking",
       compactedAt: null,
@@ -160,7 +160,7 @@ export class ClaudeCliRunner {
       let costUsd: number | null = null;
       let stopReason: string | null = null;
       let durationMs = 0;
-      let graftSaved = 0;
+      let ponySkips: PonySkip[] = [];
       // What the CLI itself counted. --max-turns is enforced against this, not against the
       // message_start tally the gauge runs on live, and the two do not agree.
       let reportedTurns = 0;
@@ -242,6 +242,9 @@ export class ClaudeCliRunner {
         status.phase = null;
         status.costUsd = costUsd;
         status.contextTokens = contextTokens;
+        // The result text can land without ever streaming a delta, so the final parse runs here.
+        ponySkips = ponySkipsIn(responseText);
+        status.ponySkips = ponySkips;
         emitStatus();
 
         const finalResult: ClaudeRunResult = {
@@ -255,7 +258,7 @@ export class ClaudeCliRunner {
           turns: reportedTurns || status.turns || 1,
           // A run killed by Stop never reports its own duration, so fall back to the wall clock.
           durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
-          graftSaved,
+          ponySkips,
         };
 
         if (running.stopped) {
@@ -316,6 +319,9 @@ export class ClaudeCliRunner {
               }
             } else if (eventType === "content_block_stop") {
               status.phase = "working";
+              // Re-parsed from the whole text each time, so the list rebuilds rather than double-counts.
+              ponySkips = ponySkipsIn(responseText);
+              status.ponySkips = ponySkips;
             } else if (eventType === "content_block_delta") {
               const delta = recordOf(event.delta);
               const textDelta = stringOf(delta?.text);
@@ -349,15 +355,6 @@ export class ClaudeCliRunner {
               seenToolUses.add(blockId);
               appendToolLine(toolUseLine(block));
             }
-          }
-        } else if (messageType === "user") {
-          // Tool output comes back as the user turn that carries the tool results, which is where
-          // graft reports what it reckons it saved.
-          const saved = graftSavedIn(message);
-          if (saved > 0) {
-            graftSaved += saved;
-            status.graftSaved = graftSaved;
-            emitStatus();
           }
         } else if (messageType === "system") {
           // Compaction runs between API calls, so nothing else on the stream moves while it works.
@@ -473,8 +470,6 @@ function capTempDir(): string {
 function claude2SystemPrompt(contextWindow: number): string {
   return [
     "You are running in the Claude2 VS Code extension.",
-    "Use the local graft command for repository context before grepping or reading source files.",
-    "Prefer graft ask, graft grep, graft skeleton, graft callers, and graft map according to the repository guidance.",
     `The UI tracks a ${contextWindow.toLocaleString()} token context window for this session.`,
   ].join("\n");
 }
@@ -617,28 +612,24 @@ function toolUseLine(block: Record<string, unknown>): string {
   return `${TOOL_LINE_MARK}**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
-// graft prints its own estimate of what reading the files whole would have cost into its output.
-const graftSavedPattern = /\[graft\] tokens saved ≈ ([\d,]+)/g;
+// Ponytail closes a response with lines like "skipped: X, add when Y" — X is what it declined to
+// build, Y the condition that would justify building it. The line may open a sentence or follow
+// an arrow mid-line; anything looser than the documented shape is not counted.
+// ponytail: parses only the documented "skipped: X[, add when Y]" form; widen if real output drifts.
+const ponySkipPattern = /(?:^[-•*]?|→)\s*skipped:\s*(.+?)(?:[,;]\s*add when\s+(.+?))?\s*\.?\s*$/i;
 
-function graftSavedIn(message: Record<string, unknown>): number {
-  const content = recordOf(message.message)?.content;
-  if (!Array.isArray(content)) {
-    return 0;
-  }
-  let saved = 0;
-  for (const entry of content) {
-    const block = recordOf(entry);
-    if (!block || stringOf(block.type) !== "tool_result") {
+function ponySkipsIn(text: string): PonySkip[] {
+  const skips: PonySkip[] = [];
+  for (const line of text.split("\n")) {
+    if (line.startsWith(TOOL_LINE_MARK)) {
       continue;
     }
-    // A tool result is usually one string; some tools hand back an array of content blocks instead.
-    const raw = block.content;
-    const text = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map((part) => stringOf(recordOf(part)?.text)).join("\n") : "";
-    for (const match of text.matchAll(graftSavedPattern)) {
-      saved += Number(match[1].replace(/,/g, "")) || 0;
+    const match = ponySkipPattern.exec(line);
+    if (match) {
+      skips.push({ x: match[1].trim(), y: (match[2] ?? "").trim() });
     }
   }
-  return saved;
+  return skips;
 }
 
 function usageTotals(usage: Record<string, unknown>): { prompt: number; output: number; context: number } {

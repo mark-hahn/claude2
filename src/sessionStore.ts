@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn, type PonySkip } from "./types";
 
 const sessionsKey = "claude2.sessions.v1";
 
@@ -25,7 +25,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     turns: typeof turn.turns === "number" ? turn.turns : 0,
     maxTurns: typeof turn.maxTurns === "number" ? turn.maxTurns : 0,
     durationMs: typeof turn.durationMs === "number" ? turn.durationMs : 0,
-    graftSaved: typeof turn.graftSaved === "number" ? turn.graftSaved : 0,
+    ponySkips: Array.isArray(turn.ponySkips) ? turn.ponySkips.filter((skip): skip is PonySkip => !!skip && typeof skip.x === "string" && typeof skip.y === "string") : [],
   };
 }
 

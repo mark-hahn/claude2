@@ -12,9 +12,17 @@ export const DEFAULT_EFFORT = "high";
 // **bold** runs too. Zero width, so it shows as nothing wherever a response is read as plain text.
 export const TOOL_LINE_MARK = "⁣";
 
-// Graft has the model close a response with a savings tally line opening with this sprout. That
-// line is run bookkeeping, not answer text, so every view of a response drops lines starting with it.
+// Graft (since removed) had the model close a response with a savings tally line opening with
+// this sprout. Responses stored before the removal still carry those lines, so every view of a
+// response keeps dropping lines starting with it.
 export const GRAFT_TALLY_MARK = "🌱";
+
+// One ponytail skip line out of a response: "skipped: <x>, add when <y>". x is what was not
+// built, y is the condition that would justify building it after all.
+export interface PonySkip {
+  x: string;
+  y: string;
+}
 
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
@@ -41,7 +49,7 @@ export interface ClaudeTurn {
   turns: number;
   maxTurns: number;
   durationMs: number;
-  graftSaved: number;
+  ponySkips: PonySkip[];
 }
 
 export interface ClaudeSession {
@@ -65,7 +73,7 @@ export interface RunningStatus {
   maxTurns: number;
   costUsd: number | null;
   contextTokens: number;
-  graftSaved: number;
+  ponySkips: PonySkip[];
   codeLines: number;
   phase: ClaudePhase;
   // When the conversation was last compacted in this run, so the gauge can flag that the level
@@ -85,7 +93,7 @@ export interface ClaudeRunResult {
   stopReason: string | null;
   turns: number;
   durationMs: number;
-  graftSaved: number;
+  ponySkips: PonySkip[];
 }
 
 export interface QuotaReadingRow {

@@ -1,7 +1,26 @@
 
 
 
+
+show path to folder this is running in
+
+when turns reaches the limit and the session stops show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue
+
 ======================
+
+# switch to ponytail
+- replace graft completely with ponytail.
+- I want to show the session's cumulative skip count in `$1.23 | <x> | m:ss`
+- design an implement the "pony pane" to replace the graft pane. we can fine-tune it later.
+
+# switching to ponytail tool
+- i want to explore the possibility of switching from the graft tool to ponytail.  
+- i know they do different things but a series of tests i ran showed ponytail by itself beat the performance of graft by itself and graft with ponytail. 
+- so i would like to switch to ponytail by itself.
+- what do you think of this idea?
+- are there any references on the web to these tools performance and in particular them combined?
+- what parts of the ui are dependent on graft and would have to be changed if graft was removed?
+- how hard would it be to switch?
 
 don't show graft status line and end of response -- it starts with 🌱
 

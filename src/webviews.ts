@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, GRAFT_TALLY_MARK, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "graft" | "markdown" | "cap";
+export type ManagementPane = "instructions" | "quota" | "pony" | "markdown" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -32,7 +32,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
-    #graft { width: 52px; }
+    #pony { width: 52px; }
     #markdown { width: 30px; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
@@ -71,7 +71,7 @@ ${tooltipStyle()}  </style>
       <div class="row">
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
-        <button id="graft" title="Graft graph">Graft</button>
+        <button id="pony" title="Ponytail report: session skips and repo ceilings">Pony</button>
         <button id="cap" title="Show the latest screen capture" disabled>Cap</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
         <button id="markdown" title="Show the selected response as markdown" disabled>md</button>
@@ -112,7 +112,7 @@ ${tooltipScript()}
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
     document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
     document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
-    document.getElementById('graft').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'graft' }); });
+    document.getElementById('pony').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'pony' }); });
     document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
     document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
@@ -493,7 +493,7 @@ ${tooltipStyle()}  </style>
     <div class="dock">
       <textarea id="prompt" spellcheck="true"></textarea>
       <div class="dock-controls">
-        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
+        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="pony" title="Ponytail skips this session"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
         </div>
@@ -723,7 +723,8 @@ ${tooltipScript()}
     // of blank lines collapse to a single one. The streaming response keeps its tool lines
     // either way, since they are how the run's progress reads.
     function fillResponse(box, text, showTools) {
-      // Graft's closing tally line is run bookkeeping, not answer text; no box ever shows it.
+      // Graft (since removed) closed responses with a tally line; old stored responses still
+      // carry those lines, so no box ever shows them.
       let lines = text.split('\\n').filter((line) => !line.startsWith(GRAFT_TALLY_MARK));
       if (!showTools) {
         const kept = [];
@@ -969,21 +970,14 @@ ${tooltipScript()}
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
-      // What the run would have cost had graft not held those tokens back. They are priced at list,
-      // not at what the conversation averaged per token: a token graft kept out was never read at
-      // all, so reading it would have been billed as fresh input rather than as a cheap cache read.
-      // A floor either way — those tokens would then have been re-sent on every later call too,
-      // which this does not try to model. Each turn pays its own model's rate.
-      let extra = turns.reduce((sum, turn) => sum + (turn.graftSaved || 0) * listRate(turn.model) / 1000000, 0);
+      document.getElementById('cost').textContent = '$' + cost.toFixed(2);
+      // Cumulative ponytail skips: stored turns carry theirs, and the running turn's live ones
+      // ride on the status until they land on the turn at completion — never both at once.
+      let skips = turns.reduce((sum, turn) => sum + ((turn.ponySkips || []).length), 0);
       if (active) {
-        extra += (status.graftSaved || 0) * listRate(latest ? latest.model : defaultModel) / 1000000;
+        skips += (status.ponySkips || []).length;
       }
-      const wouldHave = cost + extra;
-      // With nothing saved the two halves are the same number, which reads as a broken gauge rather
-      // than as "graft was not used", so the comparison only appears once there is one to make.
-      const shownCost = cost.toFixed(2);
-      const shownWouldHave = wouldHave.toFixed(2);
-      document.getElementById('cost').textContent = '$' + shownCost + (shownWouldHave === shownCost ? '' : '/' + shownWouldHave);
+      document.getElementById('pony').textContent = String(skips);
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,
@@ -1000,25 +994,6 @@ ${tooltipScript()}
 
     function inK(tokens) {
       return Math.round((tokens || 0) / 1000) + 'K';
-    }
-
-    // List price of an input token, $ per million, by model family — the same table graft prices
-    // its own savings with. Output rates are irrelevant: what graft saves is context never read in.
-    // Ordered so the narrower pattern wins; an unrecognised model falls back to the Opus rate.
-    const LIST_USD_PER_MTOK = [
-      [/fable|mythos/, 10],
-      [/opus/, 5],
-      [/sonnet-?4-6/, 3],
-      [/sonnet/, 2],
-      [/haiku/, 1],
-    ];
-
-    function listRate(model) {
-      const name = String(model || '').toLowerCase();
-      for (const entry of LIST_USD_PER_MTOK) {
-        if (entry[0].test(name)) return entry[1];
-      }
-      return 5;
     }
 
     // m:ss, with the minutes free to run past 60 rather than rolling over into hours.
@@ -1190,9 +1165,9 @@ ${tooltipScript()}
 </html>`;
 }
 
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, graftPage: string | null = null, zoom = 1): string {
-  if (pane === "graft") {
-    return graftPage ?? graftFailedHtml();
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1): string {
+  if (pane === "pony") {
+    return ponyHtml(webview, zoom);
   }
   if (pane === "markdown") {
     return markdownHtml(webview, zoom);
@@ -1390,19 +1365,121 @@ ${tooltipScript()}
 </html>`;
 }
 
-// The Graft pane shows the self-contained page from `graft viz --export`, run by
-// the extension at open time; this fallback appears only when that export fails.
-function graftFailedHtml(): string {
+// The Pony pane: every "skipped: X, add when Y" line ponytail left in stored responses, grouped
+// by session, plus the ponytail: ceiling comments sitting in the workspace. Data arrives from the
+// extension in the loadPonyReport reply; clicking a ceiling's file:line opens it in an editor.
+function ponyHtml(webview: vscode.Webview, zoom: number): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
   return `<!doctype html>
-<html lang="en">
+<html lang="en" style="--z: ${z}">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    body { margin: 0; height: 100vh; display: grid; place-items: center; background: #f9f9f7; color: #000; font: 14px/1.45 Aptos, "Segoe UI", sans-serif; }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
+    .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 24px; }
+    .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 8px; }
+    h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
+    #totals { font-size: calc(14px * var(--z)); }
+    .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+    h2 { font-size: calc(16px * var(--z)); font-weight: 600; margin: 16px 0 8px; }
+    .session { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 8px 12px; margin-bottom: 8px; }
+    .session-name { font-weight: 600; }
+    .skip { margin: 4px 0 0 14px; }
+    .ceiling { display: flex; gap: 10px; align-items: baseline; margin: 0 0 6px; }
+    .loc { flex: none; border: none; background: none; padding: 0; min-height: 0; border-radius: 0; color: #0b5ed7; cursor: pointer; font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .loc:hover { text-decoration: underline; background: none; }
+    .ceiling-text { font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
   </style>
 </head>
-<body><div>graft viz export failed — see the Claude2 output channel. Click Graft again to retry.</div></body>
+<body>
+  <div class="pane">
+    <div class="title"><h1>Ponytail</h1><span id="totals"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="scroll">
+      <h2>Session skips</h2>
+      <div id="sessions"></div>
+      <h2>Repo ceilings</h2>
+      <div id="ceilings"></div>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${zoomScript(z)}
+    const pending = new Map();
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'reply' && pending.has(message.requestId)) {
+        pending.get(message.requestId)(message);
+        pending.delete(message.requestId);
+      }
+    });
+    document.getElementById('reload').addEventListener('click', () => void load());
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
+    void load();
+
+    function request(type, payload) {
+      const requestId = String(Date.now()) + Math.random();
+      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
+    }
+
+    async function load() {
+      const reply = await request('loadPonyReport', {});
+      render(reply.ok && reply.payload ? reply.payload : { sessions: [], ceilings: [] });
+    }
+
+    function render(report) {
+      const sessions = Array.isArray(report.sessions) ? report.sessions : [];
+      const ceilings = Array.isArray(report.ceilings) ? report.ceilings : [];
+      const skipTotal = sessions.reduce((sum, session) => sum + session.skips.length, 0);
+      document.getElementById('totals').textContent =
+        skipTotal + ' skip' + (skipTotal === 1 ? '' : 's') + ' · ' + ceilings.length + ' ceiling' + (ceilings.length === 1 ? '' : 's');
+      const sessionsBox = document.getElementById('sessions');
+      sessionsBox.textContent = '';
+      if (!sessions.length) {
+        sessionsBox.appendChild(line('No skips recorded yet — they collect as ponytail declines to build things.'));
+      }
+      for (const session of sessions) {
+        const card = document.createElement('div');
+        card.className = 'session';
+        card.appendChild(line(session.name, 'session-name'));
+        for (const skip of session.skips) {
+          card.appendChild(line('• ' + skip.x + (skip.y ? ' — add when ' + skip.y : ''), 'skip'));
+        }
+        sessionsBox.appendChild(card);
+      }
+      const ceilingsBox = document.getElementById('ceilings');
+      ceilingsBox.textContent = '';
+      if (!ceilings.length) {
+        ceilingsBox.appendChild(line('No ponytail: comments in the workspace.'));
+      }
+      for (const ceiling of ceilings) {
+        const row = document.createElement('div');
+        row.className = 'ceiling';
+        const loc = document.createElement('button');
+        loc.className = 'loc';
+        loc.textContent = ceiling.file + ':' + ceiling.line;
+        loc.addEventListener('click', () => vscode.postMessage({ type: 'openPonyFile', file: ceiling.file, line: ceiling.line }));
+        row.appendChild(loc);
+        row.appendChild(line(ceiling.text, 'ceiling-text'));
+        ceilingsBox.appendChild(row);
+      }
+    }
+
+    function line(text, className) {
+      const div = document.createElement('div');
+      if (className) div.className = className;
+      div.textContent = text;
+      return div;
+    }
+  </script>
+</body>
 </html>`;
 }
 

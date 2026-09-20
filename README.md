@@ -16,8 +16,8 @@ driving the `claude` CLI directly instead of wrapping a terminal.
   detection so a concurrent edit is not clobbered.
 - **Quota pane** — polls Anthropic usage for the 5-hour and 7-day windows plus credits,
   keeps a local history, and shares readings and rate-limit pauses across windows.
-- **Markdown and graft panes** — render a response as markdown, or view the exported
-  graft repo visualization.
+- **Markdown and pony panes** — render a response as markdown, or view the ponytail
+  report: skips recorded per session plus the `ponytail:` ceiling comments in the workspace.
 - **Screen capture** — attach a desktop screenshot to a prompt. Under WSL or a remote
   SSH host the extension delegates to the `claude2-cap` companion extension running on
   the local machine (see `claude2-cap/README.md`).
@@ -73,7 +73,7 @@ and the remote VS Code server, plus the `claude2-cap` VSIX on Windows.
   status, and truncates transcripts when a turn is forked
 - `src/sessionStore.ts` — session and turn persistence in extension global state
 - `src/webviews.ts` — HTML/CSS/JS for every pane (sidebar, conversation, instructions,
-  quota, markdown, graft, cap)
+  quota, markdown, pony, cap)
 - `src/quota.ts` — Anthropic usage polling, history file, cross-window sharing
 - `src/instructionsFile.ts` — read/write of the workspace `CLAUDE.md`
 - `src/capture.ts` — desktop screenshot, local or via the `claude2-cap` companion

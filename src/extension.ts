@@ -8,7 +8,7 @@ import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./cl
 import { InstructionsFile } from "./instructionsFile";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn, type PonySkip } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -17,6 +17,11 @@ let controller: Claude2Controller | undefined;
 // What the Cap pane is shown: the picture, where it lives, how many crops it is deep, and
 // whether it is still armed to ride with the next prompt (if not, the pane offers Send Again).
 type CaptureView = { path: string | null; dataUri: string | null; depth: number; armed: boolean };
+
+// The Pony pane's report: every stored skip grouped by session, plus the ponytail: ceiling
+// comments sitting in the workspace right now.
+type PonyCeiling = { file: string; line: number; text: string };
+type PonyReport = { sessions: { name: string; updatedAt: number; skips: PonySkip[] }[]; ceilings: PonyCeiling[] };
 
 const PNG_DATA_URI = "data:image/png;base64,";
 
@@ -889,7 +894,7 @@ class Claude2Controller implements vscode.Disposable {
       turns: 0,
       maxTurns: this.runLimits().maxTurns,
       durationMs: 0,
-      graftSaved: 0,
+      ponySkips: [],
     };
     await this.store.appendTurn(sessionId, turn);
     this.postConversationState(sessionId);
@@ -907,7 +912,7 @@ class Claude2Controller implements vscode.Disposable {
     let streamDirty = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     let lastContext = priorContext;
-    let lastGraftSaved = 0;
+    let lastPonySkips: PonySkip[] = [];
     let lastTurns = 0;
     const flushStream = (): void => {
       flushTimer = null;
@@ -945,7 +950,7 @@ class Claude2Controller implements vscode.Disposable {
         },
         onStatus: (status) => {
           lastContext = status.contextTokens || lastContext;
-          lastGraftSaved = status.graftSaved || lastGraftSaved;
+          lastPonySkips = status.ponySkips.length ? status.ponySkips : lastPonySkips;
           lastTurns = status.turns || lastTurns;
           queueStream();
         },
@@ -962,7 +967,7 @@ class Claude2Controller implements vscode.Disposable {
         stopReason: result.stopReason,
         turns: result.turns,
         durationMs: result.durationMs,
-        graftSaved: result.graftSaved,
+        ponySkips: result.ponySkips,
       }, true);
       await this.store.flush();
     } catch (error) {
@@ -980,7 +985,7 @@ class Claude2Controller implements vscode.Disposable {
           completedAt: Date.now(),
           contextUsed: lastContext,
           durationMs: Math.max(0, Date.now() - turn.createdAt),
-          graftSaved: lastGraftSaved,
+          ponySkips: lastPonySkips,
           turns: lastTurns,
           finished: true,
           stopped: false,
@@ -1108,33 +1113,50 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    const graftPage = pane === "graft" ? await this.exportedGraftViz() : null;
-    // The panel can close (or switch panes) while the export runs.
-    if (!this.managementPanel || this.managementPane !== pane) {
-      return;
-    }
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Graft";
-    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), graftPage, this.zoomOf("management"));
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Claude2 Pony";
+    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
   }
 
-  // `graft viz --export` packages the graph into one self-contained html page; no
-  // server or port is involved, so re-export on every open to stay current.
-  private async exportedGraftViz(): Promise<string | null> {
-    const storage = this.context.storageUri ?? this.context.globalStorageUri;
-    const dir = path.join(storage.fsPath, "graft-viz");
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn("graft", ["viz", "--export", dir], { cwd: this.workspacePath(), stdio: "ignore" });
-        child.on("error", reject);
-        child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`graft viz --export exited with code ${code}`))));
+  // The Pony pane's data, gathered fresh on every load: skips out of the stored sessions,
+  // ceilings out of a workspace grep.
+  private async ponyReport(): Promise<PonyReport> {
+    const sessions = this.store.all()
+      .filter((session) => !session.trashed)
+      .map((session) => ({
+        name: session.name,
+        updatedAt: session.updatedAt,
+        skips: session.turns.flatMap((turn) => turn.ponySkips),
+      }))
+      .filter((session) => session.skips.length > 0);
+    return { sessions, ceilings: await this.ponyCeilings() };
+  }
+
+  // Ponytail marks a deliberate corner cut in code with a "ponytail:" comment naming the ceiling
+  // and the upgrade path. grep exits 1 for "no matches", so any failure just reads as none found.
+  private ponyCeilings(): Promise<PonyCeiling[]> {
+    return new Promise((resolve) => {
+      const pattern = "(//|#|;|<!--|/\\*)[[:space:]]*ponytail:";
+      const args = ["-rnIE", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", pattern, "."];
+      const child = spawn("grep", args, { cwd: this.workspacePath(), stdio: ["ignore", "pipe", "ignore"] });
+      let outputText = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        outputText += chunk;
       });
-      return await fs.readFile(path.join(dir, "index.html"), "utf8");
-    } catch (error) {
-      this.channel.appendLine(`graft viz export failed: ${errorMessage(error)}`);
-      return null;
-    }
+      child.on("error", () => resolve([]));
+      child.on("close", () => {
+        const ceilings: PonyCeiling[] = [];
+        for (const line of outputText.split("\n")) {
+          const match = /^\.\/(.+?):(\d+):(.*)$/.exec(line);
+          if (match) {
+            ceilings.push({ file: match[1], line: Number(match[2]), text: match[3].trim() });
+          }
+        }
+        resolve(ceilings);
+      });
+    });
   }
 
   // The Instructions pane saves as you type, like a VS Code editor with auto save. When the file
@@ -1226,6 +1248,16 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.quota.history(true));
     } else if (type === "loadSelectedResponse") {
       await this.reply(requestId, async () => this.selectedResponse());
+    } else if (type === "loadPonyReport") {
+      await this.reply(requestId, async () => await this.ponyReport());
+    } else if (type === "openPonyFile") {
+      const file = stringOf(record?.file);
+      const line = Math.max(1, Math.floor(Number(record?.line) || 1));
+      if (file) {
+        const document = await vscode.workspace.openTextDocument(path.join(this.workspacePath(), file));
+        const position = new vscode.Position(Math.min(line - 1, document.lineCount - 1), 0);
+        await vscode.window.showTextDocument(document, { selection: new vscode.Range(position, position) });
+      }
     } else if (type === "loadCapture") {
       await this.reply(requestId, async () => await this.captureView());
     } else if (type === "cropCapture") {
@@ -1434,7 +1466,8 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
-// Drops the runner's marked tool lines and graft's closing tally line, keeping the blank-line
+// Drops the runner's marked tool lines and the tally line graft (since removed) left in old
+// stored responses, keeping the blank-line
 // shape the conversation pane produces when tool groups are hidden.
 function stripToolLines(text: string): string {
   const kept: string[] = [];
@@ -1454,7 +1487,7 @@ function stripToolLines(text: string): string {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "graft" || value === "markdown" || value === "cap" ? value : null;
+  return value === "instructions" || value === "quota" || value === "pony" || value === "markdown" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
