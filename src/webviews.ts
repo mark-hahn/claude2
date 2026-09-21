@@ -551,6 +551,9 @@ ${tooltipScript()}
     // from here and falls back to the bottom when no position is remembered.
     let boxScrolls = {};
     let boxScrollsLoaded = false;
+    // Turn ids whose markdown box has been shown since this webview loaded: the first showing
+    // starts at the top, every one after that comes back where it was left.
+    const markdownSeen = new Set();
     let boxScrollTimer = 0;
     let shownActiveTurn = null;
     let anchorIndex = 0;
@@ -1038,7 +1041,13 @@ ${tooltipScript()}
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
             if (raw) fillResponse(response, turn.response || '');
-            else response.innerHTML = renderMarkdown(strippedText(turn.response || ''));
+            else {
+              response.innerHTML = renderMarkdown(strippedText(turn.response || ''));
+              if (!markdownSeen.has(turn.id)) {
+                markdownSeen.add(turn.id);
+                boxScrollNext = 'top';
+              }
+            }
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';

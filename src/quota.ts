@@ -49,6 +49,9 @@ export class QuotaService {
   private lastFailureReason: string | null = null;
   private pausedUntil = 0;
   private storageDirPromise: Promise<string> | null = null;
+  // What this window last painted. globalState is shared by every window, but only the window
+  // that took the reading (or took the click) knows it changed, so the rest compare on each tick.
+  private lastAlertShown = false;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
@@ -64,6 +67,18 @@ export class QuotaService {
 
   public clearAlert(): void {
     void this.context.globalState.update(alertKey, undefined);
+    this.lastAlertShown = false;
+  }
+
+  // globalState carries the flag to every window, but nothing tells a window it arrived, so the
+  // timer tick that already runs everywhere doubles as the check. Worst case a window repaints a
+  // reading behind — within the same five minutes it would have refreshed the quota anyway.
+  private syncAlert(): void {
+    const now = this.alerting();
+    if (now !== this.lastAlertShown) {
+      this.lastAlertShown = now;
+      this.onAlert();
+    }
   }
 
   // Raises the warning only on a crossing: a window that was already at or above the line when
@@ -86,6 +101,7 @@ export class QuotaService {
     void this.context.globalState.update(alertSeenKey, next);
     if (crossed && !this.alerting()) {
       void this.context.globalState.update(alertKey, true);
+      this.lastAlertShown = true;
       this.onAlert();
     }
   }
@@ -131,7 +147,10 @@ export class QuotaService {
       clearTimeout(this.timer);
     }
     this.timer = setTimeout(() => {
-      void this.read(false, true).finally(() => this.schedule(fiveMinutesMs));
+      void this.read(false, true).finally(() => {
+        this.syncAlert();
+        this.schedule(fiveMinutesMs);
+      });
     }, delayMs);
   }
 
