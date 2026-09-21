@@ -2077,7 +2077,10 @@ ${zoomScript(z)}
       renderAge();
       const graphsNode = document.getElementById('graphs');
       const pane = document.getElementById('pane');
-      const graphs = [buildWindowGraph('five', '5h', 5 * 60 * 60 * 1000, [{ field: 'five_pct', reset: 'five_resets', name: '5h', color: '#000' }], rows), buildWindowGraph('seven', '7d', 7 * 24 * 60 * 60 * 1000, [{ field: 'seven_pct', reset: 'seven_resets', name: '7d', color: '#2457d6' }, { field: 'fable_pct', reset: 'fable_resets', name: modelLabel(), color: '#c62828' }], rows), buildCreditsGraph(rows)];
+      const five = buildWindowGraph('five', '5h', 5 * 60 * 60 * 1000, [{ field: 'five_pct', reset: 'five_resets', name: '5h', color: '#000' }], rows);
+      const seven = buildWindowGraph('seven', '7d', 7 * 24 * 60 * 60 * 1000, [{ field: 'seven_pct', reset: 'seven_resets', name: '7d', color: '#2457d6' }, { field: 'fable_pct', reset: 'fable_resets', name: modelLabel(), color: '#c62828' }], rows);
+      // Row 1 is the raw graphs, row 2 the against-target deltas sitting under their match.
+      const graphs = [five, seven, buildCreditsGraph(rows), deltaGraph(five, 'fiveDelta', 'Δ5h'), deltaGraph(seven, 'sevenDelta', 'Δ7d')];
       const visibleGraphs = expanded ? graphs.filter((graph) => graph.key === expanded) : graphs;
       pane.className = 'pane' + (expanded ? ' expanded' : '');
       graphsNode.className = 'graphs' + (expanded ? ' single' : '');
@@ -2122,8 +2125,9 @@ ${zoomScript(z)}
       const graphNode = document.createElement('section');
       graphNode.className = 'graph';
       const periods = graph.periods;
-      const back = Math.min(backs[graph.key] || 0, Math.max(0, periods.length - 1));
-      backs[graph.key] = back;
+      const backKey = graph.backKey || graph.key;
+      const back = Math.min(backs[backKey] || 0, Math.max(0, periods.length - 1));
+      backs[backKey] = back;
       const period = periods[periods.length - 1 - back];
       graphNode.innerHTML = '<div class="graph-head"><span class="graph-name">' + escapeHtml(graph.title) + '</span>' + legendHtml(graph) + '</div>';
       if (!period) {
@@ -2135,15 +2139,15 @@ ${zoomScript(z)}
       }
       const periodBar = document.createElement('div');
       periodBar.className = 'period';
-      periodBar.innerHTML = '<button data-page="older" data-key="' + graph.key + '" ' + (back >= periods.length - 1 ? 'disabled' : '') + '>‹</button><span>' + escapeHtml(period.label) + '</span><button data-page="newer" data-key="' + graph.key + '" ' + (back === 0 ? 'disabled' : '') + '>›</button>';
+      periodBar.innerHTML = '<button data-page="older" data-key="' + backKey + '" ' + (back >= periods.length - 1 ? 'disabled' : '') + '>‹</button><span>' + escapeHtml(period.label) + '</span><button data-page="newer" data-key="' + backKey + '" ' + (back === 0 ? 'disabled' : '') + '>›</button>';
       const plot = document.createElement('div');
       plot.className = 'plot';
       plot.dataset.expand = graph.key;
       const size = expanded === graph.key ? measured : { width: 320, height: 200 };
-      plot.innerHTML = drawSvg(period, graph.money, size.width, size.height);
+      plot.innerHTML = drawSvg(period, graph.money, size.width, size.height, graph.delta);
       const figures = document.createElement('div');
       figures.className = 'figures';
-      figures.innerHTML = figuresHtml(period, graph.money);
+      figures.innerHTML = figuresHtml(period, graph.money, graph.delta);
       graphNode.append(periodBar, plot, figures);
       return graphNode;
     }
@@ -2222,6 +2226,25 @@ ${zoomScript(z)}
       return { key, title, money: false, periods: periods.filter((period) => period.series.some((series) => series.points.length > 0)).sort((left, right) => left.end - right.end) };
     }
 
+    // Same periods as its parent graph (shared backKey keeps paging in lockstep), but each point
+    // becomes used% minus the target% the diagonal above shows: the share of the period elapsed.
+    function deltaGraph(graph, key, title) {
+      const periods = graph.periods.map((period) => Object.assign({}, period, {
+        key,
+        delta: true,
+        series: period.series.map((series) => ({
+          name: series.name,
+          color: series.color,
+          points: series.points.map((point) => ({ t: point.t, v: point.v - targetPct(period, point.t) })),
+        })),
+      }));
+      return { key, backKey: graph.key, title, money: false, delta: true, periods };
+    }
+
+    function targetPct(period, time) {
+      return 100 * Math.min(1, Math.max(0, (time - period.start) / (period.end - period.start)));
+    }
+
     function buildCreditsGraph(rows) {
       const byMonth = new Map();
       for (const row of rows) {
@@ -2248,10 +2271,13 @@ ${zoomScript(z)}
       return { key: 'credits', title: 'credits', money: true, periods };
     }
 
-    function drawSvg(period, money, width, height) {
-      const yMax = money ? Math.max(1, period.limit || 1) : 100;
-      const fractions = [0, 0.5, 1];
-      const labels = fractions.map((fraction) => axisLabel(yMax * fraction, money));
+    function drawSvg(period, money, width, height, delta) {
+      // "-20%" is exactly as wide as "100%", so the delta card's gutter matches its parent's and
+      // the two x-axes line up without any cross-card measurement.
+      const yMax = delta ? 20 : (money ? Math.max(1, period.limit || 1) : 100);
+      const yMin = delta ? -20 : 0;
+      const fractions = delta ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
+      const labels = fractions.map((fraction) => axisLabel(yMin + (yMax - yMin) * fraction, money));
       // Axis text renders in user units at the CSS size, so the gutter has to grow with zoom
       // and with the widest label or the labels run off the left edge of the viewBox.
       const fontSize = 14 * zoom;
@@ -2260,10 +2286,10 @@ ${zoomScript(z)}
       const plotWidth = Math.max(1, width - margin.left - margin.right);
       const plotHeight = Math.max(1, height - margin.top - margin.bottom);
       const x = (time) => margin.left + ((time - period.start) / (period.end - period.start)) * plotWidth;
-      const y = (value) => margin.top + (1 - Math.min(yMax, Math.max(0, value)) / yMax) * plotHeight;
+      const y = (value) => margin.top + (1 - (Math.min(yMax, Math.max(yMin, value)) - yMin) / (yMax - yMin)) * plotHeight;
       let svg = '<svg viewBox="0 0 ' + width + ' ' + height + '" role="img">';
       fractions.forEach((fraction, index) => {
-        const yValue = y(yMax * fraction);
+        const yValue = y(yMin + (yMax - yMin) * fraction);
         svg += '<line x1="' + margin.left + '" x2="' + (width - margin.right) + '" y1="' + yValue + '" y2="' + yValue + '" stroke="rgba(0,0,0,0.15)" />';
         svg += '<text x="' + (margin.left - 5) + '" y="' + (yValue + fontSize * 0.35) + '">' + escapeHtml(labels[index]) + '</text>';
       });
@@ -2271,7 +2297,11 @@ ${zoomScript(z)}
         const xValue = x(time);
         svg += '<line x1="' + xValue + '" x2="' + xValue + '" y1="' + margin.top + '" y2="' + (height - margin.bottom) + '" stroke="rgba(0,0,0,0.15)" />';
       }
-      if (!money) {
+      if (delta) {
+        const rule = (value, dash) => '<line x1="' + margin.left + '" x2="' + (width - margin.right) + '" y1="' + y(value) + '" y2="' + y(value) + '" stroke="rgba(0,0,0,0.45)" stroke-width="1"' + dash + ' />';
+        svg += rule(0, '');
+        svg += rule(-10, ' stroke-dasharray="5 4"') + rule(10, ' stroke-dasharray="5 4"');
+      } else if (!money) {
         svg += '<line x1="' + margin.left + '" y1="' + y(0) + '" x2="' + (width - margin.right) + '" y2="' + y(yMax) + '" stroke="rgba(0,0,0,0.45)" stroke-dasharray="5 4" stroke-width="1" />';
       }
       for (const series of period.series) {
@@ -2291,20 +2321,22 @@ ${zoomScript(z)}
       if (sorted.length === 0) return sorted;
       const knownTo = Math.min(period.end, payload.readAt || Date.now());
       const last = sorted[sorted.length - 1];
-      if (last.t < knownTo) sorted.push({ t: knownTo, v: last.v });
+      // A delta series carried forward is not flat: usage holds but the target keeps climbing.
+      if (last.t < knownTo) sorted.push({ t: knownTo, v: period.delta ? last.v - (targetPct(period, knownTo) - targetPct(period, last.t)) : last.v });
       return sorted;
     }
 
-    function figuresHtml(period, money) {
+    function figuresHtml(period, money, delta) {
       const parts = [];
       for (const series of period.series) {
         const points = carriedPoints(series.points, period);
         if (points.length) {
           const value = points[points.length - 1].v;
-          parts.push('<span style="color:' + series.color + '">' + escapeHtml(series.name + ' ' + axisLabel(value, money)) + '</span>');
+          const label = axisLabel(value, money);
+          parts.push('<span style="color:' + series.color + '">' + escapeHtml(series.name + ' ' + (delta && value > 0 ? '+' + label : label)) + '</span>');
         }
       }
-      if (!money) {
+      if (!money && !delta) {
         const elapsed = Math.max(0, Math.min(1, (Date.now() - period.start) / (period.end - period.start)));
         parts.push('<span>' + Math.round(elapsed * 100) + '%</span>');
         parts.push('<span>' + escapeHtml(timeLeft(period.end - Date.now())) + '</span>');
@@ -2338,7 +2370,7 @@ ${zoomScript(z)}
     }
 
     function legendHtml(graph) {
-      if (graph.key !== 'seven') return '';
+      if (graph.key !== 'seven' && graph.key !== 'sevenDelta') return '';
       return '<span class="legend"><span class="swatch blue"></span>7d <span class="swatch red"></span>' + escapeHtml(modelLabel()) + '</span>';
     }
 

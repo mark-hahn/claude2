@@ -1258,7 +1258,13 @@ class Claude2Controller implements vscode.Disposable {
       column.paths = column.paths.includes(recordPath) ? column.paths : [column.paths, recordPath].filter(Boolean).join("\n");
       projects.set(name, column);
     }
-    return { projects: [...projects.values()].sort((left, right) => left.project.localeCompare(right.project)), offline: remote === null };
+    // columns group by host — wsl, then windows, then server; a project on several hosts
+    // sorts with the earliest of them — and alphabetically within a host
+    const hostRank = (hosts: string): number => (hosts.includes("wsl") ? 0 : hosts.includes("windows") ? 1 : 2);
+    return {
+      projects: [...projects.values()].sort((left, right) => hostRank(left.hosts) - hostRank(right.hosts) || left.project.localeCompare(right.project)),
+      offline: remote === null,
+    };
   }
 
   // The workspace's current size: non-binary files and their lines, for judging whether the

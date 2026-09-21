@@ -1,4 +1,31 @@
 
+
+how do you tune the system prompt
+
+
+- add 2 new graphs to quota pane
+- they match the 5h and 7d graphs
+  - they should be placed under their matched graph
+  - they should align exactly so their x-axises line up
+  - they should have y-axis from -20% to +20%
+  - there should be a horizontal line at 0%
+    - there should be dashed lines at -10% and +10%
+  - there should be one value plotted forming a single line
+    - it should be the actual used % minus the target %
+      - the target % is shown on the diagonal line in graph above
+      - the target % is the percent of time passed per quota period
+
+real forking
+
+markdown without sidebar
+
+???????
+
+too many bars above block
+show path to folder this is running in
+
+======================
+
 # graft and ponytail stats in footer
 - remove current ponytail stat from footer stats
 - when graft is enabled for the workspace show old `$X/Y` using graft info
@@ -7,20 +34,6 @@
 - when ponytail is enabled for the workspace show `<skips>:<ceilings>`
 - in both cases show them to the right of the context stats
 - separate them with pipes | as usual
-
-how do you tune the system prompt
-
-for each graph show line of % above/below
-real forking
-markdown without sidebar
-
-too many bars above block
-
-show path to folder this is running in
-
-when turns reaches the limit and the response stops, then show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue -- concatenate response before stopping with response after and don't record the continue prompt -- the goal is to not create a new block
-
-======================
 
 - i'm just curious about why the dev extension host at /root/wsl-apps/test gives this error:
 `Plugins
