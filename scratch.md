@@ -1,4 +1,13 @@
 
+real forking
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
+
 # markdown in conversation pane
 - in the conversation pane a box in a block can be in 3 states:
   - it can be streaming raw text with tool groups
@@ -19,17 +28,6 @@
 - clicking in a non-streaming box should toggle between a markdown box and a raw box
 - all non-streaming boxes should start as a markdown box until manually toggled with a click
 - any box in any state can be toggled between shown and hidden by clicking on the prompt bar like now
-
-
-real forking
-markdown without sidebar
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 when 5H, 7D, or fable usage goes from < 95% to >= 95% then highlight $x/y status in the footer with a background of light-red -- if the highlighted $x/y status is clicked then clear the highlighting until another usage goes from  < 95% to >= 95% -- keep this persistant across reloading
 
