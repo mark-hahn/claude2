@@ -1,15 +1,14 @@
 
+when 5H, 7D, or fable usage goes from < 95% to >= 95% then highlight $x/y status in the footer with a background of light-red -- if the highlighted $x/y status is clicked then clear the highlighting until another usage goes from  < 95% to >= 95% -- keep this persistant across reloading
 
-how do you tune the system prompt
 
-
+show time since last response output
 
 real forking
 
 markdown without sidebar
 
 ???????
-
 too many bars above block
 show path to folder this is running in
 

@@ -19,6 +19,12 @@ const fifteenMinutesMs = 15 * 60 * 1000;
 // than this, keeping the fleet at one background call per five minutes.
 const timerFreshMs = fiveMinutesMs - 30 * 1000;
 const fetchTimeoutMs = 5000;
+// The footer's cost stat goes red when any window first crosses this, and stays red until
+// clicked. Both the flag and the last-seen levels live in global state so a reload comes back
+// to the same warning rather than re-raising it (or losing it) on the next reading.
+const alertPct = 95;
+const alertKey = "claude2.quotaAlert";
+const alertSeenKey = "claude2.quotaSeenPct";
 
 interface HttpJsonResponse {
   statusCode: number;
@@ -48,7 +54,41 @@ export class QuotaService {
     private readonly context: vscode.ExtensionContext,
     private readonly workspacePath: string,
     private readonly log: (line: string) => void,
+    private readonly onAlert: () => void = () => {},
   ) {}
+
+  // True while a window has crossed 95% without the warning being cleared.
+  public alerting(): boolean {
+    return this.context.globalState.get<boolean>(alertKey, false);
+  }
+
+  public clearAlert(): void {
+    void this.context.globalState.update(alertKey, undefined);
+  }
+
+  // Raises the warning only on a crossing: a window that was already at or above the line when
+  // last read stays quiet, so the footer does not re-redden every five minutes. Levels unseen
+  // before (first reading after an install) arm the check rather than trip it.
+  private noteAlertCrossings(state: QuotaState): void {
+    const seen = this.context.globalState.get<Record<string, number>>(alertSeenKey, {});
+    const next: Record<string, number> = {};
+    let crossed = false;
+    for (const window of state.windows) {
+      if (window.pct === null) {
+        continue;
+      }
+      next[window.key] = window.pct;
+      const before = seen[window.key];
+      if (typeof before === "number" && before < alertPct && window.pct >= alertPct) {
+        crossed = true;
+      }
+    }
+    void this.context.globalState.update(alertSeenKey, next);
+    if (crossed && !this.alerting()) {
+      void this.context.globalState.update(alertKey, true);
+      this.onAlert();
+    }
+  }
 
   public start(): void {
     this.schedule(5000 + Math.floor(Math.random() * 10000));
@@ -112,6 +152,7 @@ export class QuotaService {
       this.lastReadAt = state.at ?? Date.now();
       this.lastFailureReason = null;
       this.pausedUntil = 0;
+      this.noteAlertCrossings(state);
       await this.recordReading(state);
       await this.writeSharedMeta();
       return this.state;

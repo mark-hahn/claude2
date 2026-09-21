@@ -105,7 +105,7 @@ class Claude2Controller implements vscode.Disposable {
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
     this.store = new SessionStore(context);
     this.runner = new ClaudeCliRunner((line) => this.channel.appendLine(line));
-    this.quota = new QuotaService(context, this.workspacePath(), (line) => this.channel.appendLine(line));
+    this.quota = new QuotaService(context, this.workspacePath(), (line) => this.channel.appendLine(line), () => this.postAllConversationStates());
     this.stats = new PluginStats(context, this.workspacePath(), (line) => this.channel.appendLine(line));
     void this.stats.seed(this.store.all());
     // turn events queued while the stats server was unreachable drain on activation
@@ -518,6 +518,9 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "stopPrompt") {
       this.runner.stop(sessionId);
       this.postConversationState(sessionId);
+    } else if (type === "clearQuotaAlert") {
+      this.quota.clearAlert();
+      this.postAllConversationStates();
     } else if (type === "copyText") {
       await this.copyToClipboard(stringOf(record?.text));
     } else if (type === "forkTurn") {
@@ -1514,6 +1517,12 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
+  private postAllConversationStates(): void {
+    for (const sessionId of this.conversationPanels.keys()) {
+      this.postConversationState(sessionId);
+    }
+  }
+
   private postConversationState(sessionId: string): void {
     const session = this.store.get(sessionId);
     const panel = this.conversationPanels.get(sessionId);
@@ -1523,7 +1532,7 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     // Which plugin stat the footer shows, and the numbers only this side can read: graft's
     // savings for the session and the workspace's ceiling count.
-    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings };
+    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting() };
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
     if (sessionId === this.lastConversationId) {
       this.postSelectedResponse();

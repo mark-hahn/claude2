@@ -470,6 +470,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
     #context.compacted { background: var(--yellow); border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
+    /* A plan window has crossed 95% since this was last acknowledged. Stays red until clicked. */
+    #cost.quota-alert { background: #fbd9d9; border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
     .indicator { border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-weight: 700; white-space: nowrap; }
     /* One uppercase letter only, at a fixed width, so the pill never resizes as the phase
        changes and pushes the prompt editor around. */
@@ -520,7 +522,7 @@ ${tooltipScript()}
     let status = null;
     // Which plugins this workspace runs with and the numbers only the extension can read:
     // graft's savings for this session, and the workspace's ponytail ceiling count.
-    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0 };
+    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0, quotaAlert: false };
     // When the last status arrived, so the elapsed time it carries can be run forward locally
     // between messages instead of sitting still through a long tool call.
     let statusAt = 0;
@@ -949,6 +951,12 @@ ${tooltipScript()}
 
     document.getElementById('context').addEventListener('click', clearCompaction);
 
+    // Acknowledging the quota warning is durable: the extension clears the stored flag and
+    // pushes the cleared footer back, so every pane and every reload agrees it is gone.
+    document.getElementById('cost').addEventListener('click', () => {
+      if (footer.quotaAlert) vscode.postMessage({ type: 'clearQuotaAlert' });
+    });
+
     function renderStatus() {
       const active = status && status.active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
@@ -978,9 +986,14 @@ ${tooltipScript()}
       // With graft on, what the session would have cost without it sits alongside what it did
       // cost — but only once they differ by a nickel, below which the second figure says nothing.
       const saved = footer.graft ? footer.graftSavedUsd || 0 : 0;
-      document.getElementById('cost').textContent = saved >= 0.05
+      const costBox = document.getElementById('cost');
+      costBox.textContent = saved >= 0.05
         ? '$' + cost.toFixed(2) + '/' + (cost + saved).toFixed(2)
         : '$' + cost.toFixed(2);
+      costBox.classList.toggle('quota-alert', !!footer.quotaAlert);
+      // dataset.tip, not title: the tooltip helper moves title into it on first hover and reads
+      // only that afterwards, so a later title change would never be seen.
+      costBox.dataset.tip = footer.quotaAlert ? 'A plan window passed 95% — click to clear' : '';
       // Cumulative ponytail skips: stored turns carry theirs, and the running turn's live ones
       // ride on the status until they land on the turn at completion — never both at once.
       // Against the workspace's ceiling comments, the other half of what ponytail leaves behind.
