@@ -542,7 +542,7 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
-    // The one open box's view: markdown by default, raw text with tool groups after a click.
+    // The one open box's view: markdown by default, raw text with tool groups after a ctrl-click.
     // The streaming box answers to neither — it always shows raw text with tool lines, and
     // becomes a markdown box when its run ends.
     let rawBox = false;
@@ -1056,14 +1056,13 @@ ${tooltipScript()}
             }
             response.addEventListener('click', (event) => {
               if (event.altKey) {
-                // Same as the md pane: a failed turn keeps its partial text and gains the reason.
+                // The whole box, as shown: a failed turn keeps its partial text and gains the reason.
                 const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
-                vscode.postMessage({ type: 'copyText', sessionId, text: (turn.prompt || '') + '\\n\\n' + body });
+                vscode.postMessage({ type: 'copyText', sessionId, text: raw ? body : strippedText(body) });
                 return;
               }
-              // A click that ends a text-selection drag is a copy, not a toggle.
-              const selection = window.getSelection();
-              if (selection && !selection.isCollapsed) return;
+              // Only ctrl-click toggles the view; a plain click is left to text selection.
+              if (!event.ctrlKey) return;
               // A click on a rendered link is the link, not the toggle.
               if (event.target.closest && event.target.closest('a')) return;
               // The streaming box does not answer the toggle; its tool lines stay up.
