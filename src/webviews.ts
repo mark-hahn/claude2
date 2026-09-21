@@ -299,6 +299,7 @@ ${tooltipScript()}
           if (event.altKey) {
             event.preventDefault();
             vscode.postMessage({ type: 'copyText', text: session.name || '' });
+            card.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
             return;
           }
           if (renamed) {
@@ -1007,6 +1008,7 @@ ${tooltipScript()}
           bar.addEventListener('click', (event) => {
             if (event.altKey) {
               vscode.postMessage({ type: 'copyText', sessionId, text: turn.prompt || '' });
+              bar.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
               return;
             }
             if (event.ctrlKey) {
@@ -1059,6 +1061,7 @@ ${tooltipScript()}
                 // The whole box, as shown: a failed turn keeps its partial text and gains the reason.
                 const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
                 vscode.postMessage({ type: 'copyText', sessionId, text: raw ? body : strippedText(body) });
+                response.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
                 return;
               }
               // Only ctrl-click toggles the view; a plain click is left to text selection.
