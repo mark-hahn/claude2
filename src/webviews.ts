@@ -480,6 +480,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* Scoped to the enabled state on purpose: an id beats the .dock-controls disabled rule, so a
        plain "#stop { color: #000 }" would keep the glyph black while the button is dead. */
     #stop:not(:disabled) { color: #000; border-color: #000; }
+    /* Stop asks the CLI to finish the message it is on rather than killing it, so the run keeps
+       streaming for a moment after the click. Red says "heard you, still winding down". */
+    #stop.stopping:not(:disabled), #stop.stopping:hover:not(:disabled) { background: #ffd4d4; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
@@ -641,7 +644,10 @@ ${tooltipScript()}
     promptBox.addEventListener('input', () => sendDraft('draftChanged'));
     // Losing focus is the cue to name the session after an unsent draft.
     promptBox.addEventListener('blur', () => sendDraft('draftBlur'));
-    stopButton.addEventListener('click', () => vscode.postMessage({ type: 'stopPrompt', sessionId }));
+    stopButton.addEventListener('click', () => {
+      markStopping();
+      vscode.postMessage({ type: 'stopPrompt', sessionId });
+    });
     document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
     forkButton.addEventListener('click', forkSelectedBlock);
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
@@ -715,11 +721,22 @@ ${tooltipScript()}
       vscode.postMessage({ type, sessionId, draft });
     }
 
+    // The turn a stop has been asked for, so the Stop button can show that the request is in
+    // flight. Cleared by the first render where that turn is no longer the running one.
+    let stoppingTurn = null;
+
+    function markStopping() {
+      if (!status || !status.active) return;
+      stoppingTurn = status.turnId;
+      stopButton.classList.add('stopping');
+    }
+
     function submitPrompt() {
       const prompt = promptBox.value;
       // Sending during a run is allowed: the extension stops the running turn and takes this
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
       if (!prompt.trim()) return;
+      markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
       draftSent = '';
@@ -977,6 +994,11 @@ ${tooltipScript()}
       // Nav row enablement, once the selection has settled: each button greys out when the move
       // it offers would do nothing. Cap is the exception -- it is always live.
       stopButton.disabled = !active;
+      // The stopped turn has ended (or a Ctrl-Enter replacement has started in its place).
+      if (stoppingTurn && (!active || status.turnId !== stoppingTurn)) {
+        stoppingTurn = null;
+        stopButton.classList.remove('stopping');
+      }
       bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
       forkButton.disabled = !turns.length || anchorIndex >= turns.length - 1;
       loadButton.disabled = !turns.length;

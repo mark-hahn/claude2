@@ -40,7 +40,14 @@ interface RunningProcess {
   child: ChildProcess;
   status: RunningStatus;
   stopped: boolean;
+  // Armed when Stop sends an interrupt, cleared when the run settles: the SIGTERM fallback for a
+  // CLI that never answers the interrupt.
+  killTimer: ReturnType<typeof setTimeout> | null;
 }
+
+// How long a graceful interrupt gets before the process is killed outright.
+// ponytail: fixed grace, make it a setting if a real tool ever needs longer to unwind.
+const INTERRUPT_GRACE_MS = 15000;
 
 export class ClaudeCliRunner {
   private readonly running = new Map<string, RunningProcess>();
@@ -62,13 +69,37 @@ export class ClaudeCliRunner {
       return false;
     }
     running.stopped = true;
-    running.child.kill("SIGTERM");
+    if (running.killTimer) {
+      return true;
+    }
+    // A control request stops the CLI at its own turn boundary, the way Escape does in the
+    // interactive client: the partial message is flushed, "[Request interrupted by user]" is
+    // written, and the session file stays valid for the next --resume. SIGTERM would cut the
+    // file mid-message and could strand a tool_use with no result.
+    try {
+      running.child.stdin?.write(JSON.stringify({
+        type: "control_request",
+        request_id: `stop_${sessionId}`,
+        request: { subtype: "interrupt" },
+      }) + "\n");
+    } catch (error) {
+      this.log(`Claude interrupt failed: ${errorText(error)}`);
+      running.child.kill("SIGTERM");
+      return true;
+    }
+    running.killTimer = setTimeout(() => running.child.kill("SIGTERM"), INTERRUPT_GRACE_MS);
     return true;
   }
 
   public dispose(): void {
     for (const running of this.running.values()) {
       running.stopped = true;
+      if (running.killTimer) {
+        clearTimeout(running.killTimer);
+        running.killTimer = null;
+      }
+      // No graceful interrupt here: the extension host is going away and nothing is left to
+      // read the result the CLI would write back.
       running.child.kill("SIGTERM");
     }
     this.running.clear();
@@ -114,10 +145,14 @@ export class ClaudeCliRunner {
       startedAt: Date.now(),
     };
 
-    // The prompt goes in on stdin so that text beginning with "-" is never parsed as a CLI option.
+    // The prompt goes in on stdin so that text beginning with "-" is never parsed as a CLI option,
+    // as a stream-json message rather than raw text so that stdin stays open as a control channel
+    // for the interrupt `stop` sends.
     const args = [
       "-p",
       "--output-format",
+      "stream-json",
+      "--input-format",
       "stream-json",
       "--verbose",
       "--include-partial-messages",
@@ -151,10 +186,16 @@ export class ClaudeCliRunner {
       env: childEnv(options.contextWindow, options.plugins.graft),
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const running: RunningProcess = { child, status, stopped: false };
+    const running: RunningProcess = { child, status, stopped: false, killTimer: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
-    child.stdin.end(options.prompt);
+    // Left open on purpose: under stream-json input the CLI reads stdin for the whole run, and
+    // closing it is what lets the process exit, so that waits until the result line lands.
+    child.stdin.write(JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: options.prompt }] },
+      parent_tool_use_id: null,
+    }) + "\n");
 
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
       let stdoutBuffer = "";
@@ -201,6 +242,10 @@ export class ClaudeCliRunner {
       };
 
       const cleanup = (): void => {
+        if (running.killTimer) {
+          clearTimeout(running.killTimer);
+          running.killTimer = null;
+        }
         this.running.delete(options.sessionId);
       };
 
@@ -421,6 +466,9 @@ export class ClaudeCliRunner {
             // the result text; only a true error_ subtype has a readable form of its own.
             resultError = subtype.startsWith("error_") ? readableResultError(subtype, options.limits.maxTurns) : resultText || readableResultError(subtype, options.limits.maxTurns);
           }
+          // The run is over but the CLI is still reading stdin; closing it is what ends the
+          // process, whether the result came from a finished turn or from a Stop interrupt.
+          child.stdin.end();
         }
       };
     });

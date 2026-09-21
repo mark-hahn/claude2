@@ -1,5 +1,5 @@
 
-how does this compare to manually stopping and doing a continue
+how long can it take for a turn to finish?  if more than a few seconds then highlight the background of the stop button with light-red while waiting for the turn to finish
 
 real forking
 
