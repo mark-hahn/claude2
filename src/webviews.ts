@@ -1045,7 +1045,9 @@ ${tooltipScript()}
             if (raw) fillResponse(response, turn.response || '');
             else {
               response.innerHTML = renderMarkdown(strippedText(turn.response || ''));
-              if (!markdownSeen.has(turn.id)) {
+              // finished gates the pre-stream render: a just-sent turn flashes as an empty
+              // markdown box before its run goes active, and must not count as seen.
+              if (turn.finished && !markdownSeen.has(turn.id)) {
                 markdownSeen.add(turn.id);
                 boxScrollNext = 'top';
               }

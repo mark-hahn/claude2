@@ -1,4 +1,6 @@
 
+how does this compare to manually stopping and doing a continue
+
 real forking
 
 ???????
