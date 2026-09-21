@@ -83,6 +83,23 @@ export class SessionStore {
     return session;
   }
 
+  // A fork's copy: the same conversation under a new id, named "<source> (2)", then (3), and so on.
+  public async clone(sessionId: string): Promise<ClaudeSession | undefined> {
+    const source = this.get(sessionId);
+    if (!source) {
+      return undefined;
+    }
+    const base = source.name.replace(/ \(\d+\)$/, "");
+    let version = 2;
+    while (this.sessions.some((session) => session.name === `${base} (${version})`)) {
+      version += 1;
+    }
+    const copy = normalizeSession({ ...structuredClone(source), id: randomUUID(), name: `${base} (${version})`, updatedAt: Date.now() });
+    this.sessions.unshift(copy);
+    await this.save();
+    return copy;
+  }
+
   public async remove(sessionId: string): Promise<boolean> {
     const index = this.sessions.findIndex((session) => session.id === sessionId);
     if (index === -1) {

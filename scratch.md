@@ -1,9 +1,14 @@
 
-remove the credits graph from the quota pane -- expand the other 4 graphs with the same aspect ratio to fill the width of the pane with a small margin - add a credits progress indicator at middle of header.  it should have a progress bar to indicate how much of the credit limit has been spent -- put no axes -- place credits spent so far, $x.yy, to the left of the bar and the limit to the right
+change the label of the plugins button to `Stats`
 
-in each of the Δ5h and Δ7D graphs add 2 dashed lines. one line should start at x == 80% of period and a Y of the top +20%. It should end at 0 on far right.  the second line should start with x == 80% and y at bottom of -20% at y == 0. It should also end at 0 on far right. the same two lines should be shown on both graphs.  It is impossible for a quota value to cross either of these lines. check my logic.
+# real forking
+- when the fork button is clicked then first clone the entire session into a new session with a session card
+- the new session name should be the same as the source session except for an appended version number
+  - if there is already an existing matching session name then append ` (2)`
+  - if there is already an existing matching session name with (n) then increment n: ` (n+1)`
+  - the name of the source extension should be unchanged
+- after cloning, trim turns from the end of the source session exactly as fork button does now
 
-real forking
 
 ???????
 too many bars above block
@@ -11,6 +16,10 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+remove the credits graph from the quota pane -- expand the other 4 graphs with the same aspect ratio to fill the width of the pane with a small margin - add a credits progress indicator at middle of header.  it should have a progress bar to indicate how much of the credit limit has been spent -- put no axes -- place credits spent so far, $x.yy, to the left of the bar and the limit to the right
+
+in each of the Δ5h and Δ7D graphs add 2 dashed lines. one line should start at x == 80% of period and a Y of the top +20%. It should end at 0 on far right.  the second line should start with x == 80% and y at bottom of -20% at y == 0. It should also end at 0 on far right. the same two lines should be shown on both graphs.  It is impossible for a quota value to cross either of these lines. check my logic.
 
 how long can it take for a turn to finish?  if more than a few seconds then highlight the background of the stop button with light-red while waiting for the turn to finish
 

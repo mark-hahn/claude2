@@ -580,6 +580,18 @@ function sessionTranscriptExists(workspacePath: string, sessionId: string): bool
   }
 }
 
+// A fork keeps the whole conversation alive under a new session id, so the CLI transcript is copied
+// across with the old id swapped out -- the copy resumes as a session of its own, not as the source.
+export function copySessionTranscript(workspacePath: string, fromId: string, toId: string): boolean {
+  try {
+    const text = fs.readFileSync(transcriptPath(workspacePath, fromId), "utf8");
+    fs.writeFileSync(transcriptPath(workspacePath, toId), text.split(fromId).join(toId), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Forking a conversation only means anything to Claude if the CLI forgets the dropped runs too:
 // the next prompt resumes from this file, so it is cut at the prompt that starts the first dropped
 // run. keepPrompts is how many prompts stay; droppedPrompt is the text of the first one to go, used

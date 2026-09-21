@@ -517,7 +517,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: copy the session, then drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
         </div>
       </div>
     </div>
@@ -952,11 +952,11 @@ ${tooltipScript()}
       return out.join('');
     }
 
-    // Forks at the selected block: every block below it is dropped. The extension asks for
-    // confirmation, so this only has to name the block.
+    // Forks at the selected block: every block below it is dropped. On the last block nothing is
+    // below it, so the fork is just the copy. The extension asks for confirmation either way.
     function forkSelectedBlock() {
       const turn = session.turns[anchorIndex];
-      if (!turn || anchorIndex >= session.turns.length - 1) return;
+      if (!turn) return;
       vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
     }
 
@@ -1000,7 +1000,7 @@ ${tooltipScript()}
         stopButton.classList.remove('stopping');
       }
       bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
-      forkButton.disabled = !turns.length || anchorIndex >= turns.length - 1;
+      forkButton.disabled = !turns.length;
       loadButton.disabled = !turns.length;
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
       // still pinned to the bottom when it was there (how a streaming box follows its text).

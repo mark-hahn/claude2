@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { captureScreen } from "./capture";
-import { ClaudeCliRunner, truncateSessionTranscript, type RunLimits } from "./claudeCli";
+import { ClaudeCliRunner, copySessionTranscript, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
@@ -536,20 +536,36 @@ class Claude2Controller implements vscode.Disposable {
   private async forkTurn(sessionId: string, turnId: string): Promise<void> {
     const session = this.store.get(sessionId);
     const index = session?.turns.findIndex((turn) => turn.id === turnId) ?? -1;
-    if (!session || index < 0 || index === session.turns.length - 1) {
+    if (!session || index < 0) {
       return;
     }
     if (this.runner.isRunning(sessionId)) {
       void vscode.window.showWarningMessage("Claude is still responding in this session; stop it before forking.");
       return;
     }
+    // Forking the last block drops nothing, so it is only the copy half: two identical sessions.
     const count = session.turns.length - index - 1;
     const answer = await vscode.window.showWarningMessage(
-      `Fork the conversation here, dropping the ${count} run${count === 1 ? "" : "s"} after this one?`,
-      { modal: true, detail: "Claude forgets them too. The previous transcript is kept as a .bak file beside it." },
-      "Fork",
+      count === 0 ? "Copy this session?" : `Fork the conversation here, dropping the ${count} run${count === 1 ? "" : "s"} after this one?`,
+      {
+        modal: true,
+        detail:
+          count === 0
+            ? "The copy is a session of its own, holding the whole conversation."
+            : "Claude forgets them too. The whole conversation is kept as a new session beside this one.",
+      },
+      count === 0 ? "Copy" : "Fork",
     );
-    if (answer !== "Fork") {
+    if (answer !== "Fork" && answer !== "Copy") {
+      return;
+    }
+    // The copy comes first: it has to be taken while the source still has every run.
+    const copy = await this.store.clone(sessionId);
+    if (copy && !copySessionTranscript(this.workspacePath(), sessionId, copy.id)) {
+      this.channel.appendLine(`Fork: no CLI transcript copied for session ${copy.id}; the clone starts without Claude's context.`);
+    }
+    if (count === 0) {
+      this.refreshSidebar();
       return;
     }
     const droppedPrompt = session.turns[index + 1].prompt;
