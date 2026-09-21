@@ -1,11 +1,24 @@
 
+# graft and ponytail stats in footer
+- remove current ponytail stat from footer stats
+- when graft is enabled for the workspace show old `$X/Y` using graft info
+  - see code from before switch to ponytail
+  - if not enabled show old `$Z`
+- when ponytail is enabled for the workspace show `<skips>:<ceilings>`
+- in both cases show them to the right of the context stats
+- separate them with pipes | as usual
+
+how do you tune the system prompt
+
 for each graph show line of % above/below
 real forking
 markdown without sidebar
+
 too many bars above block
+
 show path to folder this is running in
 
-when turns reaches the limit and the session stops show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue -- show last turn and new turn as one turn
+when turns reaches the limit and the response stops, then show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue -- concatenate response before stopping with response after and don't record the continue prompt -- the goal is to not create a new block
 
 ======================
 

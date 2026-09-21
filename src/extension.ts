@@ -98,6 +98,8 @@ class Claude2Controller implements vscode.Disposable {
   // sign-in succeeds. It lives in globalState so the button survives reloads and reboots,
   // and so every window on this machine shows it — the credentials it reflects are shared.
   private authNeeded = false;
+  // Last reading of the workspace's ponytail ceiling comments, retaken after every turn.
+  private ceilings = 0;
   private instructionsWatcher: vscode.FileSystemWatcher | null = null;
 
   public constructor(private readonly context: vscode.ExtensionContext, private readonly channel: vscode.OutputChannel) {
@@ -109,6 +111,8 @@ class Claude2Controller implements vscode.Disposable {
     // turn events queued while the stats server was unreachable drain on activation
     void this.stats.flushTurns();
     this.authNeeded = context.globalState.get<boolean>(authNeededKey, false);
+    // The footer's ponytail stat needs a ceiling count before the window's first turn takes one.
+    void this.ponyCeilingCount().then((count) => { this.ceilings = count; });
     this.loadDrafts();
   }
 
@@ -1175,6 +1179,7 @@ class Claude2Controller implements vscode.Disposable {
   private async noteTurnStats(sessionId: string, delta: StatsDelta, info: { plugins: PluginFlags } & Record<string, unknown>): Promise<void> {
     const graft = await this.stats.graftDelta(sessionId);
     const ceilings = await this.ponyCeilingCount();
+    this.ceilings = ceilings;
     let size = this.sizeBySession.get(sessionId);
     if (!size) {
       size = await this.workspaceSize();
@@ -1187,6 +1192,8 @@ class Claude2Controller implements vscode.Disposable {
     split[info.plugins.graft ? "costGraftOn" : "costGraftOff"] = delta.costUsd ?? 0;
     await this.stats.add({ ...delta, ...graft, ...split }, { ponyCeilings: ceilings, ...size });
     void this.stats.logTurn({ sessionId, ...info, ...delta, ...graft, ponyCeilings: ceilings, ...size });
+    // The turn ends before this grep does, so the footer posted then carried the old count.
+    this.postConversationState(sessionId);
   }
 
   // The Plugins pane's table, rebuilt on every load: every install's record off the stats
@@ -1505,7 +1512,10 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {} });
+    // Which plugin stat the footer shows, and the numbers only this side can read: graft's
+    // savings for the session and the workspace's ceiling count.
+    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings };
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
     if (sessionId === this.lastConversationId) {
       this.postSelectedResponse();
     }
@@ -1546,14 +1556,14 @@ class Claude2Controller implements vscode.Disposable {
       model: session?.model || config.get<string>("model", DEFAULT_MODEL),
       effort: session?.effort || config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
-      maxTurns: config.get<number>("maxTurns", 50),
+      maxTurns: config.get<number>("maxTurns", 10000),
     };
   }
 
   private runLimits(): RunLimits {
     const config = vscode.workspace.getConfiguration("claude2");
     return {
-      maxTurns: config.get<number>("maxTurns", 50),
+      maxTurns: config.get<number>("maxTurns", 10000),
       maxBudgetUsd: config.get<number>("maxBudgetUsd", 0),
       permissionMode: config.get<string>("permissionMode", "auto"),
     };

@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.69",
+  "version": "0.0.73",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -89,7 +89,7 @@
         },
         "claude2.maxTurns": {
           "type": "number",
-          "default": 50,
+          "default": 10000,
           "description": "Maximum agentic turns per Claude2 prompt (passed to the Claude CLI as --max-turns)."
         },
         "claude2.maxBudgetUsd": {

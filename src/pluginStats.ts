@@ -211,15 +211,42 @@ export class PluginStats {
     }
   }
 
-  // What graft saved this claude session so far, minus what was already counted. graft keeps
-  // cumulative per-session metrics in <workspace>/graft/.cache/session/<id>.json, including the
-  // session's real billed input rate, which prices the saved tokens the same way graft does.
+  // graft keeps cumulative per-session metrics in <workspace>/graft/.cache/session/<id>.json,
+  // including the session's real billed input rate. Null when graft never ran in the session.
+  private graftMetrics(sessionId: string): Record<string, unknown> | null {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(this.workspacePath, "graft", ".cache", "session", `${sessionId}.json`), "utf8")) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  // Saved tokens priced the way graft prices them: at what this session actually paid per input token.
+  private graftUsd(tokens: number, metrics: Record<string, unknown>): number {
+    const costMicros = Number(metrics.inputCostMicros) || 0;
+    const tokensBilled = Number(metrics.inputTokensBilled) || 0;
+    const usd = tokens > 0 && costMicros > 0 && tokensBilled > 0 ? (tokens * (costMicros / tokensBilled)) / 1e6 : 0;
+    return Number.isFinite(usd) ? usd : 0;
+  }
+
+  // Everything graft has saved this session, for the footer's "$spent/$without-graft".
+  public graftSavedUsd(sessionId: string): number {
+    const metrics = this.graftMetrics(sessionId);
+    return metrics ? this.graftUsd(Number(metrics.savedTokens) || 0, metrics) : 0;
+  }
+
+  // This project's switches as last answered by the server, without asking it again — the
+  // footer redraws far too often to go over the wire for a flag that changes by hand.
+  public cachedFlags(): PluginFlags {
+    const cached = this.context.workspaceState.get<Partial<PluginFlags>>(flagsKey, {});
+    return { graft: cached.graft !== false, ponytail: cached.ponytail !== false };
+  }
+
+  // What graft saved this claude session so far, minus what was already counted.
   public async graftDelta(sessionId: string): Promise<{ graftCalls: number; graftTokensSaved: number; graftUsdSaved: number }> {
     const zero = { graftCalls: 0, graftTokensSaved: 0, graftUsdSaved: 0 };
-    let metrics: Record<string, unknown>;
-    try {
-      metrics = JSON.parse(fs.readFileSync(path.join(this.workspacePath, "graft", ".cache", "session", `${sessionId}.json`), "utf8")) as Record<string, unknown>;
-    } catch {
+    const metrics = this.graftMetrics(sessionId);
+    if (!metrics) {
       return zero;
     }
     const saved = Number(metrics.savedTokens) || 0;
@@ -234,10 +261,7 @@ export class PluginStats {
       delete seen[key];
     }
     await this.context.workspaceState.update(graftSeenKey, seen);
-    const costMicros = Number(metrics.inputCostMicros) || 0;
-    const tokensBilled = Number(metrics.inputTokensBilled) || 0;
-    const usd = tokens > 0 && costMicros > 0 && tokensBilled > 0 ? (tokens * (costMicros / tokensBilled)) / 1e6 : 0;
-    return { graftCalls: calls, graftTokensSaved: tokens, graftUsdSaved: Number.isFinite(usd) ? usd : 0 };
+    return { graftCalls: calls, graftTokensSaved: tokens, graftUsdSaved: this.graftUsd(tokens, metrics) };
   }
 
   // Every install's record and every project's flags, straight off the server. Null when it
@@ -260,8 +284,7 @@ export class PluginStats {
       await this.context.workspaceState.update(flagsKey, flags);
       return flags;
     }
-    const cached = this.context.workspaceState.get<Partial<PluginFlags>>(flagsKey, {});
-    return { graft: cached.graft !== false, ponytail: cached.ponytail !== false };
+    return this.cachedFlags();
   }
 
   public async setFlag(project: string, plugin: string, enabled: boolean): Promise<boolean> {

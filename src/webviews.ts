@@ -413,7 +413,6 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
-  const maxTurns = JSON.stringify(defaults.maxTurns);
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
@@ -493,7 +492,7 @@ ${tooltipStyle()}  </style>
     <div class="dock">
       <textarea id="prompt" spellcheck="true"></textarea>
       <div class="dock-controls">
-        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep">|</span><div class="status" id="pony" title="Ponytail skips this session"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
+        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
         </div>
@@ -515,11 +514,13 @@ ${tooltipScript()}
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
     const compactAt = Math.max(1000, contextWindow - ${compactReserve});
-    const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
     const GRAFT_TALLY_MARK = ${graftTallyMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
+    // Which plugins this workspace runs with and the numbers only the extension can read:
+    // graft's savings for this session, and the workspace's ponytail ceiling count.
+    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0 };
     // When the last status arrived, so the elapsed time it carries can be run forward locally
     // between messages instead of sitting still through a long tool call.
     let statusAt = 0;
@@ -582,6 +583,7 @@ ${tooltipScript()}
       if (message.type === 'sessionState') {
         session = message.session || session;
         status = message.status || null;
+        footer = message.footer || footer;
         statusAt = Date.now();
         if (typeof message.draft === 'string' && message.draft && !promptBox.value) {
           promptBox.value = message.draft;
@@ -964,20 +966,31 @@ ${tooltipScript()}
         compactSeen = status.compactedAt;
         flagCompaction();
       }
-      const turnsSoFar = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
-      const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
-      document.getElementById('turns').textContent = turnsSoFar + '/' + turnLimit;
+      // Every agentic turn the CLI has taken in this conversation, summed over all its prompts —
+      // a flow like cost and time. It used to show the latest prompt's count alone, which read as
+      // the conversation being shorter than the bars above plainly showed it was. The running
+      // prompt's count rides on the status until it lands on the turn at completion.
+      const agentic = turns.reduce((sum, turn) => sum + (turn.turns || 0), 0) + (active ? status.turns || 0 : 0);
+      document.getElementById('turns').textContent = agentic;
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
-      document.getElementById('cost').textContent = '$' + cost.toFixed(2);
+      // With graft on, what the session would have cost without it sits alongside what it did
+      // cost — but only once they differ by a nickel, below which the second figure says nothing.
+      const saved = footer.graft ? footer.graftSavedUsd || 0 : 0;
+      document.getElementById('cost').textContent = saved >= 0.05
+        ? '$' + cost.toFixed(2) + '/' + (cost + saved).toFixed(2)
+        : '$' + cost.toFixed(2);
       // Cumulative ponytail skips: stored turns carry theirs, and the running turn's live ones
       // ride on the status until they land on the turn at completion — never both at once.
+      // Against the workspace's ceiling comments, the other half of what ponytail leaves behind.
       let skips = turns.reduce((sum, turn) => sum + ((turn.ponySkips || []).length), 0);
       if (active) {
         skips += (status.ponySkips || []).length;
       }
-      document.getElementById('pony').textContent = String(skips);
+      document.getElementById('pony').textContent = skips + ':' + (footer.ceilings || 0);
+      document.getElementById('pony').style.display = footer.ponytail ? '' : 'none';
+      document.getElementById('pony-sep').style.display = footer.ponytail ? '' : 'none';
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,
