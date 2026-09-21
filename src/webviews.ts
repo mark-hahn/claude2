@@ -2248,6 +2248,11 @@ ${zoomScript(z)}
         const rule = (value, dash) => '<line x1="' + margin.left + '" x2="' + (width - margin.right) + '" y1="' + y(value) + '" y2="' + y(value) + '" stroke="rgba(0,0,0,0.45)" stroke-width="1"' + dash + ' />';
         svg += rule(0, '');
         svg += rule(-10, ' stroke-dasharray="5 4"') + rule(10, ' stroke-dasharray="5 4"');
+        // Unreachable bounds: used% <= 100 caps delta at 100-elapsed% (visible over the last 20%
+        // of the period), used% >= 0 floors it at -elapsed% (visible over the first 20%).
+        const atFrac = (fraction) => margin.left + fraction * plotWidth;
+        const bound = (f1, v1, f2, v2) => '<line x1="' + atFrac(f1) + '" y1="' + y(v1) + '" x2="' + atFrac(f2) + '" y2="' + y(v2) + '" stroke="rgba(0,0,0,0.45)" stroke-dasharray="5 4" stroke-width="1" />';
+        svg += bound(0.8, yMax, 1, 0) + bound(0, 0, 0.2, yMin);
       } else if (!money) {
         svg += '<line x1="' + margin.left + '" y1="' + y(0) + '" x2="' + (width - margin.right) + '" y2="' + y(yMax) + '" stroke="rgba(0,0,0,0.45)" stroke-dasharray="5 4" stroke-width="1" />';
       }

@@ -1,5 +1,5 @@
 
-how long can it take for a turn to finish?  if more than a few seconds then highlight the background of the stop button with light-red while waiting for the turn to finish
+in each of the Δ5h and Δ7D graphs add 2 dashed lines. one line should start at x == 80% of period and a Y of the top +20%. It should end at 0 on far right.  the second line should start with x == 80% and y at bottom of -20% at y == 0. It should also end at 0 on far right. the same two lines should be shown on both graphs.  It is impossible for a quota value to cross either of these lines. check my logic.
 
 real forking
 
@@ -9,6 +9,8 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+how long can it take for a turn to finish?  if more than a few seconds then highlight the background of the stop button with light-red while waiting for the turn to finish
 
 # markdown in conversation pane
 - in the conversation pane a box in a block can be in 3 states:
