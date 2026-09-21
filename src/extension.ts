@@ -9,7 +9,7 @@ import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -71,7 +71,6 @@ class Claude2Controller implements vscode.Disposable {
   // Sessions whose panel should put the caret in the prompt box once its webview loads.
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
-  private readonly selectedTurns = new Map<string, number>();
   // Each box's scroll position per session, keyed by turn id ('bottom' pins to the end).
   // Deliberately not persisted to disk: the memory outlives any one webview but resets
   // when the extension reloads.
@@ -428,7 +427,6 @@ class Claude2Controller implements vscode.Disposable {
         // The box that held the text is gone; what it last sent goes to disk now.
         void this.flushDrafts();
         this.conversationPanels.delete(sessionId);
-        this.selectedTurns.delete(sessionId);
         if (this.lastConversationId === sessionId) {
           this.lastConversationId = "";
         }
@@ -525,12 +523,6 @@ class Claude2Controller implements vscode.Disposable {
       await this.copyToClipboard(stringOf(record?.text));
     } else if (type === "forkTurn") {
       await this.forkTurn(sessionId, stringOf(record?.turnId));
-    } else if (type === "selectionChanged") {
-      const index = record?.index;
-      this.selectedTurns.set(sessionId, typeof index === "number" ? index : 0);
-      if (sessionId === this.lastConversationId) {
-        this.postSelectedResponse();
-      }
     } else if (type === "boxScrollsChanged") {
       const scrolls = recordOf(record?.boxScrolls);
       if (scrolls) {
@@ -568,10 +560,8 @@ class Claude2Controller implements vscode.Disposable {
     if (!truncateSessionTranscript(this.workspacePath(), sessionId, result.kept, droppedPrompt)) {
       this.channel.appendLine(`Fork: no CLI transcript cut for session ${sessionId}; the dropped runs may still be in Claude's context.`);
     }
-    this.selectedTurns.set(sessionId, index);
     this.postConversationState(sessionId);
     this.refreshSidebar();
-    this.postSelectedResponse();
   }
 
   private async copyToClipboard(text: string): Promise<void> {
@@ -580,30 +570,6 @@ class Claude2Controller implements vscode.Disposable {
     }
     await vscode.env.clipboard.writeText(text);
     vscode.window.setStatusBarMessage("Copied to clipboard", 1500);
-  }
-
-  // The response box the conversation has selected, as the md pane wants it. The pane opens from
-  // the sidebar, so the conversation it reads from is the last one focused. The turn id rides
-  // along so the pane can tell a growing response apart from a different one and keep its scroll.
-  // Tool groups never reach the pane: their lines drop here the same way the conversation hides
-  // them — no leading blanks, and runs of blank lines collapse to a single one.
-  private selectedResponse(): { turnId: string; prompt: string; text: string } | null {
-    const session = this.store.get(this.lastConversationId);
-    if (!session || !session.turns.length) {
-      return null;
-    }
-    const index = Math.max(0, Math.min(session.turns.length - 1, this.selectedTurns.get(session.id) ?? session.turns.length - 1));
-    const turn = session.turns[index];
-    // Same as the conversation pane: a failed turn keeps its partial text and gains the reason.
-    const text = turn.error ? `${turn.response}${turn.response ? "\n\n" : ""}${turn.error}` : turn.response;
-    return { turnId: turn.id, prompt: turn.prompt, text: stripToolLines(text) };
-  }
-
-  private postSelectedResponse(): void {
-    if (this.managementPane !== "markdown") {
-      return;
-    }
-    void this.managementPanel?.webview.postMessage({ type: "selectedResponse", payload: this.selectedResponse() });
   }
 
   // hideWindow is a plain Cap click: minimize this VS Code window for the length of the shot so the
@@ -696,12 +662,6 @@ class Claude2Controller implements vscode.Disposable {
   // The Cap pane has no picture to show until a capture has been taken this session.
   public hasCapture(): boolean {
     return this.lastCapture !== null;
-  }
-
-  // The md pane shows the selected response, so an editor pane with no turn in it leaves
-  // the sidebar's md button with nothing to open.
-  public hasSelectedResponse(): boolean {
-    return this.selectedResponse() !== null;
   }
 
   // Resolves to the signed-in account summary, or null when the user cancelled the code box.
@@ -1164,7 +1124,7 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "markdown" ? "Claude2 Markdown" : pane === "cap" ? "Claude2 Capture" : "Claude2 Plugins";
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "cap" ? "Claude2 Capture" : "Claude2 Plugins";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
@@ -1407,8 +1367,6 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.quota.history(false));
     } else if (type === "forceQuotaHistory") {
       await this.reply(requestId, async () => await this.quota.history(true));
-    } else if (type === "loadSelectedResponse") {
-      await this.reply(requestId, async () => this.selectedResponse());
     } else if (type === "loadPluginsReport") {
       await this.reply(requestId, async () => await this.pluginsReport());
     } else if (type === "setPluginFlag") {
@@ -1534,20 +1492,13 @@ class Claude2Controller implements vscode.Disposable {
     // savings for the session and the workspace's ceiling count.
     const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting() };
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
-    if (sessionId === this.lastConversationId) {
-      this.postSelectedResponse();
-    }
     this.refreshSidebar();
   }
 
   // Streaming update: only the new text and the run status cross to the webview, and the
-  // sidebar (whose cards show nothing live) is left alone until the run ends. The md pane
-  // rides the same throttle so it renders the response as markdown while it grows.
+  // sidebar (whose cards show nothing live) is left alone until the run ends.
   private postTurnDelta(sessionId: string, turnId: string, delta: string): void {
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "turnDelta", turnId, delta, status: this.runner.status(sessionId) });
-    if (sessionId === this.lastConversationId) {
-      this.postSelectedResponse();
-    }
   }
 
   private refreshSidebar(): void {
@@ -1625,33 +1576,12 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       authNeeded: this.controller.isAuthNeeded(),
       panesOpen: this.controller.hasOpenPanes(),
       hasCapture: this.controller.hasCapture(),
-      hasResponse: this.controller.hasSelectedResponse(),
     });
   }
 }
 
-// Drops the runner's marked tool lines and the tally line graft (since removed) left in old
-// stored responses, keeping the blank-line
-// shape the conversation pane produces when tool groups are hidden.
-function stripToolLines(text: string): string {
-  const kept: string[] = [];
-  for (const line of text.split("\n")) {
-    if (line.startsWith(TOOL_LINE_MARK) || line.startsWith(GRAFT_TALLY_MARK)) {
-      continue;
-    }
-    if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) {
-      continue;
-    }
-    kept.push(line);
-  }
-  while (kept.length && !kept[kept.length - 1].trim()) {
-    kept.pop();
-  }
-  return kept.join("\n");
-}
-
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "plugins" || value === "markdown" || value === "cap" ? value : null;
+  return value === "instructions" || value === "quota" || value === "plugins" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

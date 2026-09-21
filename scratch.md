@@ -1,18 +1,37 @@
 
-when 5H, 7D, or fable usage goes from < 95% to >= 95% then highlight $x/y status in the footer with a background of light-red -- if the highlighted $x/y status is clicked then clear the highlighting until another usage goes from  < 95% to >= 95% -- keep this persistant across reloading
+# markdown in conversation pane
+- in the conversation pane a box in a block can be in 3 states:
+  - it can be streaming raw text with tool groups
+    - call this a streaming box
+    - this can only be the bottom box
+    - clicks in a box in this box state are ignored
+    - this is what a streaming box currently does
+  - it can be showing non-streaming raw text with tool groups
+    - call this a raw box
+    - this can only ever be seen after manually clicking in the box
+    - this is also one of the current states
+  - it can be showing markdown like that shown with the md button in sidebar
+    - call this a markdown box
+    - it is never streaming
+    - it scrolls like raw boxes do
+    - it doesn't show tool groups in markdown
+- when streaming finishes the streaming box should switch to a markdown box
+- clicking in a non-streaming box should toggle between a markdown box and a raw box
+- all non-streaming boxes should start as a markdown box until manually toggled with a click
+- any box in any state can be toggled between shown and hidden by clicking on the prompt bar like now
 
-
-show time since last response output
 
 real forking
-
 markdown without sidebar
 
 ???????
 too many bars above block
 show path to folder this is running in
+show time since last response output
 
 ======================
+
+when 5H, 7D, or fable usage goes from < 95% to >= 95% then highlight $x/y status in the footer with a background of light-red -- if the highlighted $x/y status is clicked then clear the highlighting until another usage goes from  < 95% to >= 95% -- keep this persistant across reloading
 
 - add 2 new graphs to quota pane
 - they match the 5h and 7d graphs

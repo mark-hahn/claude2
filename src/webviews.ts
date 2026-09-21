@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, GRAFT_TALLY_MARK, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "plugins" | "markdown" | "cap";
+export type ManagementPane = "instructions" | "quota" | "plugins" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -33,7 +33,6 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
     #plugins { width: 52px; }
-    #markdown { width: 30px; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
@@ -74,7 +73,6 @@ ${tooltipStyle()}  </style>
         <button id="plugins" title="Plugin stats and controls for every project">Plug</button>
         <button id="cap" title="Show the latest screen capture" disabled>Cap</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
-        <button id="markdown" title="Show the selected response as markdown" disabled>md</button>
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
@@ -113,7 +111,6 @@ ${tooltipScript()}
     document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
     document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
     document.getElementById('plugins').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'plugins' }); });
-    document.getElementById('markdown').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'markdown' }); });
     document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
@@ -170,8 +167,6 @@ ${tooltipScript()}
         // until a screenshot has been taken.
         document.getElementById('close').disabled = message.panesOpen !== true;
         document.getElementById('cap').disabled = message.hasCapture !== true;
-        // md opens the selected response, so an editor pane with no turn in it leaves it dead.
-        document.getElementById('markdown').disabled = message.hasResponse !== true;
         if (editingId) {
           pendingRender = true;
           return;
@@ -444,6 +439,24 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; overflow-x: hidden; }
     .response.error { border-left-color: #c62828; }
+    /* The markdown box: the same block, prose-rendered. Sizes stay inside the pane's 14-18px band. */
+    .response.markdown { font: calc(14px * var(--z))/1.5 Aptos, "Segoe UI", sans-serif; white-space: normal; }
+    .response.markdown > :first-child { margin-top: 0; }
+    .response.markdown h1, .response.markdown h2 { font-size: calc(16px * var(--z)); font-weight: 700; margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+    .response.markdown h3, .response.markdown h4, .response.markdown h5, .response.markdown h6 { font-size: calc(14px * var(--z)); font-weight: 700; margin: 12px 0 5px; }
+    .response.markdown p { margin: 0 0 8px; }
+    .response.markdown ul, .response.markdown ol { margin: 0 0 8px; padding-left: 24px; }
+    .response.markdown li { margin: 2px 0; }
+    .response.markdown li > ul, .response.markdown li > ol { margin: 2px 0 0; }
+    .response.markdown blockquote { margin: 0 0 8px; border-left: 3px solid var(--border); padding: 2px 10px; }
+    .response.markdown hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    .response.markdown a { color: #0b4f9c; }
+    .response.markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 4px; }
+    .response.markdown pre { background: #f2f1ec; border: 1px solid var(--border); border-radius: 8px; margin: 0 0 10px; padding: 8px 10px; overflow: auto; }
+    .response.markdown pre code { background: none; padding: 0; white-space: pre; }
+    .response.markdown table { border-collapse: collapse; margin: 0 0 10px; font-size: calc(14px * var(--z)); }
+    .response.markdown th, .response.markdown td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+    .response.markdown th { background: rgba(0,0,0,0.05); }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
@@ -529,10 +542,10 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
-    // Tool-group visibility for the one open box. Every fresh open starts hidden; the
-    // streaming box forces them shown, and they stay shown once the run ends until the
-    // box is clicked or closed.
-    let toolsVisible = false;
+    // The one open box's view: markdown by default, raw text with tool groups after a click.
+    // The streaming box answers to neither — it always shows raw text with tool lines, and
+    // becomes a markdown box when its run ends.
+    let rawBox = false;
     // Each box's scroll position by turn id: a pixel offset, or 'bottom' to pin to the end.
     // Mirrored to the extension so the memory outlives this webview; a reopened box restores
     // from here and falls back to the bottom when no position is remembered.
@@ -551,7 +564,6 @@ ${tooltipScript()}
     let programmaticScroll = false;
     let resizeTimer = 0;
     let draftSent = '';
-    let selectionSent = -1;
     const historyBox = document.getElementById('history');
     const promptBox = document.getElementById('prompt');
     const modelSelect = document.getElementById('model');
@@ -721,25 +733,13 @@ ${tooltipScript()}
       promptBox.focus();
     }
 
-    // Response text is plain, except for a leading **bold** run on a line, used for a tool name and by
-    // the model's own prose alike. Built as text nodes so nothing else in the response is treated as markup.
-    // Hiding a box's tool groups drops those lines at build time: no leading blanks, and runs
-    // of blank lines collapse to a single one. The streaming response keeps its tool lines
-    // either way, since they are how the run's progress reads.
-    function fillResponse(box, text, showTools) {
+    // Raw and streaming boxes: text is plain, except for a leading **bold** run on a line, used
+    // for a tool name and by the model's own prose alike. Built as text nodes so nothing else
+    // in the response is treated as markup.
+    function fillResponse(box, text) {
       // Graft (since removed) closed responses with a tally line; old stored responses still
       // carry those lines, so no box ever shows them.
-      let lines = text.split('\\n').filter((line) => !line.startsWith(GRAFT_TALLY_MARK));
-      if (!showTools) {
-        const kept = [];
-        for (const line of lines) {
-          if (isToolLine(line)) continue;
-          if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) continue;
-          kept.push(line);
-        }
-        while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
-        lines = kept;
-      }
+      const lines = text.split('\\n').filter((line) => !line.startsWith(GRAFT_TALLY_MARK));
       lines.forEach((line, index) => {
         if (index) box.appendChild(document.createTextNode('\\n'));
         appendFormattedLine(box, line);
@@ -777,6 +777,160 @@ ${tooltipScript()}
       return line.startsWith(TOOL_LINE_MARK);
     }
 
+    // What the markdown box renders: the response without its tool lines — no leading blanks,
+    // runs of blank lines collapsed to one so the paragraph breaks survive.
+    function strippedText(text) {
+      const kept = [];
+      for (const line of text.split('\\n')) {
+        if (isToolLine(line) || line.startsWith(GRAFT_TALLY_MARK)) continue;
+        if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) continue;
+        kept.push(line);
+      }
+      while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+      return kept.join('\\n');
+    }
+
+    // The markdown renderer, deliberately small: the blocks Claude actually emits (headings,
+    // fences, lists, quotes, tables, rules) and the inline runs inside them.
+    function escapeHtml(text) {
+      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Inline runs. Code spans are lifted out first so nothing inside them is treated as markup,
+    // and only http(s) links are kept as links.
+    function inline(text) {
+      const codes = [];
+      let out = escapeHtml(text).replace(/\\\`([^\\\`]+)\\\`/g, (match, code) => {
+        codes.push(code);
+        return '\\u0000' + (codes.length - 1) + '\\u0000';
+      });
+      out = out.replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1');
+      out = out.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href="$2">$1</a>');
+      out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+      out = out.replace(/(^|[^*])\\*([^*\\n]+)\\*/g, '$1<em>$2</em>');
+      out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+      return out.replace(/\\u0000(\\d+)\\u0000/g, (match, index) => '<code>' + codes[Number(index)] + '</code>');
+    }
+
+    // The offset is where the item's text starts, which is how far a continuation line under it
+    // is indented; the indent is the marker's own column, which is what nesting goes by.
+    function listItemOf(line) {
+      const bullet = /^(\\s*)[-*+]\\s+(.*)$/.exec(line);
+      if (bullet) return { indent: bullet[1].length, offset: line.length - bullet[2].length, ordered: false, text: bullet[2] };
+      const numbered = /^(\\s*)\\d+[.)]\\s+(.*)$/.exec(line);
+      if (numbered) return { indent: numbered[1].length, offset: line.length - numbered[2].length, ordered: true, text: numbered[2] };
+      return null;
+    }
+
+    function buildList(items) {
+      const parts = [];
+      let index = 0;
+      while (index < items.length) {
+        const item = items[index];
+        const nested = [];
+        let next = index + 1;
+        while (next < items.length && items[next].indent > item.indent) { nested.push(items[next]); next++; }
+        const body = item.lines.join('\\n');
+        let inner = item.lines.length > 1 ? renderMarkdown(body) : inline(body);
+        if (nested.length) inner += buildList(nested);
+        parts.push('<li>' + inner + '</li>');
+        index = next;
+      }
+      return '<' + (items[0].ordered ? 'ol' : 'ul') + '>' + parts.join('') + '</' + (items[0].ordered ? 'ol' : 'ul') + '>';
+    }
+
+    function tableRow(line) {
+      const trimmed = line.trim().replace(/^\\|/, '').replace(/\\|$/, '');
+      return trimmed.split('|').map((cell) => cell.trim());
+    }
+
+    function renderMarkdown(text) {
+      const lines = String(text).replace(/\\r\\n/g, '\\n').split('\\n');
+      const out = [];
+      let paragraph = [];
+      const flush = () => {
+        if (!paragraph.length) return;
+        out.push('<p>' + inline(paragraph.join('\\n')).replace(/\\n/g, '<br>') + '</p>');
+        paragraph = [];
+      };
+      let index = 0;
+      while (index < lines.length) {
+        const line = lines[index];
+        const fence = /^\\s*(\\\`{3,}|~{3,})/.exec(line);
+        if (fence) {
+          flush();
+          const marker = fence[1].charAt(0);
+          const body = [];
+          index++;
+          while (index < lines.length && !new RegExp('^\\\\s*' + marker + '{3,}\\\\s*$').test(lines[index])) { body.push(lines[index]); index++; }
+          index++;
+          out.push('<pre><code>' + escapeHtml(body.join('\\n')) + '</code></pre>');
+          continue;
+        }
+        if (!line.trim()) { flush(); index++; continue; }
+        const heading = /^(#{1,6})\\s+(.*)$/.exec(line);
+        if (heading) {
+          flush();
+          const level = heading[1].length;
+          out.push('<h' + level + '>' + inline(heading[2].replace(/\\s+#+\\s*$/, '')) + '</h' + level + '>');
+          index++;
+          continue;
+        }
+        if (/^\\s*(-{3,}|\\*{3,}|_{3,})\\s*$/.test(line)) { flush(); out.push('<hr>'); index++; continue; }
+        if (/^\\s*>/.test(line)) {
+          flush();
+          const quoted = [];
+          while (index < lines.length && (/^\\s*>/.test(lines[index]) || (quoted.length && lines[index].trim()))) {
+            quoted.push(lines[index].replace(/^\\s*>\\s?/, ''));
+            index++;
+          }
+          out.push('<blockquote>' + renderMarkdown(quoted.join('\\n')) + '</blockquote>');
+          continue;
+        }
+        if (line.indexOf('|') >= 0 && index + 1 < lines.length && /^\\s*\\|?[\\s:-]*-[\\s|:-]*$/.test(lines[index + 1]) && lines[index + 1].indexOf('-') >= 0) {
+          flush();
+          const head = tableRow(line);
+          index += 2;
+          const rows = [];
+          while (index < lines.length && lines[index].indexOf('|') >= 0 && lines[index].trim()) { rows.push(tableRow(lines[index])); index++; }
+          const headHtml = '<tr>' + head.map((cell) => '<th>' + inline(cell) + '</th>').join('') + '</tr>';
+          const bodyHtml = rows.map((row) => '<tr>' + row.map((cell) => '<td>' + inline(cell) + '</td>').join('') + '</tr>').join('');
+          out.push('<table>' + headHtml + bodyHtml + '</table>');
+          continue;
+        }
+        if (listItemOf(line)) {
+          flush();
+          const items = [];
+          while (index < lines.length) {
+            const item = listItemOf(lines[index]);
+            // Bullets switching to numbers (or back) at the top level start a new list rather
+            // than joining this one, which would take the tag of whichever came first.
+            if (item && items.length && item.indent <= items[0].indent && item.ordered !== items[0].ordered) break;
+            if (item) { items.push({ indent: item.indent, offset: item.offset, ordered: item.ordered, lines: [item.text] }); index++; continue; }
+            const owner = items[items.length - 1];
+            // A blank line inside a list is kept only when a list line or an indented
+            // continuation follows it; an indented line that is not a new item continues
+            // the item above, keeping any indentation past the item's own.
+            const after = lines[index + 1] || '';
+            if (!lines[index].trim() && owner && (listItemOf(after) || /^\\s{2,}\\S/.test(after))) { owner.lines.push(''); index++; continue; }
+            if (owner && /^\\s{2,}\\S/.test(lines[index])) {
+              const lead = lines[index].length - lines[index].replace(/^\\s+/, '').length;
+              owner.lines.push(lines[index].slice(Math.min(lead, owner.offset)));
+              index++;
+              continue;
+            }
+            break;
+          }
+          out.push(buildList(items));
+          continue;
+        }
+        paragraph.push(line);
+        index++;
+      }
+      flush();
+      return out.join('');
+    }
+
     // Forks at the selected block: every block below it is dropped. The extension asks for
     // confirmation, so this only has to name the block.
     function forkSelectedBlock() {
@@ -796,13 +950,13 @@ ${tooltipScript()}
         anchorIndex = turns.length - 1;
         boxOpen = true;
         boxScrollNext = 'restore';
-        toolsVisible = false;
+        rawBox = false;
       }
       if (pendingTurnCount && turns.length >= pendingTurnCount) {
         anchorIndex = pendingTurnCount - 1;
         boxOpen = true;
         boxScrollNext = 'restore';
-        toolsVisible = false;
+        rawBox = false;
         pendingTurnCount = 0;
       }
       // A run that just started selects and opens its new block. The user is free to move
@@ -866,8 +1020,8 @@ ${tooltipScript()}
             boxOpen = !boxOpen;
             if (boxOpen) {
               boxScrollNext = 'restore';
-              // Every fresh open starts with the tool groups hidden.
-              toolsVisible = false;
+              // Every fresh open starts as a markdown box.
+              rawBox = false;
             }
             render();
           });
@@ -876,15 +1030,15 @@ ${tooltipScript()}
           // Only the selected block's box exists, and only while open. A streaming turn is no
           // exception: moved away from or closed, its text keeps arriving invisibly.
           if (index === anchorIndex && boxOpen) {
+            // The streaming box is always raw — its tool lines are the run's progress display —
+            // and turns into a markdown box on the render that follows the run's end.
+            const raw = isActiveTurn || rawBox;
             const response = document.createElement('div');
-            response.className = 'response' + (turn.error ? ' error' : '');
-            // The streaming box always shows its tool groups — they are the run's progress
-            // display. Written into the flag, not just the render, so the lines are still up
-            // when the run ends and stay until the box is clicked or closed.
-            if (isActiveTurn) toolsVisible = true;
+            response.className = 'response' + (raw ? '' : ' markdown') + (turn.error ? ' error' : '');
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
-            fillResponse(response, turn.response || '', toolsVisible);
+            if (raw) fillResponse(response, turn.response || '');
+            else response.innerHTML = renderMarkdown(strippedText(turn.response || ''));
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';
@@ -901,12 +1055,14 @@ ${tooltipScript()}
               // A click that ends a text-selection drag is a copy, not a toggle.
               const selection = window.getSelection();
               if (selection && !selection.isCollapsed) return;
+              // A click on a rendered link is the link, not the toggle.
+              if (event.target.closest && event.target.closest('a')) return;
               // The streaming box does not answer the toggle; its tool lines stay up.
               if (status && status.active && status.turnId === turn.id) return;
-              toolsVisible = !toolsVisible;
-              // Hiding shrinks the text, so a kept scroll offset lands nowhere useful:
-              // start the condensed prose from its first line.
-              if (!toolsVisible) boxScrollNext = 'top';
+              rawBox = !rawBox;
+              // The two views shape the text differently, so a kept scroll offset lands
+              // nowhere useful: every toggle starts from the top.
+              boxScrollNext = 'top';
               render();
             });
             // Every scroll — the user's, a restore, or streaming's pin to the end — lands in
@@ -927,7 +1083,6 @@ ${tooltipScript()}
       }
       boxScrollNext = null;
       requestAnimationFrame(() => syncSelectedBlock(boxScroll));
-      noteSelection();
       renderStatus();
     }
 
@@ -1070,7 +1225,7 @@ ${tooltipScript()}
         const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
         const savedTop = response.scrollTop;
         response.replaceChildren();
-        fillResponse(response, turn.response || '', true);
+        fillResponse(response, turn.response || '');
         if (Number(node.dataset.index) === anchorIndex) {
           requestAnimationFrame(() => syncSelectedBlock(atBottom ? 'bottom' : savedTop));
         }
@@ -1090,14 +1245,6 @@ ${tooltipScript()}
       }, 250);
     }
 
-    // The md pane renders whichever response box is selected here, so every move of the
-    // selection is reported; the extension holds the index until that pane asks for it.
-    function noteSelection() {
-      if (!session.turns.length || anchorIndex === selectionSent) return;
-      selectionSent = anchorIndex;
-      vscode.postMessage({ type: 'selectionChanged', sessionId, index: anchorIndex });
-    }
-
     function selectBlock(index) {
       if (!session.turns.length) return;
       const nextIndex = Math.max(0, Math.min(session.turns.length - 1, index));
@@ -1106,10 +1253,10 @@ ${tooltipScript()}
       if (nextIndex === anchorIndex) return;
       anchorIndex = nextIndex;
       // A selection change always opens the newly selected block, on its remembered scroll
-      // position and with its tool groups hidden.
+      // position and as a markdown box.
       boxOpen = true;
       boxScrollNext = 'restore';
-      toolsVisible = false;
+      rawBox = false;
       render();
     }
 
@@ -1194,9 +1341,6 @@ ${tooltipScript()}
 export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1): string {
   if (pane === "plugins") {
     return pluginsHtml(webview, zoom);
-  }
-  if (pane === "markdown") {
-    return markdownHtml(webview, zoom);
   }
   if (pane === "cap") {
     return capHtml(webview, zoom);
@@ -1733,251 +1877,6 @@ ${zoomScript(z)}
       errorNode.hidden = !error;
       errorNode.textContent = error || '';
     }
-  </script>
-</body>
-</html>`;
-}
-
-// The md pane renders the conversation's selected response box as markdown. The text is whatever
-// that box holds, so the renderer is deliberately small: the blocks Claude actually emits
-// (headings, fences, lists, quotes, tables, rules) and the inline runs inside them.
-function markdownHtml(webview: vscode.Webview, zoom: number): string {
-  const nonce = getNonce();
-  const z = zoomFactor(zoom);
-  return `<!doctype html>
-<html lang="en" style="--z: ${z}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
-  <style>
-    :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
-    * { box-sizing: border-box; }
-    body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.55 Aptos, "Segoe UI", sans-serif; }
-    .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 28px 24px; max-width: 980px; }
-    .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 12px; }
-    h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
-    .prompt { flex: 1; min-width: 0; font-size: calc(14px * var(--z)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
-    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
-    .doc { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 16px 20px; }
-    .doc > :first-child { margin-top: 0; }
-    .doc h1, .doc h2 { font-size: calc(18px * var(--z)); font-weight: 700; margin: 20px 0 8px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
-    .doc h3, .doc h4, .doc h5, .doc h6 { font-size: calc(16px * var(--z)); font-weight: 700; margin: 16px 0 6px; }
-    .doc p { margin: 0 0 10px; }
-    .doc ul, .doc ol { margin: 0 0 10px; padding-left: 26px; }
-    .doc li { margin: 3px 0; }
-    .doc li > ul, .doc li > ol { margin: 3px 0 0; }
-    .doc blockquote { margin: 0 0 10px; border-left: 3px solid var(--border); padding: 2px 12px; }
-    .doc hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
-    .doc a { color: #0b4f9c; }
-    .doc code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 4px; }
-    .doc pre { background: #f2f1ec; border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 10px 12px; overflow: auto; }
-    .doc pre code { background: none; padding: 0; white-space: pre; }
-    .doc table { border-collapse: collapse; margin: 0 0 12px; font-size: calc(14px * var(--z)); }
-    .doc th, .doc td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
-    .doc th { background: rgba(0,0,0,0.05); }
-    .empty { font-size: calc(16px * var(--z)); }
-${tooltipStyle()}  </style>
-</head>
-<body>
-  <div class="pane">
-    <div class="title"><h1>Markdown</h1><span id="prompt" class="prompt"></span><button id="close">Close</button></div>
-    <div id="doc" class="doc"><p class="empty">No response selected.</p></div>
-  </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-${zoomScript(z)}
-${tooltipScript()}
-    const docBox = document.getElementById('doc');
-    const promptLabel = document.getElementById('prompt');
-    const pending = new Map();
-    let shownTurnId = null;
-    let shownText = null;
-
-    window.addEventListener('message', (event) => {
-      const message = event.data;
-      if (message.type === 'reply' && pending.has(message.requestId)) {
-        const resolve = pending.get(message.requestId);
-        pending.delete(message.requestId);
-        resolve(message);
-      } else if (message.type === 'selectedResponse') {
-        show(message.payload);
-      }
-    });
-    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
-
-    function request(type, payload) {
-      const requestId = String(Date.now()) + '-' + String(Math.random()).slice(2);
-      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
-    }
-
-    // Called on every selection move and on every streaming delta, so the same text arriving twice
-    // must not repaint: a rebuilt doc drops the reader's place. A response growing under the same
-    // turn keeps its scroll (sticking to the tail if it was already there); a different turn starts
-    // at the top.
-    function show(payload) {
-      promptLabel.textContent = payload && payload.prompt ? payload.prompt.split('\\n')[0] : '';
-      if (!payload) {
-        if (shownTurnId === null && shownText === null) return;
-        shownTurnId = null;
-        shownText = null;
-        docBox.innerHTML = '<p class="empty">No response selected.</p>';
-        return;
-      }
-      const text = payload.text || '';
-      const sameTurn = payload.turnId === shownTurnId;
-      if (sameTurn && text === shownText) return;
-      const atBottom = docBox.scrollHeight - docBox.scrollTop - docBox.clientHeight < 18;
-      const savedTop = docBox.scrollTop;
-      shownTurnId = payload.turnId;
-      shownText = text;
-      docBox.innerHTML = text.trim() ? renderMarkdown(text) : '<p class="empty">The selected response is empty.</p>';
-      if (!sameTurn) docBox.scrollTop = 0;
-      else if (atBottom) docBox.scrollTop = docBox.scrollHeight;
-      else docBox.scrollTop = savedTop;
-    }
-
-    function escapeHtml(text) {
-      return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    // Inline runs. Code spans are lifted out first so nothing inside them is treated as markup,
-    // and only http(s) links are kept as links.
-    function inline(text) {
-      const codes = [];
-      let out = escapeHtml(text).replace(/\\\`([^\\\`]+)\\\`/g, (match, code) => {
-        codes.push(code);
-        return '\\u0000' + (codes.length - 1) + '\\u0000';
-      });
-      out = out.replace(/!\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1');
-      out = out.replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href="$2">$1</a>');
-      out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-      out = out.replace(/(^|[^*])\\*([^*\\n]+)\\*/g, '$1<em>$2</em>');
-      out = out.replace(/~~([^~]+)~~/g, '<del>$1</del>');
-      return out.replace(/\\u0000(\\d+)\\u0000/g, (match, index) => '<code>' + codes[Number(index)] + '</code>');
-    }
-
-    // The offset is where the item's text starts, which is how far a continuation line under it
-    // is indented; the indent is the marker's own column, which is what nesting goes by.
-    function listItemOf(line) {
-      const bullet = /^(\\s*)[-*+]\\s+(.*)$/.exec(line);
-      if (bullet) return { indent: bullet[1].length, offset: line.length - bullet[2].length, ordered: false, text: bullet[2] };
-      const numbered = /^(\\s*)\\d+[.)]\\s+(.*)$/.exec(line);
-      if (numbered) return { indent: numbered[1].length, offset: line.length - numbered[2].length, ordered: true, text: numbered[2] };
-      return null;
-    }
-
-    function buildList(items) {
-      const parts = [];
-      let index = 0;
-      while (index < items.length) {
-        const item = items[index];
-        const nested = [];
-        let next = index + 1;
-        while (next < items.length && items[next].indent > item.indent) { nested.push(items[next]); next++; }
-        const body = item.lines.join('\\n');
-        let inner = item.lines.length > 1 ? renderMarkdown(body) : inline(body);
-        if (nested.length) inner += buildList(nested);
-        parts.push('<li>' + inner + '</li>');
-        index = next;
-      }
-      return '<' + (items[0].ordered ? 'ol' : 'ul') + '>' + parts.join('') + '</' + (items[0].ordered ? 'ol' : 'ul') + '>';
-    }
-
-    function tableRow(line) {
-      const trimmed = line.trim().replace(/^\\|/, '').replace(/\\|$/, '');
-      return trimmed.split('|').map((cell) => cell.trim());
-    }
-
-    function renderMarkdown(text) {
-      const lines = String(text).replace(/\\r\\n/g, '\\n').split('\\n');
-      const out = [];
-      let paragraph = [];
-      const flush = () => {
-        if (!paragraph.length) return;
-        out.push('<p>' + inline(paragraph.join('\\n')).replace(/\\n/g, '<br>') + '</p>');
-        paragraph = [];
-      };
-      let index = 0;
-      while (index < lines.length) {
-        const line = lines[index];
-        const fence = /^\\s*(\\\`{3,}|~{3,})/.exec(line);
-        if (fence) {
-          flush();
-          const marker = fence[1].charAt(0);
-          const body = [];
-          index++;
-          while (index < lines.length && !new RegExp('^\\\\s*' + marker + '{3,}\\\\s*$').test(lines[index])) { body.push(lines[index]); index++; }
-          index++;
-          out.push('<pre><code>' + escapeHtml(body.join('\\n')) + '</code></pre>');
-          continue;
-        }
-        if (!line.trim()) { flush(); index++; continue; }
-        const heading = /^(#{1,6})\\s+(.*)$/.exec(line);
-        if (heading) {
-          flush();
-          const level = heading[1].length;
-          out.push('<h' + level + '>' + inline(heading[2].replace(/\\s+#+\\s*$/, '')) + '</h' + level + '>');
-          index++;
-          continue;
-        }
-        if (/^\\s*(-{3,}|\\*{3,}|_{3,})\\s*$/.test(line)) { flush(); out.push('<hr>'); index++; continue; }
-        if (/^\\s*>/.test(line)) {
-          flush();
-          const quoted = [];
-          while (index < lines.length && (/^\\s*>/.test(lines[index]) || (quoted.length && lines[index].trim()))) {
-            quoted.push(lines[index].replace(/^\\s*>\\s?/, ''));
-            index++;
-          }
-          out.push('<blockquote>' + renderMarkdown(quoted.join('\\n')) + '</blockquote>');
-          continue;
-        }
-        if (line.indexOf('|') >= 0 && index + 1 < lines.length && /^\\s*\\|?[\\s:-]*-[\\s|:-]*$/.test(lines[index + 1]) && lines[index + 1].indexOf('-') >= 0) {
-          flush();
-          const head = tableRow(line);
-          index += 2;
-          const rows = [];
-          while (index < lines.length && lines[index].indexOf('|') >= 0 && lines[index].trim()) { rows.push(tableRow(lines[index])); index++; }
-          const headHtml = '<tr>' + head.map((cell) => '<th>' + inline(cell) + '</th>').join('') + '</tr>';
-          const bodyHtml = rows.map((row) => '<tr>' + row.map((cell) => '<td>' + inline(cell) + '</td>').join('') + '</tr>').join('');
-          out.push('<table>' + headHtml + bodyHtml + '</table>');
-          continue;
-        }
-        if (listItemOf(line)) {
-          flush();
-          const items = [];
-          while (index < lines.length) {
-            const item = listItemOf(lines[index]);
-            // Bullets switching to numbers (or back) at the top level start a new list rather
-            // than joining this one, which would take the tag of whichever came first.
-            if (item && items.length && item.indent <= items[0].indent && item.ordered !== items[0].ordered) break;
-            if (item) { items.push({ indent: item.indent, offset: item.offset, ordered: item.ordered, lines: [item.text] }); index++; continue; }
-            const owner = items[items.length - 1];
-            // A blank line inside a list is kept only when a list line or an indented
-            // continuation follows it; an indented line that is not a new item continues
-            // the item above, keeping any indentation past the item's own.
-            const after = lines[index + 1] || '';
-            if (!lines[index].trim() && owner && (listItemOf(after) || /^\\s{2,}\\S/.test(after))) { owner.lines.push(''); index++; continue; }
-            if (owner && /^\\s{2,}\\S/.test(lines[index])) {
-              const lead = lines[index].length - lines[index].replace(/^\\s+/, '').length;
-              owner.lines.push(lines[index].slice(Math.min(lead, owner.offset)));
-              index++;
-              continue;
-            }
-            break;
-          }
-          out.push(buildList(items));
-          continue;
-        }
-        paragraph.push(line);
-        index++;
-      }
-      flush();
-      return out.join('');
-    }
-
-    void request('loadSelectedResponse', {}).then((reply) => show(reply.ok ? reply.payload : null));
   </script>
 </body>
 </html>`;
