@@ -3,17 +3,6 @@
 how do you tune the system prompt
 
 
-- add 2 new graphs to quota pane
-- they match the 5h and 7d graphs
-  - they should be placed under their matched graph
-  - they should align exactly so their x-axises line up
-  - they should have y-axis from -20% to +20%
-  - there should be a horizontal line at 0%
-    - there should be dashed lines at -10% and +10%
-  - there should be one value plotted forming a single line
-    - it should be the actual used % minus the target %
-      - the target % is shown on the diagonal line in graph above
-      - the target % is the percent of time passed per quota period
 
 real forking
 
@@ -25,6 +14,18 @@ too many bars above block
 show path to folder this is running in
 
 ======================
+
+- add 2 new graphs to quota pane
+- they match the 5h and 7d graphs
+  - they should be placed under their matched graph
+  - they should align exactly so their x-axises line up
+  - they should have y-axis from -20% to +20%
+  - there should be a horizontal line at 0%
+    - there should be dashed lines at -10% and +10%
+  - there should be one value plotted forming a single line
+    - it should be the actual used % minus the target %
+      - the target % is shown on the diagonal line in graph above
+      - the target % is the percent of time passed per quota period
 
 # graft and ponytail stats in footer
 - remove current ponytail stat from footer stats

@@ -1207,6 +1207,9 @@ class Claude2Controller implements vscode.Disposable {
     local.ponyCeilings = ceilings;
     local.srcFiles = size.srcFiles;
     local.srcLines = size.srcLines;
+    // and push it, so every other window's pane sees this reading on its next reload rather
+    // than waiting for a turn to finish here. Not awaited — the table does not need the POST.
+    void this.stats.add({}, { ponyCeilings: ceilings, srcFiles: size.srcFiles, srcLines: size.srcLines });
     installs[this.stats.installKey()] = local;
     const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
       "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
@@ -1274,7 +1277,7 @@ class Claude2Controller implements vscode.Disposable {
   // drop out below (ponytail: along with genuinely empty files — close enough for a gauge).
   private workspaceSize(): Promise<{ srcFiles: number; srcLines: number }> {
     return new Promise((resolve) => {
-      const args = ["-rIc", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", "--exclude-dir=graft", "", "."];
+      const args = ["-rIc", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", "--exclude-dir=graft", "--exclude-dir=.vscode-test", "", "."];
       const child = spawn("grep", args, { cwd: this.workspacePath(), stdio: ["ignore", "pipe", "ignore"] });
       let outputText = "";
       child.stdout.setEncoding("utf8");
