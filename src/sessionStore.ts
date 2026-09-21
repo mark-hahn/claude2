@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn, type PonySkip } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn, type PonySkip, type PromptImage } from "./types";
 
 const sessionsKey = "claude2.sessions.v1";
 
@@ -8,6 +8,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
   return {
     id: typeof turn.id === "string" ? turn.id : randomUUID(),
     prompt: typeof turn.prompt === "string" ? turn.prompt : "",
+    images: Array.isArray(turn.images) ? turn.images.filter((image): image is PromptImage => !!image && typeof image.path === "string" && (image.kind === "cap" || image.kind === "paste")) : [],
     response: typeof turn.response === "string" ? turn.response : "",
     createdAt: typeof turn.createdAt === "number" ? turn.createdAt : Date.now(),
     completedAt: typeof turn.completedAt === "number" ? turn.completedAt : null,

@@ -68,9 +68,20 @@ export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
 
 export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | "compacting" | null;
 
+// One picture riding with a prompt. `kind` picks the sentence appended for it, and is what the
+// Image pane names it by. `path` is a temp file while the image is still pending, and a copy under
+// the extension's own storage once the prompt has been sent -- temp dirs get swept, and a submitted
+// prompt's pictures have to outlive that.
+export interface PromptImage {
+  kind: "cap" | "paste";
+  path: string;
+}
+
 export interface ClaudeTurn {
   id: string;
   prompt: string;
+  // The pictures this prompt was sent with, in the order their 🖼️ chars read.
+  images: PromptImage[];
   response: string;
   createdAt: number;
   completedAt: number | null;

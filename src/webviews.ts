@@ -33,7 +33,6 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
     #plugins { width: 54px; }
-    #cap { width: 55px; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
@@ -72,7 +71,6 @@ ${tooltipStyle()}  </style>
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
         <button id="plugins" title="Plugin stats and controls for every project">Stats</button>
-        <button id="cap" title="Show the latest screen capture" disabled>Screen</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
       <div class="row">
@@ -112,7 +110,6 @@ ${tooltipScript()}
     document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
     document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
     document.getElementById('plugins').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'plugins' }); });
-    document.getElementById('cap').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'cap' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     trashButton.addEventListener('click', (event) => {
@@ -164,10 +161,8 @@ ${tooltipScript()}
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
-        // Close has nothing to close with no Claude2 pane up, and Cap nothing to show
-        // until a screenshot has been taken.
+        // Close has nothing to close with no Claude2 pane up.
         document.getElementById('close').disabled = message.panesOpen !== true;
-        document.getElementById('cap').disabled = message.hasCapture !== true;
         if (editingId) {
           pendingRender = true;
           return;
@@ -502,7 +497,9 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .indicator.done { background: #fff; }
     .indicator.active { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
     .footer { display: flex; gap: 8px; align-items: center; }
-    #cap.armed { background: var(--yellow); border-color: #d6b642; font-weight: 700; }
+    /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
+       one is which is answered by clicking it, not by reading it. */
+    .img-char { cursor: pointer; }
     @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
@@ -518,7 +515,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: copy the session, then drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach a screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: copy the session, then drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
         </div>
       </div>
     </div>
@@ -572,6 +569,12 @@ ${tooltipScript()}
     let programmaticScroll = false;
     let resizeTimer = 0;
     let draftSent = '';
+    // U+1F5BC U+FE0F, one per picture attached to this prompt. The run of them leads the prompt
+    // box's text and every prompt bar built from a turn that carried pictures.
+    const IMG = '\\u{1F5BC}\\uFE0F';
+    // How many pictures are waiting on this session's next prompt. The extension owns the list;
+    // this is only what the prefix is rebuilt from.
+    let imageCount = 0;
     const historyBox = document.getElementById('history');
     const promptBox = document.getElementById('prompt');
     const modelSelect = document.getElementById('model');
@@ -607,9 +610,12 @@ ${tooltipScript()}
         status = message.status || null;
         footer = message.footer || footer;
         statusAt = Date.now();
-        if (typeof message.draft === 'string' && message.draft && !promptBox.value) {
+        // Drafts are stored without the 🖼️ prefix -- it is rebuilt from the picture list, which
+        // is what makes a draft restored into a session holding no pictures come back clean.
+        if (typeof message.draft === 'string' && message.draft && !stripImagePrefix(promptBox.value)) {
           promptBox.value = message.draft;
           draftSent = message.draft;
+          syncImagePrefix();
         }
         if (typeof message.search === 'string') searchText = message.search;
         // The extension's copy of the scroll memory is the persistent one; it is taken once,
@@ -627,9 +633,10 @@ ${tooltipScript()}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
-      } else if (message.type === 'capState') {
+      } else if (message.type === 'imagesState') {
+        imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
-        capButton.classList.toggle('armed', !!message.armed);
+        syncImagePrefix();
       }
     });
 
@@ -642,9 +649,36 @@ ${tooltipScript()}
     // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
     // webview, and a debounce here is a window in which typing exists nowhere else. The message
     // is small and the receiving end only writes a map entry; the disk write is coalesced there.
-    promptBox.addEventListener('input', () => sendDraft('draftChanged'));
+    promptBox.addEventListener('input', () => {
+      // Typing may have eaten into the 🖼️ prefix; it belongs to the picture list, not the typist,
+      // so it is put back before anything else reads the box.
+      syncImagePrefix();
+      sendDraft('draftChanged');
+    });
     // Losing focus is the cue to name the session after an unsent draft.
     promptBox.addEventListener('blur', () => sendDraft('draftBlur'));
+    // An image on the clipboard becomes another attached picture rather than pasted text. Each
+    // paste adds one; the pictures already waiting stay. The extension ignores a second copy
+    // of one already in the list.
+    promptBox.addEventListener('paste', (event) => {
+      const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
+      const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
+      const file = item ? item.getAsFile() : null;
+      if (!file) return;
+      event.preventDefault();
+      capButton.disabled = true;
+      const reader = new FileReader();
+      reader.onload = () => vscode.postMessage({ type: 'pasteImage', sessionId, dataUri: String(reader.result) });
+      reader.onerror = () => { capButton.disabled = false; };
+      reader.readAsDataURL(file);
+    });
+    // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
+    // shows it in the Image pane, ctrl deletes it (the extension asks first).
+    promptBox.addEventListener('click', (event) => {
+      const index = imageCharAt(event);
+      if (index < 0) return;
+      vscode.postMessage(event.ctrlKey ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
+    });
     stopButton.addEventListener('click', () => {
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
@@ -653,12 +687,9 @@ ${tooltipScript()}
     forkButton.addEventListener('click', forkSelectedBlock);
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
     document.getElementById('cap').addEventListener('click', (event) => {
-      // Armed means a screenshot is waiting to ride with the next Send; a second click discards it.
+      // Every click takes another picture and adds it to the ones already waiting. The button
+      // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
       capButton.disabled = true;
-      if (capButton.classList.contains('armed')) {
-        vscode.postMessage({ type: 'discardCapture', sessionId });
-        return;
-      }
       // A plain click minimizes this VS Code window for the shot, so it shows what was behind it.
       // Ctrl-click leaves the window up, for a picture of the window itself.
       vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey !== true });
@@ -716,10 +747,63 @@ ${tooltipScript()}
     }
 
     function sendDraft(type) {
-      const draft = promptBox.value;
+      const draft = stripImagePrefix(promptBox.value);
       if (type === 'draftChanged' && draft === draftSent) return;
       draftSent = draft;
       vscode.postMessage({ type, sessionId, draft });
+    }
+
+    // Everything after the leading run of 🖼️ chars: the text the user actually typed.
+    function stripImagePrefix(text) {
+      let at = 0;
+      while (text.startsWith(IMG, at)) at += IMG.length;
+      return text.slice(at);
+    }
+
+    // Puts the prefix back in step with the picture list, however the box got out of step --
+    // a picture added or deleted, a draft restored, or typing that ran over the chars.
+    function syncImagePrefix() {
+      const next = IMG.repeat(imageCount) + stripImagePrefix(promptBox.value);
+      if (next === promptBox.value) return;
+      const caret = promptBox.selectionStart + (next.length - promptBox.value.length);
+      promptBox.value = next;
+      // Never inside the prefix: the caret belongs in the typed text, which starts after it.
+      const at = Math.max(imageCount * IMG.length, Math.min(next.length, caret));
+      promptBox.setSelectionRange(at, at);
+    }
+
+    // Which 🖼️ char the pointer came down on, or -1 for a click anywhere else. The caret cannot
+    // answer this -- it lands on the boundary between two chars, so a click on either side of one
+    // gives the same offset -- so the x position decides, against a width measured in the box's
+    // own font. The caret is still worth asking whether the click was in the prefix at all.
+    function imageCharAt(event) {
+      if (!imageCount || promptBox.selectionStart > imageCount * IMG.length) return -1;
+      const style = getComputedStyle(promptBox);
+      const left = promptBox.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+      const index = Math.floor((event.clientX - left) / imageCharWidth(style.font));
+      return index >= 0 && index < imageCount ? index : -1;
+    }
+
+    // Measured in a span rather than on a canvas: the box and the span resolve the font stack the
+    // same way, and an emoji falls back to a different face than the monospace text around it.
+    let charRuler = { font: '', width: 0 };
+    function imageCharWidth(font) {
+      if (charRuler.font !== font) {
+        const ruler = document.createElement('span');
+        ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:' + font;
+        ruler.textContent = IMG.repeat(10);
+        document.body.appendChild(ruler);
+        charRuler = { font: font, width: ruler.getBoundingClientRect().width / 10 };
+        ruler.remove();
+      }
+      return charRuler.width;
+    }
+
+    // A stored prompt without the sentences the attached pictures added to it. Those sentences are
+    // how the CLI reads each picture, so they stay in what was sent; they are just not what the
+    // user typed, and a prompt bar shows the typing with 🖼️ chars in front of it.
+    function typedText(turn) {
+      return (turn.prompt || '').replace(/\\n\\n\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '');
     }
 
     // The turn a stop has been asked for, so the Stop button can show that the request is in
@@ -733,13 +817,16 @@ ${tooltipScript()}
     }
 
     function submitPrompt() {
-      const prompt = promptBox.value;
+      // The 🖼️ chars are this pane's way of showing the attached pictures, not part of the
+      // prompt: the extension has the list, and appends a sentence per picture to the text.
+      const prompt = stripImagePrefix(promptBox.value);
       // Sending during a run is allowed: the extension stops the running turn and takes this
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
-      if (!prompt.trim()) return;
+      if (!prompt.trim() && !imageCount) return;
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       promptBox.value = '';
+      imageCount = 0;
       draftSent = '';
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
@@ -750,7 +837,10 @@ ${tooltipScript()}
       if (!session.turns.length) return;
       const turn = session.turns[Math.max(0, Math.min(session.turns.length - 1, anchorIndex))];
       if (!turn) return;
-      promptBox.value = turn.prompt + (promptBox.value ? '\\n\\n' + promptBox.value : '');
+      // The pictures are not loaded with it: they belong to the prompt that was sent.
+      const typed = typedText(turn);
+      const body = stripImagePrefix(promptBox.value);
+      promptBox.value = IMG.repeat(imageCount) + typed + (body ? '\\n\\n' + body : '');
       sendDraft('draftChanged');
       promptBox.focus();
     }
@@ -1026,11 +1116,29 @@ ${tooltipScript()}
           // The hover leads with the model and effort this prompt actually ran under, which is not
           // necessarily what the dock is set to now.
           const ranAs = [turn.model, turn.effort].filter(Boolean).join(' / ');
-          bar.title = ranAs ? ranAs + '\\n' + turn.prompt : turn.prompt;
-          bar.textContent = turn.prompt || '(empty prompt)';
+          const typed = typedText(turn);
+          bar.title = ranAs ? ranAs + '\\n' + typed : typed;
+          // One 🖼️ char per picture this prompt was sent with, reading the same as the prompt
+          // box did before it went. They are spans so a click can say which one it hit; the
+          // pictures themselves are part of the record now, so a ctrl-click only shows them too.
+          const images = Array.isArray(turn.images) ? turn.images : [];
+          bar.textContent = '';
+          images.forEach((image, imageIndex) => {
+            const char = document.createElement('span');
+            char.className = 'img-char';
+            char.dataset.image = String(imageIndex);
+            char.textContent = IMG;
+            bar.appendChild(char);
+          });
+          bar.appendChild(document.createTextNode(typed || (images.length ? '' : '(empty prompt)')));
           bar.addEventListener('click', (event) => {
+            const char = event.target && event.target.closest ? event.target.closest('.img-char') : null;
+            if (char) {
+              vscode.postMessage({ type: 'showImage', sessionId, turnId: turn.id, index: Number(char.dataset.image) });
+              return;
+            }
             if (event.altKey) {
-              vscode.postMessage({ type: 'copyText', sessionId, text: turn.prompt || '' });
+              vscode.postMessage({ type: 'copyText', sessionId, text: typed });
               bar.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
               return;
             }
@@ -1384,9 +1492,11 @@ export function managementHtml(webview: vscode.Webview, pane: ManagementPane, ti
   return pane === "instructions" ? instructionsHtml(webview, zoom) : quotaHtml(webview, timezone, zoom);
 }
 
-// The Cap pane shows the most recent desktop capture. The image arrives as a data URI in the
-// loadCapture reply: the PNG lives in a temp dir outside any localResourceRoots, so a file URI
-// could not load, and this also keeps working when the capture was taken on another machine.
+// The Image pane shows whichever attached picture was last asked for -- by adding it, or by
+// clicking its 🖼️ char. The image arrives as a data URI in the loadCapture reply: the file lives
+// outside any localResourceRoots, so a file URI could not load, and this also keeps working when
+// the picture was taken on another machine. A picture already sent with a prompt is shown but
+// never edited, so the pane's crop is live only while `editable` is true.
 function capHtml(webview: vscode.Webview, zoom: number): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
@@ -1412,12 +1522,14 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
        direct grid item, which is what lets its max-height resolve against the frame. */
     .frame { position: relative; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
     img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; user-select: none; -webkit-user-drag: none; touch-action: none; }
+    /* A sent prompt's picture: shown, not worked on, so it drops the crop cursor too. */
+    img.readonly { cursor: default; }
     .sel { position: absolute; border: 2px solid #1a6fd4; background: rgba(26,111,212,0.16); pointer-events: none; }
 ${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Capture</h1><span id="path" class="path"></span><span id="hint" class="hint"></span><div class="actions"><button id="again" hidden>Send Again</button><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="title"><h1 id="label">Image</h1><span id="path" class="path"></span><span id="hint" class="hint"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
     <div class="frame" id="frame"><img id="shot" hidden><div id="sel" class="sel" hidden></div><div id="empty" hidden></div></div>
   </div>
   <script nonce="${nonce}">
@@ -1430,10 +1542,12 @@ ${tooltipScript()}
     const empty = document.getElementById('empty');
     const pathLabel = document.getElementById('path');
     const hint = document.getElementById('hint');
-    const again = document.getElementById('again');
+    const label = document.getElementById('label');
     const pending = new Map();
     // How many crops deep the shown picture is; a plain click can only undo when that is above 0.
     let depth = 0;
+    // False for a picture already sent with a prompt: it is shown and nothing more.
+    let editable = false;
     let drag = null;
 
     window.addEventListener('message', (event) => {
@@ -1445,9 +1559,6 @@ ${tooltipScript()}
         void load();
       }
     });
-    // Send Again hands the picture back to the conversation's Cap button and closes this pane,
-    // so the next prompt typed there carries it.
-    again.addEventListener('click', () => vscode.postMessage({ type: 'sendCaptureAgain' }));
     document.getElementById('reload').addEventListener('click', () => void load());
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     void load();
@@ -1464,22 +1575,23 @@ ${tooltipScript()}
     function show(reply) {
       const payload = reply.ok ? reply.payload : null;
       depth = payload && typeof payload.depth === 'number' ? payload.depth : 0;
+      editable = !!(payload && payload.editable);
+      img.classList.toggle('readonly', !editable);
       if (payload && payload.dataUri) {
         img.src = payload.dataUri;
         img.hidden = false;
         empty.hidden = true;
+        label.textContent = payload.label || 'Image';
         pathLabel.textContent = payload.path || '';
-        hint.textContent = depth > 0 ? 'drag to crop · click to undo a crop' : 'drag to crop';
-        // Already sent (or the Cap button was turned off): offer to arm it for another prompt.
-        again.hidden = payload.armed === true;
+        hint.textContent = !editable ? 'already sent — shown only' : depth > 0 ? 'drag to crop · click to undo a crop' : 'drag to crop';
       } else {
         img.removeAttribute('src');
         img.hidden = true;
         empty.hidden = false;
-        empty.textContent = reply.ok ? 'No capture to show yet — click Cap in a conversation.' : 'Could not load the capture: ' + (reply.error || 'unknown error');
+        empty.textContent = reply.ok ? 'No image to show — click Cap in a conversation, or paste one into its prompt box.' : 'Could not load the image: ' + (reply.error || 'unknown error');
+        label.textContent = 'Image';
         pathLabel.textContent = '';
         hint.textContent = '';
-        again.hidden = true;
       }
       sel.hidden = true;
     }
@@ -1514,7 +1626,7 @@ ${tooltipScript()}
     // was clamped to and the release is never seen. Capture keeps every move and the release
     // coming to the image no matter where the pointer ends up.
     img.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || !img.getAttribute('src')) return;
+      if (event.button !== 0 || !editable || !img.getAttribute('src')) return;
       event.preventDefault();
       img.setPointerCapture(event.pointerId);
       drag = { x: event.clientX, y: event.clientY, moved: false };

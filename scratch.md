@@ -1,6 +1,55 @@
 
-change the label of the plugins button to `Stats`
+change cursor to pointer over image char
 
+add a `File` button
+move fork to after +
+move the close button in the sidebar to the right of the stats button
+
+# multiple images in a prompt
+- i want to be able to submit multiple images in a prompt
+- remove the image button from the sidebar
+- the cap button in the nav row is now different
+  - it should be able to be used more than once to create multiple images
+  - the cap button should not be a toggle any more and not highlighted
+  - each cap button click should create a new image stack while keeping the old ones
+- when an image is in the clipboard and then pasted into the prompt editor:
+  - each paste should create a new image stack while keeping the old ones
+- when an image is added from any source:
+  -  it should be shown immediately in the image management pane
+    - this is the same action that used to be done by clicking on the image button in the sidebar
+  - the image should be in a stack and can be cropped as usual
+  - dupes from any source should be ignored
+- when a prompt has attached images there should be a 🖼️ char for each image 
+  - the chars should be prepended to the text in the prompt box
+  - the chars should all look the same with no labels or other differentiator
+  - when a 🖼️ char is clicked the corresponding image should be shown 
+    - it should be shown immediately in the image management pane 
+    - this is how you identify the image for a char
+  - when a 🖼️ char is ctrl-clicked the image should be deleted 
+    - use confirmation with the image information in the confirmation dialog
+- when a prompt with images is submitted:
+  - the images should be available to be shown persistently until the session is permanently deleted
+    - the persistent images don't have a stack, just the final image
+    - the images cannot be deleted
+  - the image chars should be in the new prompt bar
+    - the text should have the prepended image chars the same as in the prompt edit box
+  - the chars can be clicked to show in the image pane but pane image can't be cropped
+  - the final text appended to the end of the prompt text should be shorter
+    - do this only if it doesn't affect context storage of the image
+    - a screen cap should have the text `[Screen Capture <N>]` appended
+    - a pasted image should have the text `[Image <N>]`
+- actions
+  - if these instructions are ambiguous, incomplete or contradictory then:
+    - write the problems to claude2-image-problems.md and stop
+    - make no changes other than writing to claude2-image-problems.md
+  - otherwise implement these instructions immediately
+
+# response
+1. keep the required old final text
+2. <N> isn't needed anymore because of answer above -- correct me if i'm wrong
+3. use stated default
+
+- if you need to correct me because i'm wrong stop and let me know
 
 
 ???????
@@ -9,6 +58,8 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+change the label of the plugins button to `Stats`
 
 # real forking
 - when the fork button is clicked then first clone the entire session into a new session with a session card
