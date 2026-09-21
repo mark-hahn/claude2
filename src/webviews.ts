@@ -1936,12 +1936,15 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     .title { display: flex; align-items: center; gap: 12px; flex: none; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
+    .credits { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
+    .credits .bar { display: block; width: min(340px, 40%); height: calc(12px * var(--z)); border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
+    .credits .fill { display: block; height: 100%; background: var(--blue); }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 13px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
-    .graphs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; min-height: 0; overflow: auto; }
+    .graphs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; min-height: 0; overflow: auto; }
     .graphs.single { display: flex; flex: 1; min-height: 0; justify-content: center; align-items: flex-start; }
-    .graph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 11px; min-width: 0; }
+    .graph { width: 80%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 11px; min-width: 0; }
     .graphs.single .graph { flex: none; display: flex; flex-direction: column; min-height: 0; max-width: 100%; }
     .graph-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
     .graph-name { font-weight: 700; }
@@ -1950,7 +1953,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     .swatch.blue { background: var(--blue); } .swatch.red { background: var(--red); }
     .period { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
     .period button { min-height: 26px; padding: 2px 8px; }
-    .plot { position: relative; width: 100%; aspect-ratio: 320 / 200; border: 1px solid var(--border); cursor: pointer; background: #fff; }
+    .plot { position: relative; width: 100%; aspect-ratio: 256 / 140; border: 1px solid var(--border); cursor: pointer; background: #fff; }
     .graphs.single .plot { flex: none; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; }
     svg text { font-size: calc(14px * var(--z)); fill: var(--muted); text-anchor: end; }
@@ -1962,7 +1965,7 @@ ${tooltipStyle()}  </style>
 </head>
 <body>
   <div id="pane" class="pane">
-    <div class="title"><h1>Plan quota over time</h1><div class="actions"><span id="readTime"></span><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
+    <div class="title"><h1>Plan quota over time</h1><div id="credits" class="credits"></div><div class="actions"><span id="readTime"></span><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
     <div id="error" class="error" hidden></div>
     <div id="graphs" class="graphs"></div>
   </div>
@@ -1971,12 +1974,12 @@ ${tooltipStyle()}  </style>
 ${zoomScript(z)}
     const timeZone = ${safeTimezone};
     const pending = new Map();
-    const backs = { five: 0, seven: 0, credits: 0 };
+    const backs = { five: 0, seven: 0 };
     let payload = { readAt: null, rows: [], state: { error: null } };
     let expanded = null;
     let loading = true;
     let updating = false;
-    let measured = { width: 320, height: 200 };
+    let measured = { width: 256, height: 140 };
     let resizeObserver = null;
 
     document.getElementById('update').addEventListener('click', () => void load(true));
@@ -2022,12 +2025,13 @@ ${zoomScript(z)}
       errorNode.hidden = !error;
       errorNode.textContent = error || '';
       renderAge();
+      renderCredits();
       const graphsNode = document.getElementById('graphs');
       const pane = document.getElementById('pane');
       const five = buildWindowGraph('five', '5h', 5 * 60 * 60 * 1000, [{ field: 'five_pct', reset: 'five_resets', name: '5h', color: '#000' }], rows);
       const seven = buildWindowGraph('seven', '7d', 7 * 24 * 60 * 60 * 1000, [{ field: 'seven_pct', reset: 'seven_resets', name: '7d', color: '#2457d6' }, { field: 'fable_pct', reset: 'fable_resets', name: modelLabel(), color: '#c62828' }], rows);
       // Row 1 is the raw graphs, row 2 the against-target deltas sitting under their match.
-      const graphs = [five, seven, buildCreditsGraph(rows), deltaGraph(five, 'fiveDelta', 'Δ5h'), deltaGraph(seven, 'sevenDelta', 'Δ7d')];
+      const graphs = [five, seven, deltaGraph(five, 'fiveDelta', 'Δ5h'), deltaGraph(seven, 'sevenDelta', 'Δ7d')];
       const visibleGraphs = expanded ? graphs.filter((graph) => graph.key === expanded) : graphs;
       pane.className = 'pane' + (expanded ? ' expanded' : '');
       graphsNode.className = 'graphs' + (expanded ? ' single' : '');
@@ -2068,6 +2072,33 @@ ${zoomScript(z)}
       age.textContent = minutes + ':' + String(seconds).padStart(2, '0');
     }
 
+    // Live reading first; if this reading had no credits block, fall back to the newest row that did.
+    function renderCredits() {
+      const node = document.getElementById('credits');
+      const live = payload.state && payload.state.credits;
+      let spent = live ? numeric(live.spentUsd) : null;
+      let limit = live ? numeric(live.limitUsd) : null;
+      if (spent === null || limit === null) {
+        const rows = Array.isArray(payload.rows) ? payload.rows : [];
+        for (let index = rows.length - 1; index >= 0; index -= 1) {
+          if (numeric(rows[index].spent_usd) !== null && numeric(rows[index].limit_usd) !== null) {
+            spent = numeric(rows[index].spent_usd);
+            limit = numeric(rows[index].limit_usd);
+            break;
+          }
+        }
+      }
+      if (spent === null || limit === null || limit <= 0) {
+        node.replaceChildren();
+        return;
+      }
+      const pct = Math.max(0, Math.min(100, (spent / limit) * 100));
+      const fill = pct <= 50 ? '#8f8' : (pct <= 75 ? '#ff8' : '#f88');
+      node.innerHTML = '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>';
+    }
+
+    function money(value) { return '$' + Number(value).toFixed(2); }
+
     function graphElement(graph) {
       const graphNode = document.createElement('section');
       graphNode.className = 'graph';
@@ -2090,11 +2121,11 @@ ${zoomScript(z)}
       const plot = document.createElement('div');
       plot.className = 'plot';
       plot.dataset.expand = graph.key;
-      const size = expanded === graph.key ? measured : { width: 320, height: 200 };
-      plot.innerHTML = drawSvg(period, graph.money, size.width, size.height, graph.delta);
+      const size = expanded === graph.key ? measured : { width: 256, height: 140 };
+      plot.innerHTML = drawSvg(period, size.width, size.height, graph.delta);
       const figures = document.createElement('div');
       figures.className = 'figures';
-      figures.innerHTML = figuresHtml(period, graph.money, graph.delta);
+      figures.innerHTML = figuresHtml(period, graph.delta);
       graphNode.append(periodBar, plot, figures);
       return graphNode;
     }
@@ -2111,7 +2142,7 @@ ${zoomScript(z)}
       root.querySelectorAll('[data-expand]').forEach((plot) => {
         plot.addEventListener('click', () => {
           expanded = expanded === plot.dataset.expand ? null : plot.dataset.expand;
-          measured = { width: 320, height: 200 };
+          measured = { width: 256, height: 140 };
           render();
         });
       });
@@ -2128,7 +2159,7 @@ ${zoomScript(z)}
       resizeObserver.observe(container);
     }
 
-    // The expanded card keeps the small graphs' 320x200 plot shape, so its width is whatever
+    // The expanded card keeps the small graphs' 256x140 plot shape, so its width is whatever
     // the leftover height allows (capped by the pane width); the flex row then centres it.
     function fitExpanded() {
       const container = document.getElementById('graphs');
@@ -2140,8 +2171,8 @@ ${zoomScript(z)}
       const chromeY = card.getBoundingClientRect().height - plot.getBoundingClientRect().height;
       const roomWidth = container.clientWidth - frameX;
       const roomHeight = container.clientHeight - chromeY;
-      const width = Math.max(320, Math.floor(Math.min(roomWidth, roomHeight * (320 / 200))));
-      const height = Math.round(width * (200 / 320));
+      const width = Math.max(256, Math.floor(Math.min(roomWidth, roomHeight * (256 / 140))));
+      const height = Math.round(width * (140 / 256));
       card.style.width = (width + frameX) + 'px';
       if (Math.abs(width - measured.width) > 1 || Math.abs(height - measured.height) > 1) {
         measured = { width, height };
@@ -2170,7 +2201,7 @@ ${zoomScript(z)}
           }
         });
       }
-      return { key, title, money: false, periods: periods.filter((period) => period.series.some((series) => series.points.length > 0)).sort((left, right) => left.end - right.end) };
+      return { key, title, periods: periods.filter((period) => period.series.some((series) => series.points.length > 0)).sort((left, right) => left.end - right.end) };
     }
 
     // Same periods as its parent graph (shared backKey keeps paging in lockstep), but each point
@@ -2185,46 +2216,20 @@ ${zoomScript(z)}
           points: series.points.map((point) => ({ t: point.t, v: point.v - targetPct(period, point.t) })),
         })),
       }));
-      return { key, backKey: graph.key, title, money: false, delta: true, periods };
+      return { key, backKey: graph.key, title, delta: true, periods };
     }
 
     function targetPct(period, time) {
       return 100 * Math.min(1, Math.max(0, (time - period.start) / (period.end - period.start)));
     }
 
-    function buildCreditsGraph(rows) {
-      const byMonth = new Map();
-      for (const row of rows) {
-        const spent = numeric(row.spent_usd);
-        if (spent === null) continue;
-        const parts = localParts(row.at);
-        const key = parts.year + '-' + String(parts.month).padStart(2, '0');
-        if (!byMonth.has(key)) {
-          const start = zonedTime(parts.year, parts.month, 1, 0, 0, 0);
-          const nextYear = parts.month === 12 ? parts.year + 1 : parts.year;
-          const nextMonth = parts.month === 12 ? 1 : parts.month + 1;
-          const end = zonedTime(nextYear, nextMonth, 1, 0, 0, 0);
-          byMonth.set(key, { key: 'credits', start, end, label: new Date(start).toLocaleString([], { month: 'long', year: 'numeric', timeZone }), series: [{ name: 'credits', color: '#000', points: [] }], limit: 1 });
-        }
-        const period = byMonth.get(key);
-        period.series[0].points.push({ t: row.at, v: spent });
-        const limit = numeric(row.limit_usd);
-        if (limit !== null) period.limit = limit;
-      }
-      const periods = Array.from(byMonth.values()).map((period) => {
-        if (!period.limit) period.limit = Math.max(1, ...period.series[0].points.map((point) => point.v));
-        return period;
-      }).sort((left, right) => left.end - right.end);
-      return { key: 'credits', title: 'credits', money: true, periods };
-    }
-
-    function drawSvg(period, money, width, height, delta) {
+    function drawSvg(period, width, height, delta) {
       // "-20%" is exactly as wide as "100%", so the delta card's gutter matches its parent's and
       // the two x-axes line up without any cross-card measurement.
-      const yMax = delta ? 20 : (money ? Math.max(1, period.limit || 1) : 100);
+      const yMax = delta ? 20 : 100;
       const yMin = delta ? -20 : 0;
       const fractions = delta ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
-      const labels = fractions.map((fraction) => axisLabel(yMin + (yMax - yMin) * fraction, money));
+      const labels = fractions.map((fraction) => axisLabel(yMin + (yMax - yMin) * fraction));
       // Axis text renders in user units at the CSS size, so the gutter has to grow with zoom
       // and with the widest label or the labels run off the left edge of the viewBox.
       const fontSize = 14 * zoom;
@@ -2240,7 +2245,7 @@ ${zoomScript(z)}
         svg += '<line x1="' + margin.left + '" x2="' + (width - margin.right) + '" y1="' + yValue + '" y2="' + yValue + '" stroke="rgba(0,0,0,0.15)" />';
         svg += '<text x="' + (margin.left - 5) + '" y="' + (yValue + fontSize * 0.35) + '">' + escapeHtml(labels[index]) + '</text>';
       });
-      for (const time of gridTimes(period, money)) {
+      for (const time of gridTimes(period)) {
         const xValue = x(time);
         svg += '<line x1="' + xValue + '" x2="' + xValue + '" y1="' + margin.top + '" y2="' + (height - margin.bottom) + '" stroke="rgba(0,0,0,0.15)" />';
       }
@@ -2253,7 +2258,7 @@ ${zoomScript(z)}
         const atFrac = (fraction) => margin.left + fraction * plotWidth;
         const bound = (f1, v1, f2, v2) => '<line x1="' + atFrac(f1) + '" y1="' + y(v1) + '" x2="' + atFrac(f2) + '" y2="' + y(v2) + '" stroke="rgba(0,0,0,0.45)" stroke-dasharray="5 4" stroke-width="1" />';
         svg += bound(0.8, yMax, 1, 0) + bound(0, 0, 0.2, yMin);
-      } else if (!money) {
+      } else {
         svg += '<line x1="' + margin.left + '" y1="' + y(0) + '" x2="' + (width - margin.right) + '" y2="' + y(yMax) + '" stroke="rgba(0,0,0,0.45)" stroke-dasharray="5 4" stroke-width="1" />';
       }
       for (const series of period.series) {
@@ -2278,17 +2283,17 @@ ${zoomScript(z)}
       return sorted;
     }
 
-    function figuresHtml(period, money, delta) {
+    function figuresHtml(period, delta) {
       const parts = [];
       for (const series of period.series) {
         const points = carriedPoints(series.points, period);
         if (points.length) {
           const value = points[points.length - 1].v;
-          const label = axisLabel(value, money);
+          const label = axisLabel(value);
           parts.push('<span style="color:' + series.color + '">' + escapeHtml(series.name + ' ' + (delta && value > 0 ? '+' + label : label)) + '</span>');
         }
       }
-      if (!money && !delta) {
+      if (!delta) {
         const elapsed = Math.max(0, Math.min(1, (Date.now() - period.start) / (period.end - period.start)));
         parts.push('<span>' + Math.round(elapsed * 100) + '%</span>');
         parts.push('<span>' + escapeHtml(timeLeft(period.end - Date.now())) + '</span>');
@@ -2296,16 +2301,8 @@ ${zoomScript(z)}
       return parts.join('');
     }
 
-    function gridTimes(period, money) {
+    function gridTimes(period) {
       const times = [];
-      if (money) {
-        let cursor = period.start;
-        while (cursor < period.end) {
-          if (new Date(cursor).getUTCDay() === 0 && cursor > period.start) times.push(cursor);
-          cursor += 24 * 60 * 60 * 1000;
-        }
-        return times;
-      }
       const step = period.end - period.start <= 6 * 60 * 60 * 1000 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
       let cursor = Math.ceil(period.start / step) * step;
       while (cursor < period.end) {
@@ -2326,7 +2323,7 @@ ${zoomScript(z)}
       return '<span class="legend"><span class="swatch blue"></span>7d <span class="swatch red"></span>' + escapeHtml(modelLabel()) + '</span>';
     }
 
-    function axisLabel(value, money) { return money ? '$' + Number(value).toFixed(value >= 10 ? 0 : 2) : Math.round(value) + '%'; }
+    function axisLabel(value) { return Math.round(value) + '%'; }
     function timeLeft(ms) {
       if (ms <= 0) return 'period over';
       const minutes = Math.floor(ms / 60000);
@@ -2338,24 +2335,6 @@ ${zoomScript(z)}
     }
     function stamp(ms) { return new Date(ms).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone }); }
     function dayStamp(ms) { return new Date(ms).toLocaleString([], { weekday: 'short', month: 'numeric', day: 'numeric', timeZone }); }
-    function localParts(ms) {
-      const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false }).formatToParts(new Date(ms));
-      const out = {};
-      for (const part of parts) if (part.type !== 'literal') out[part.type] = Number(part.value);
-      return { year: out.year, month: out.month, day: out.day, hour: out.hour, minute: out.minute, second: out.second };
-    }
-    function zonedTime(year, month, day, hour, minute, second) {
-      const guess = Date.UTC(year, month - 1, day, hour, minute, second);
-      return guess - offsetMinutes(guess) * 60000;
-    }
-    function offsetMinutes(ms) {
-      const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(ms));
-      const zone = (parts.find((part) => part.type === 'timeZoneName') || {}).value || 'GMT+0';
-      const match = zone.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-      if (!match) return 0;
-      const sign = match[1] === '-' ? -1 : 1;
-      return sign * (Number(match[2]) * 60 + Number(match[3] || 0));
-    }
     function numeric(value) { return typeof value === 'number' && Number.isFinite(value) ? value : null; }
     function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
   </script>

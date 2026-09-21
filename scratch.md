@@ -1,4 +1,6 @@
 
+remove the credits graph from the quota pane -- expand the other 4 graphs with the same aspect ratio to fill the width of the pane with a small margin - add a credits progress indicator at middle of header.  it should have a progress bar to indicate how much of the credit limit has been spent -- put no axes -- place credits spent so far, $x.yy, to the left of the bar and the limit to the right
+
 in each of the Δ5h and Δ7D graphs add 2 dashed lines. one line should start at x == 80% of period and a Y of the top +20%. It should end at 0 on far right.  the second line should start with x == 80% and y at bottom of -20% at y == 0. It should also end at 0 on far right. the same two lines should be shown on both graphs.  It is impossible for a quota value to cross either of these lines. check my logic.
 
 real forking
