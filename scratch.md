@@ -1,13 +1,6 @@
 
 change the label of the plugins button to `Stats`
 
-# real forking
-- when the fork button is clicked then first clone the entire session into a new session with a session card
-- the new session name should be the same as the source session except for an appended version number
-  - if there is already an existing matching session name then append ` (2)`
-  - if there is already an existing matching session name with (n) then increment n: ` (n+1)`
-  - the name of the source extension should be unchanged
-- after cloning, trim turns from the end of the source session exactly as fork button does now
 
 
 ???????
@@ -16,6 +9,14 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+# real forking
+- when the fork button is clicked then first clone the entire session into a new session with a session card
+- the new session name should be the same as the source session except for an appended version number
+  - if there is already an existing matching session name then append ` (2)`
+  - if there is already an existing matching session name with (n) then increment n: ` (n+1)`
+  - the name of the source extension should be unchanged
+- after cloning, trim turns from the end of the source session exactly as fork button does now
 
 remove the credits graph from the quota pane -- expand the other 4 graphs with the same aspect ratio to fill the width of the pane with a small margin - add a credits progress indicator at middle of header.  it should have a progress bar to indicate how much of the credit limit has been spent -- put no axes -- place credits spent so far, $x.yy, to the left of the bar and the limit to the right
 

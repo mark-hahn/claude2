@@ -32,7 +32,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new, #quota { width: 21px; }
     #instructions { width: 52px; }
-    #plugins { width: 68px; }
+    #plugins { width: 54px; }
+    #cap { width: 55px; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
@@ -70,8 +71,8 @@ ${tooltipStyle()}  </style>
       <div class="row">
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
-        <button id="plugins" title="Plugin stats and controls for every project">Plugins</button>
-        <button id="cap" title="Show the latest screen capture" disabled>Cap</button>
+        <button id="plugins" title="Plugin stats and controls for every project">Stats</button>
+        <button id="cap" title="Show the latest screen capture" disabled>Screen</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
       <div class="row">
