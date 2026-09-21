@@ -56,10 +56,12 @@ function mergeInstall(key, body) {
     host: typeof body.host === "string" ? body.host.slice(0, 20) : old.host || "",
     project: typeof body.project === "string" ? body.project.slice(0, 100) : old.project || "",
     path: typeof body.path === "string" ? body.path.slice(0, 300) : old.path || "",
-    // a gauge of the workspace right now, not a counter: the newest reading wins
-    ponyCeilings: body.ponyCeilings === undefined ? numberOf(old.ponyCeilings) : numberOf(body.ponyCeilings),
     updatedAt: Date.now(),
   };
+  // gauges of the workspace right now, not counters: the newest reading wins
+  for (const field of ["ponyCeilings", "srcFiles", "srcLines"]) {
+    record[field] = body[field] === undefined ? numberOf(old[field]) : numberOf(body[field]);
+  }
   for (const field of counterFields) {
     record[field] = Math.max(numberOf(old[field]), numberOf(body[field]));
   }

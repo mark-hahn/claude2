@@ -1168,16 +1168,25 @@ class Claude2Controller implements vscode.Disposable {
   // and its cost are also credited to the on or off side of each plugin, per the flags the
   // run actually carried, and the whole turn ships as one raw event to the server's log —
   // the extensive record future stats get computed from.
+  // Workspace size barely moves within one conversation and the full-tree grep is the costly
+  // part, so it is measured once per session and remembered for the session's later turns.
+  private readonly sizeBySession = new Map<string, { srcFiles: number; srcLines: number }>();
+
   private async noteTurnStats(sessionId: string, delta: StatsDelta, info: { plugins: PluginFlags } & Record<string, unknown>): Promise<void> {
     const graft = await this.stats.graftDelta(sessionId);
     const ceilings = await this.ponyCeilingCount();
+    let size = this.sizeBySession.get(sessionId);
+    if (!size) {
+      size = await this.workspaceSize();
+      this.sizeBySession.set(sessionId, size);
+    }
     const split: StatsDelta = {};
     split[info.plugins.ponytail ? "turnsPonyOn" : "turnsPonyOff"] = 1;
     split[info.plugins.ponytail ? "costPonyOn" : "costPonyOff"] = delta.costUsd ?? 0;
     split[info.plugins.graft ? "turnsGraftOn" : "turnsGraftOff"] = 1;
     split[info.plugins.graft ? "costGraftOn" : "costGraftOff"] = delta.costUsd ?? 0;
-    await this.stats.add({ ...delta, ...graft, ...split }, ceilings);
-    void this.stats.logTurn({ sessionId, ...info, ...delta, ...graft, ponyCeilings: ceilings });
+    await this.stats.add({ ...delta, ...graft, ...split }, { ponyCeilings: ceilings, ...size });
+    void this.stats.logTurn({ sessionId, ...info, ...delta, ...graft, ponyCeilings: ceilings, ...size });
   }
 
   // The Plugins pane's table, rebuilt on every load: every install's record off the stats
@@ -1187,7 +1196,10 @@ class Claude2Controller implements vscode.Disposable {
     const remote = await this.stats.fetchAll();
     const installs: Record<string, Partial<InstallStats>> = { ...(remote?.installs ?? {}) };
     const local = this.stats.local();
-    local.ponyCeilings = await this.ponyCeilingCount();
+    const [ceilings, size] = await Promise.all([this.ponyCeilingCount(), this.workspaceSize()]);
+    local.ponyCeilings = ceilings;
+    local.srcFiles = size.srcFiles;
+    local.srcLines = size.srcLines;
     installs[this.stats.installKey()] = local;
     const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
       "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
@@ -1221,6 +1233,8 @@ class Claude2Controller implements vscode.Disposable {
         turnsGraftOff: 0,
         costGraftOn: 0,
         costGraftOff: 0,
+        srcFiles: 0,
+        srcLines: 0,
         graft: flags.graft !== false,
         ponytail: flags.ponytail !== false,
       };
@@ -1229,6 +1243,8 @@ class Claude2Controller implements vscode.Disposable {
       }
       // the same repo checked out on two hosts keeps its bigger reading, not the sum
       column.ponyCeilings = Math.max(column.ponyCeilings, Number(record.ponyCeilings) || 0);
+      column.srcFiles = Math.max(column.srcFiles, Number(record.srcFiles) || 0);
+      column.srcLines = Math.max(column.srcLines, Number(record.srcLines) || 0);
       const host = typeof record.host === "string" ? record.host : "";
       column.hosts = column.hosts.includes(host) ? column.hosts : [column.hosts, host].filter(Boolean).join(" ");
       const recordPath = typeof record.path === "string" ? record.path : "";
@@ -1236,6 +1252,36 @@ class Claude2Controller implements vscode.Disposable {
       projects.set(name, column);
     }
     return { projects: [...projects.values()].sort((left, right) => left.project.localeCompare(right.project)), offline: remote === null };
+  }
+
+  // The workspace's current size: non-binary files and their lines, for judging whether the
+  // plugins pay off more on big codebases. Same exclusions as the ceilings grep, plus graft's
+  // own generated cards — counting those would inflate exactly the workspaces graft runs in.
+  // grep -c with an empty pattern counts every line, and -I makes binaries report 0, so they
+  // drop out below (ponytail: along with genuinely empty files — close enough for a gauge).
+  private workspaceSize(): Promise<{ srcFiles: number; srcLines: number }> {
+    return new Promise((resolve) => {
+      const args = ["-rIc", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", "--exclude-dir=graft", "", "."];
+      const child = spawn("grep", args, { cwd: this.workspacePath(), stdio: ["ignore", "pipe", "ignore"] });
+      let outputText = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        outputText += chunk;
+      });
+      child.on("error", () => resolve({ srcFiles: 0, srcLines: 0 }));
+      child.on("close", () => {
+        let srcFiles = 0;
+        let srcLines = 0;
+        for (const line of outputText.split("\n")) {
+          const count = Number(line.slice(line.lastIndexOf(":") + 1));
+          if (count > 0) {
+            srcFiles += 1;
+            srcLines += count;
+          }
+        }
+        resolve({ srcFiles, srcLines });
+      });
+    });
   }
 
   // Ponytail marks a deliberate corner cut in code with a "ponytail:" comment naming the ceiling

@@ -44,4 +44,8 @@ ssh "$REMOTE" "
   rm -f /tmp/$VSIX
 "
 
+echo "== claude2-stats server on $REMOTE =="
+scp -q claude2-stats/server.js claude2-stats/test.js "$REMOTE:/root/dev/apps/claude2-stats/"
+ssh "$REMOTE" "pm2 restart claude2-stats >/dev/null && cd /root/dev/apps/claude2-stats && node test.js"
+
 echo "== done: reload VS Code windows to pick up $VSIX =="

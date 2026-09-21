@@ -31,10 +31,10 @@ export interface PluginFlags {
 }
 
 // One install (host + workspace) of the extension: the running totals it owns on the
-// claude2-stats server. Every field but ponyCeilings is a counter that only ever grows;
-// ponyCeilings is a gauge of the workspace as it stands now. The On/Off pairs split turns
-// and cost by the plugin flags each turn actually ran with, for $/turn comparisons; they
-// start at the moment this shipped — no history assigns flags to older turns.
+// claude2-stats server. ponyCeilings, srcFiles, and srcLines are gauges of the workspace as
+// it stands now; every other numeric field is a counter that only ever grows. The On/Off
+// pairs split turns and cost by the plugin flags each turn actually ran with, for $/turn
+// comparisons; they start at the moment this shipped — no history assigns flags to older turns.
 export interface InstallStats {
   host: string;
   project: string;
@@ -58,6 +58,8 @@ export interface InstallStats {
   turnsGraftOff: number;
   costGraftOn: number;
   costGraftOff: number;
+  srcFiles: number;
+  srcLines: number;
   updatedAt: number;
 }
 

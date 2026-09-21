@@ -1,19 +1,8 @@
 
 for each graph show line of % above/below
-
-
-what did graft do other than report $x/y and graft pane
-
-restore graft to before ponytail change
-- restore $x/y
-- do not restore graft pane
-
 real forking
-
 markdown without sidebar
-
 too many bars above block
-
 show path to folder this is running in
 
 when turns reaches the limit and the session stops show a button `Continue` with light-red bkgnd in a new row above the status row in the footer -- when clicked send `continue` as a prompt so it will continue -- show last turn and new turn as one turn

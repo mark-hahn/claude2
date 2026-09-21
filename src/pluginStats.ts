@@ -23,9 +23,11 @@ const tallyKey = "pony.tally";
 // Every field of a record that is a running counter; the rest are identity, a gauge, or a stamp.
 const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
   "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
-const numericFields = [...counterFields, "ponyCeilings", "updatedAt"] as const;
+const gaugeFields = ["ponyCeilings", "srcFiles", "srcLines"] as const;
+const numericFields = [...counterFields, ...gaugeFields, "updatedAt"] as const;
 
 export type StatsDelta = Partial<Pick<InstallStats, (typeof counterFields)[number]>>;
+export type StatsGauges = Partial<Pick<InstallStats, (typeof gaugeFields)[number]>>;
 
 // Which of the user's three machines this install runs on. A bare Linux box is the server:
 // the only non-WSL Linux host in this setup is hahnca.com itself.
@@ -111,6 +113,8 @@ export class PluginStats {
       turnsGraftOff: 0,
       costGraftOn: 0,
       costGraftOff: 0,
+      srcFiles: 0,
+      srcLines: 0,
       updatedAt: 0,
     };
   }
@@ -155,9 +159,10 @@ export class PluginStats {
     await this.save(record);
   }
 
-  // Counts a turn's numbers into the local record and pushes the new totals. Kept locally
-  // first so nothing is lost to a deleted session or an offline server.
-  public async add(delta: StatsDelta, ceilings: number | null = null): Promise<void> {
+  // Counts a turn's numbers into the local record, takes fresh gauge readings as given, and
+  // pushes the new totals. Kept locally first so nothing is lost to a deleted session or an
+  // offline server.
+  public async add(delta: StatsDelta, gauges: StatsGauges = {}): Promise<void> {
     const record = this.local();
     for (const field of counterFields) {
       const value = delta[field];
@@ -165,8 +170,11 @@ export class PluginStats {
         record[field] += value;
       }
     }
-    if (ceilings !== null) {
-      record.ponyCeilings = ceilings;
+    for (const field of gaugeFields) {
+      const value = gauges[field];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        record[field] = value;
+      }
     }
     await this.save(record);
   }

@@ -1459,6 +1459,8 @@ ${zoomScript(z)}
       table.appendChild(header);
       const rows = [
         ['Host', (project) => project.hosts, ''],
+        ['Source files', (project) => fmtTok(project.srcFiles), fmtTok(sum('srcFiles'))],
+        ['Source lines', (project) => fmtTok(project.srcLines), fmtTok(sum('srcLines'))],
         ['Sessions', (project) => project.sessions, sum('sessions')],
         ['Turns', (project) => project.turns, sum('turns')],
         ['Wall time', (project) => fmtWall(project.wallMs), fmtWall(sum('wallMs'))],
