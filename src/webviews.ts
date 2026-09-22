@@ -25,6 +25,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .shell { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; height: 100vh; padding: 10px; }
     .top { display: flex; flex-direction: column; gap: 7px; flex: none; }
     .row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .row.sessions-row { gap: 5.6px; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; min-height: 31px; cursor: pointer; }
     .top button { height: 25px; min-height: 0; flex: none; padding: 0; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
@@ -39,10 +40,11 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #login.needed:hover { background: #f5c7c7; }
     #close { width: 56px; }
     #fork { width: 47px; }
-    #trash { width: 56px; }
+    #clean { width: 52px; }
+    #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
-    #sessionCounts { margin-left: 10px; align-self: center; font-size: 15.12px; color: var(--ink); }
+    #sessionCounts { margin-left: 8px; align-self: center; font-size: 15.12px; color: var(--ink); }
     .search-row { display: flex; gap: 7px; }
     #searchBox { flex: 1; min-width: 0; box-sizing: border-box; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
     #searchBox::placeholder { color: var(--ink); }
@@ -71,12 +73,13 @@ ${tooltipStyle()}  </style>
     <div class="top">
       <div class="row">
         <button id="mngmnt" title="Quotas, instructions, stats, and models">Mngmnt</button>
+        <button id="fork" title="Fork here: copy the session, then drop every block below the selected one" disabled>Fork</button>
         <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
-      <div class="row">
+      <div class="row sessions-row">
         <button id="new" title="New Claude2 session">+</button>
-        <button id="fork" title="Fork here: copy the session, then drop every block below the selected one" disabled>Fork</button>
+        <button id="clean" title="Move every session to the trash">Clean</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
         <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
       </div>
@@ -110,6 +113,7 @@ ${tooltipScript()}
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
     document.getElementById('mngmnt').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'toggleManagement' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
+    document.getElementById('clean').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'discardEmpty' }); vscode.postMessage({ type: 'trashAllSessions' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     // Forks the pane that is up front; the fork itself is decided over there, where the
     // selected block lives, so this only has to name the session.

@@ -1,12 +1,24 @@
 
-in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
-
 ???????
 too many bars above block
 show path to folder this is running in
 show time since last response output
 
 ======================
+
+in the sidebar header:
+  - reduce the margin between the + button and the clean button by 20%
+  - reduce the margin between the clean button and the trash button by 20%
+  - reduce the horiz padding in the trash button by 1px on each side
+  - reduce the margin between the trash button and the sessions count by 20%
+
+
+in the sidebar header:
+  - move the fork button to between mngmnt and close
+  - add a button `Clean` to between the + and trash buttons
+    - clean should move all sessions to the trash
+
+in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
 
 in the quota pane the graph axis labels are too big, the should match rest of text in pane
 
