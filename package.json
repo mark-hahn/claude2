@@ -89,7 +89,7 @@
         },
         "claude2.maxTurns": {
           "type": "number",
-          "default": 10000,
+          "default": 50,
           "description": "Maximum agentic turns per Claude2 prompt (passed to the Claude CLI as --max-turns)."
         },
         "claude2.maxBudgetUsd": {

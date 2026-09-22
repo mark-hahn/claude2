@@ -1,4 +1,93 @@
 
+# updated management pane and new model updates
+
+## new management pane contents
+- the management pane now has a new design with multiple subpanes
+  - A new button `Mngmnt` is in the left side of the top button row in the sidebar
+    - the Mngmnt button opens the new management pane
+- create a new header row at the top of the management pane, put 4 tab buttons at the left side of that row
+  - they act like radio buttons but the are styled like other buttons in the extension
+  - three of the header buttons are moved from the sidebar top row of buttons and one is new:
+    - `Quotas` is the old $ button 
+    - `Instructions` is the old Instr button
+    - `Stats` is the old stats button
+    - `Models` is a new button
+  - when clicked, a header tab button is selected and highlighted with a light-gray background
+    - this overrides the rule against gray colors
+  - each one has it's own subpane below the header
+    - the three old buttons have the same subpane they used to have that filled the management pane
+      - the subpanes don't need a header, their name is known by the selected radio button
+    - the new Models button opens a Models subpane
+  - every time the management pane is opened the quotas pane is selected
+- the management pane closes three ways
+  - a close button is in the right of top tab buttons row
+    - same as old close button in management pane
+  - the mngmnt button toggles it closed
+  - the close button in the top row of the sidebar can close it
+    - it only closes it after all conversation panes are closed
+
+## models subpane
+- the models subpane has 2 boxes
+  - the models box lists the current models and efforts
+    - it also shows a modification date for the last time those changed
+  - the presets box lets you choose the presets for models and efforts
+    - these are the presets the M button in the footer cycles through
+    - the presets box has 4 rows for 4 presets, each row has:
+      - a checkbox to enable the preset
+      - a selector drop-down with all the model choices
+      - a selector drop-down of all efforts
+
+# info storage in server
+- the models/efforts/presets info is shared across all extensions so models subpanes always match
+- the centralized claude2-stats pm2 task in the server stores the info
+  - it is just simple persistent storage of the info and a modification date
+- there are 2 endpoints to read and write the info
+  - one endpoint is called to save the info
+    - when the info to be saved doesn't match the current stored info then a modification date is updated
+  - another endpoint is called to read the info and date
+
+# info handling by extension
+- the models, efforts, and presets are not hard-wired in the code anymore
+- there is a local vscode persistent store of the info and mod date for each of windows, wsl, and server 
+- every time an extension is loaded:
+  - it checks the cli to get latest supported models/efforts
+    - see temp.md for forwarded instructions to access the cli for models/efforts
+    - if the info from the cli doesn't match the local info then it sends that new info to the server
+      - it doesn't change local info or date
+  - it then always reads the info and date from the server:
+    - it saves the info but not the date to the local copy
+    - if the server date is newer than the local it sets an update notification flag
+    - when the notification flag is set:
+      - the mngmnt button in sidebar has a light-red background
+      - the models tab button in the management pane has a light-red background 
+- every time the models subpane is opened:
+  - it gets the latest info and date from the server and displays it
+  - it clears the notification flag and updates the local copy of the mod date
+- the presets, models, and effort selections in the model row of the footer always use local stored info
+
+# actions
+- if these instructions are ambiguous, incomplete or contradictory then:
+  - write the problems to claude2-mngmnt-problems.md and stop
+  - make no changes other than writing to claude2-mngmnt-problems.md
+- otherwise implement these instructions immediately
+
+
+
+show markdown while streaming
+
+currently the model selector in the footer has a hard-wired list -- could the list be obtained from cli
+
+in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
+
+i have an idea to automatically 
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
+
 if i select an image file will that be treated like an image pasted into prompt editor
 
 # adding files to a prompt
@@ -13,13 +102,6 @@ if i select an image file will that be treated like an image pasted into prompt 
     - you can ctrl-click it to remove it from the prompt
 - prompt text added to the prompt bar is the same as what was in the edit box like text with images
 - file does not need to be persisted like images
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 change cursor to pointer over image char in prompt editor box
 move fork button to sidebar after the + button

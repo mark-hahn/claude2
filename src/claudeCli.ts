@@ -510,6 +510,22 @@ export class ClaudeCliRunner {
     }
   }
 
+  // Brings the CLI up to date, then asks it which models this account can use: the same
+  // initialize handshake the Agent SDK sends, answered without starting a turn.
+  public async refreshModels(workspacePath: string): Promise<string[]> {
+    await collectProcess("claude", ["update"], workspacePath, 180000, null);
+    const request = JSON.stringify({ type: "control_request", request_id: "models", request: { subtype: "initialize" } });
+    const output = await collectProcess("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], workspacePath, 30000, request + "\n");
+    for (const line of output.split("\n")) {
+      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown }[] } } }) : undefined;
+      const models = (parsed?.response?.response?.models ?? []).map((model) => stringOf(model.value)).filter((value) => value && value !== "default");
+      if (models.length > 0) {
+        return models;
+      }
+    }
+    throw new Error("the CLI returned no model list.");
+  }
+
   private snapshot(status: RunningStatus): RunningStatus {
     return { ...status, elapsedMs: Date.now() - status.startedAt };
   }
@@ -652,7 +668,7 @@ function errorText(error: unknown): string {
 }
 
 function sanitizeModel(model: string): string {
-  return MODEL_OPTIONS.includes(model) || /^claude-[a-z0-9-]+$/i.test(model) ? model : "fable";
+  return MODEL_OPTIONS.includes(model) || /^[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(model) ? model : "fable";
 }
 
 function sanitizeEffort(effort: string): string {
@@ -731,7 +747,7 @@ function collectProcess(command: string, args: string[], workspacePath: string, 
     let stderrText = "";
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error("Claude title generation timed out."));
+      reject(new Error(`claude ${args[0] ?? ""} timed out.`));
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");

@@ -10,7 +10,7 @@ import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, MODEL_OPTIONS, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -310,6 +310,21 @@ class Claude2Controller implements vscode.Disposable {
     const session = await this.store.create();
     this.refreshSidebar();
     await this.openConversation(session.id, true);
+    void this.refreshModels();
+  }
+
+  // Runs behind the new session so the + click never waits on npm; open panels get the list
+  // when it lands. Silent unless the CLI fails.
+  private async refreshModels(): Promise<void> {
+    try {
+      const models = await this.runner.refreshModels(this.workspacePath());
+      MODEL_OPTIONS.splice(0, MODEL_OPTIONS.length, ...models);
+      for (const panel of this.conversationPanels.values()) {
+        void panel.webview.postMessage({ type: "models", models });
+      }
+    } catch (error) {
+      void vscode.window.showWarningMessage(`Claude2: CLI update/model check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   // Forget every session with nothing in it -- no turn, no unsent draft, no waiting picture --
@@ -1327,7 +1342,7 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "cap" ? "Claude2 Image" : "Claude2 Plugins";
+    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "cap" ? "Claude2 Image" : "Claude2 Stats";
     this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"));
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
@@ -1724,14 +1739,14 @@ class Claude2Controller implements vscode.Disposable {
       model: session?.model || config.get<string>("model", DEFAULT_MODEL),
       effort: session?.effort || config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
-      maxTurns: config.get<number>("maxTurns", 10000),
+      maxTurns: config.get<number>("maxTurns", 50),
     };
   }
 
   private runLimits(): RunLimits {
     const config = vscode.workspace.getConfiguration("claude2");
     return {
-      maxTurns: config.get<number>("maxTurns", 10000),
+      maxTurns: config.get<number>("maxTurns", 50),
       maxBudgetUsd: config.get<number>("maxBudgetUsd", 0),
       permissionMode: config.get<string>("permissionMode", "auto"),
     };

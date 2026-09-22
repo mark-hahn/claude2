@@ -413,6 +413,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
+  const maxTurns = JSON.stringify(defaults.maxTurns);
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
@@ -539,6 +540,7 @@ ${tooltipScript()}
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
     const compactAt = Math.max(1000, contextWindow - ${compactReserve});
+    const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
     const GRAFT_TALLY_MARK = ${graftTallyMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
@@ -648,6 +650,8 @@ ${tooltipScript()}
         syncImagePrefix();
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
+      } else if (message.type === 'models' && Array.isArray(message.models)) {
+        fillSelect(modelSelect, message.models, modelSelect.value);
       }
     });
 
@@ -737,7 +741,8 @@ ${tooltipScript()}
 
     function fillSelect(select, values, selected) {
       select.replaceChildren();
-      for (const value of values) {
+      // A session's saved pick stays selectable even when the current list no longer has it.
+      for (const value of values.includes(selected) ? values : [...values, selected]) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = value;
@@ -756,7 +761,8 @@ ${tooltipScript()}
     function cyclePicks() {
       const at = PICK_PRESETS.findIndex((preset) => preset.model === modelSelect.value && preset.effort === effortSelect.value);
       const next = PICK_PRESETS[(at + 1) % PICK_PRESETS.length];
-      modelSelect.value = next.model;
+      // The preset may name a model the CLI's list lacks; fillSelect keeps it selectable.
+      fillSelect(modelSelect, [...modelSelect.options].map((option) => option.value), next.model);
       effortSelect.value = next.effort;
       sendPicks();
     }
@@ -1331,12 +1337,12 @@ ${tooltipScript()}
         compactSeen = status.compactedAt;
         flagCompaction();
       }
-      // Every agentic turn the CLI has taken in this conversation, summed over all its prompts —
-      // a flow like cost and time. It used to show the latest prompt's count alone, which read as
-      // the conversation being shorter than the bars above plainly showed it was. The running
-      // prompt's count rides on the status until it lands on the turn at completion.
-      const agentic = turns.reduce((sum, turn) => sum + (turn.turns || 0), 0) + (active ? status.turns || 0 : 0);
-      document.getElementById('turns').textContent = agentic;
+      // Per prompt, not cumulative: the limit below is a per-prompt ceiling, so the numerator has to
+      // be the count that ceiling actually bounds. The running prompt's count rides on the status
+      // until it lands on the turn at completion.
+      const agentic = active ? status.turns || 0 : (latest ? latest.turns || 0 : 0);
+      const turnLimit = active ? status.maxTurns || maxTurns : ((latest && latest.maxTurns) || maxTurns);
+      document.getElementById('turns').textContent = agentic + '/' + turnLimit;
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
@@ -1776,7 +1782,7 @@ function pluginsHtml(webview: vscode.Webview, zoom: number): string {
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Plugins</h1><span id="note"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="title"><h1>Stats</h1><span id="note"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
     <div class="scroll"><table id="table"></table></div>
   </div>
   <script nonce="${nonce}">

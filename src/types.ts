@@ -63,6 +63,7 @@ export interface InstallStats {
   updatedAt: number;
 }
 
+// Fallback until the CLI reports its own list; refreshModels() replaces the contents in place.
 export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
 export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
 
