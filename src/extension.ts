@@ -204,6 +204,14 @@ class Claude2Controller implements vscode.Disposable {
       vscode.commands.registerCommand("claude2.newSession", () => void this.newSession()),
       vscode.commands.registerCommand("claude2.openInstructions", () => void this.openManagement("instructions")),
       vscode.commands.registerCommand("claude2.openQuota", () => void this.openManagement("quota")),
+      vscode.commands.registerCommand("claude2.simulateModelChange", () => void this.simulateModelChange()),
+      // Another window on this host may have changed the model info (a new list, the alert
+      // cleared, presets saved); coming back to this one picks that up.
+      vscode.window.onDidChangeWindowState((state) => {
+        if (state.focused) {
+          this.postModelInfo();
+        }
+      }),
     );
     this.quota.start();
     this.watchInstructions();
@@ -331,6 +339,17 @@ class Claude2Controller implements vscode.Disposable {
     }
     this.modelsSettled = true;
     this.postModelInfo();
+  }
+
+  // Test aid: drops the last stored model, then runs the load's refresh, which finds the CLI's
+  // list differs, writes it back with a new date, and raises the alert. Self-restoring: only
+  // the "Last changed" date is left moved.
+  private async simulateModelChange(): Promise<void> {
+    const info = readModelInfo(this.context.globalState);
+    const models = Object.fromEntries(Object.entries(info.models).slice(0, -1));
+    await writeModelInfo(this.context.globalState, { ...info, models });
+    this.postModelInfo();
+    await this.refreshModels();
   }
 
   // Runs are held until the load's update is done, but never more than 15s: past that they

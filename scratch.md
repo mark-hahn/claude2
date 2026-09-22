@@ -1,4 +1,6 @@
 
+the graph axis labels are too big, the should match rest of text in pane
+
 show worst of 5h, 7d, and 7d fable usage % in footer
 
 # updated management pane and new model updates

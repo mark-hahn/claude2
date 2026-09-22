@@ -47,6 +47,11 @@
         "category": "Claude2"
       },
       {
+        "command": "claude2.simulateModelChange",
+        "title": "Simulate Model Change",
+        "category": "Claude2"
+      },
+      {
         "command": "claude2.openInstructions",
         "title": "Open Instructions",
         "category": "Claude2"
