@@ -578,7 +578,7 @@ function childEnv(autoCompactWindow: number | null = null, graftEnabled = true):
 // string as it stands, so it becomes a sentence here rather than being decoded in each of them.
 function readableResultError(subtype: string, maxTurns: number): string {
   if (subtype === "error_max_turns") {
-    return `Stopped at the turn limit of ${maxTurns}. The response above is unfinished — send another prompt to carry on, or raise claude2.maxTurns.`;
+    return `Stopped at the turn limit of ${maxTurns}. The response above is unfinished — send another prompt to carry on, or raise the turn limit in the Models pane.`;
   }
   if (subtype === "error_during_execution") {
     return "The Claude CLI stopped part way through this response.";

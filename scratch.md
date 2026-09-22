@@ -1,12 +1,26 @@
 
 
 
+
 ???????
 too many bars above block
 show path to folder this is running in
 show time since last response output
 
 ======================
+
+# set the turns limit from models pane
+- i want to be able to set the turns limit from the ui
+  - set it in only one place in the ui
+    - it can be entered in any install in any host type
+      - only needs to be entered once
+    - it can be a text input box that is limited to numbers from 50 to 250
+    - the input box should be in the models pane
+      - saved by existing save button
+  - it should be used in all 3 host types 
+    - it can be loaded on just a window reload
+      - it doesn't need to be live
+    - so it needs some centralized storage like server or globalstorage
 
   in the footer remove the double arrow scroll to bottom button
 

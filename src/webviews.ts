@@ -1685,6 +1685,7 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
     #models input[type=text] { font: inherit; color: var(--ink); width: 9em; padding: 2px 6px; }
     #models select { min-width: 6em; }
+    #turns { font: inherit; color: var(--ink); width: 6em; padding: 2px 6px; }
     select { font: inherit; color: var(--ink); min-width: 14em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 ${tabsStyle()}  </style>
@@ -1692,7 +1693,7 @@ ${tabsStyle()}  </style>
 <body>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
-    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row">Turn limit per prompt <input id="turns" type="number" min="50" max="250" step="1"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -1716,6 +1717,7 @@ ${zoomScript(z)}
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
     document.getElementById('default').addEventListener('change', (event) => { defaultModel = event.target.value; unsaved(); });
+    document.getElementById('turns').addEventListener('input', unsaved);
     void load();
 
     function request(type, payload) {
@@ -1741,6 +1743,7 @@ ${zoomScript(z)}
       }
       const chosen = (info.presets || [])[info.defaultPreset || 0];
       defaultModel = chosen && chosen.enabled ? chosen.model : '';
+      document.getElementById('turns').value = String(info.maxTurns);
       renderModels();
       document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
       note('');
@@ -1856,7 +1859,8 @@ ${zoomScript(z)}
     async function save() {
       const presets = presetList();
       const defaultPreset = presets.findIndex((preset) => preset.model === defaultModel);
-      const reply = await request('savePresets', { presets, prefs, defaultPreset });
+      const maxTurns = Number(document.getElementById('turns').value);
+      const reply = await request('savePresets', { presets, prefs, defaultPreset, maxTurns });
       note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
     }
 

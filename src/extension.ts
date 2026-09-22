@@ -1648,14 +1648,18 @@ class Claude2Controller implements vscode.Disposable {
       const info = readModelInfo(this.context.globalState);
       await writeModelInfo(this.context.globalState, { ...info, seenDate: info.date });
       this.postModelInfo();
-      await this.reply(requestId, async () => info);
+      await this.reply(requestId, async () => ({ ...info, maxTurns: this.runLimits().maxTurns }));
     } else if (type === "savePresets") {
       // One Save covers the per-model choices and the presets picked from them.
       const stored = readModelInfo(this.context.globalState);
       const prefs = prefsOf(record?.prefs, stored.models);
       const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
       const defaultPreset = Number.isInteger(record?.defaultPreset) ? (record?.defaultPreset as number) : 0;
+      const maxTurns = Number(record?.maxTurns);
       await this.reply(requestId, async () => {
+        if (!Number.isInteger(maxTurns) || maxTurns < 50 || maxTurns > 250) {
+          throw new Error("The turn limit must be a whole number from 50 to 250.");
+        }
         // A bad pane refuses to save at all, so the stored default is always one the user picked.
         if (!presets[defaultPreset]?.enabled) {
           throw new Error(presets.some((preset) => preset.enabled)
@@ -1671,6 +1675,9 @@ class Claude2Controller implements vscode.Disposable {
           }
         }
         await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
+        // Application scope: it lands in the client's user settings, which every host type --
+        // windows, wsl, ssh -- reads, so one save covers them all from their next reload.
+        await vscode.workspace.getConfiguration("claude2").update("maxTurns", maxTurns, vscode.ConfigurationTarget.Global);
         this.postModelInfo();
         return readModelInfo(this.context.globalState);
       });
