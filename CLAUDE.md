@@ -22,6 +22,9 @@
 
 - The remote server is **hahnca.com**.
 - Use **SSH** to access the remote server (SSH keys are already available/configured).
+- The Windows machine talks to the server over the **LAN**; the internet can't reach them.
+  Unauthenticated, plaintext HTTP between them is fine — if someone is on this LAN we have
+  much bigger problems than the wire format. Don't raise it as a concern.
 
 ## Where things run
 

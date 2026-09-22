@@ -9,6 +9,15 @@
 //   GET  /flags/<project>                -> { graft, ponytail } (defaults true)
 //   POST /flags/<project>  body: flags   -> merge { graft?, ponytail? }
 //   POST /turns   body: { events: [..] } -> append raw per-turn events to turns.jsonl
+//   GET  /quota                          -> { rows, readAt, pausedUntil, state }
+//   POST /quota   body: { rows?, readAt?, pausedUntil?, state? } -> merge a reading
+//   POST /quota/claim                    -> { poll } : the right to call the usage endpoint
+//
+// The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
+// per account, not per machine, so with a window open on three boxes the fleet would spend its
+// whole budget on itself. /quota/claim leases the right to poll: the check-and-set in it is
+// atomic because node handles one request at a time, so any number of windows asking at once
+// still yields exactly one poller per cycle. Everyone else reads the answer from GET /quota.
 //
 // turns.jsonl is the extensive record: every settled turn of every install, one JSON line
 // each, kept for stats nobody has thought of yet. Nothing serves it — analyze it on the box.
@@ -31,10 +40,17 @@ const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "to
   "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"];
 const turnsPath = path.join(dataDir, "turns.jsonl");
 
-let data = { installs: {}, flags: {}, days: {} };
+// Freshness the lease counts from — a touch under the extension's five-minute timer, so a tick
+// that lands a hair early still defers. claimedAt expires on its own: a window that claims and
+// then dies mid-read costs one skipped cycle, not a stuck fleet.
+const quotaFreshMs = 4.5 * 60 * 1000;
+const quotaClaimMs = 30 * 1000;
+const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
+
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota } };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {} };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) } };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -81,6 +97,33 @@ function mergeInstall(key, body) {
     }
   }
   data.installs[key] = record;
+}
+
+// Rows are identified by their timestamp, so a replayed push or a backfill of a machine's whole
+// file is idempotent. readAt and pausedUntil only ever move forward: a client with a slow clock
+// can neither re-arm a spent lease nor cut short someone else's 429 pause.
+function mergeQuota(body) {
+  const quota = data.quota;
+  const incoming = Array.isArray(body.rows) ? body.rows : [];
+  if (incoming.length) {
+    const byAt = new Map(quota.rows.map((row) => [row.at, row]));
+    for (const row of incoming) {
+      if (row && typeof row === "object" && typeof row.at === "number" && Number.isFinite(row.at)) {
+        byAt.set(row.at, row);
+      }
+    }
+    quota.rows = [...byAt.values()].sort((left, right) => left.at - right.at);
+  }
+  quota.pausedUntil = Math.max(numberOf(quota.pausedUntil), numberOf(body.pausedUntil));
+  const readAt = numberOf(body.readAt);
+  if (readAt > numberOf(quota.readAt)) {
+    quota.readAt = readAt;
+    // The state travels with the reading that produced it: a row carries percentages, but not the
+    // subscription or window labels the pane needs before its first local reading lands.
+    if (body.state && typeof body.state === "object") {
+      quota.state = body.state;
+    }
+  }
 }
 
 function readBody(request, limit = 32768) {
@@ -130,6 +173,33 @@ async function handle(request, response) {
       fs.appendFileSync(turnsPath, events.map((event) => JSON.stringify(event)).join("\n") + "\n");
     }
     return json(200, { ok: true, count: events.length });
+  }
+  if (request.method === "GET" && url.pathname === "/quota") {
+    const { rows, readAt, pausedUntil, state } = data.quota;
+    return json(200, { rows, readAt, pausedUntil, state });
+  }
+  if (request.method === "POST" && url.pathname === "/quota/claim") {
+    const now = Date.now();
+    const quota = data.quota;
+    if (now < quota.pausedUntil) {
+      return json(200, { poll: false, pausedUntil: quota.pausedUntil });
+    }
+    if (now - quota.claimedAt < quotaClaimMs || now - quota.readAt < quotaFreshMs) {
+      return json(200, { poll: false });
+    }
+    quota.claimedAt = now;
+    save();
+    return json(200, { poll: true });
+  }
+  if (request.method === "POST" && url.pathname === "/quota") {
+    // a backfill pushes a machine's whole history in one body, so the bigger cap applies here too
+    const body = JSON.parse((await readBody(request, 2 * 1024 * 1024)) || "{}");
+    if (typeof body !== "object" || body === null) {
+      return json(400, { error: "expected a JSON object" });
+    }
+    mergeQuota(body);
+    save();
+    return json(200, { ok: true, rows: data.quota.rows.length });
   }
   if (request.method === "POST" && parts.length === 2 && namePattern.test(parts[1])) {
     const body = JSON.parse((await readBody(request)) || "{}");

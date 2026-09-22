@@ -1,4 +1,15 @@
 
+handle stale models
+
+implement your suggestion for installs to query the quota and share the readings through the server -- what fixes the 429 problem? an arbitrary number of vscode instances can be running
+
+default model
+
+# centralize quota history
+- currently quota history is stored separately for each host type
+  - graphs have missing data
+- suggest how to centralize quota history
+
 the graph axis labels are too big, the should match rest of text in pane
 
 show worst of 5h, 7d, and 7d fable usage % in footer

@@ -42,7 +42,7 @@ function hostType(): string {
 // a dialog, or a hung pane. Every failure is logged with its real reason, since the panes
 // themselves only ever say "unreachable". Uses fetch, not node:http — the extension host
 // patches node:http with its proxy agent, which returned empty 200 bodies; fetch bypasses it.
-async function httpJson(method: string, urlPath: string, body: unknown, timeoutMs: number, log: (line: string) => void): Promise<Record<string, unknown> | null> {
+export async function httpJson(method: string, urlPath: string, body: unknown, timeoutMs: number, log: (line: string) => void): Promise<Record<string, unknown> | null> {
   const fail = (reason: string): null => {
     log(`stats server ${statsHost}:${statsPort}: ${method} ${urlPath} failed — ${reason}`);
     return null;

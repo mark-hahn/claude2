@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { httpJson } from "./pluginStats";
 import type { QuotaHistoryPayload, QuotaReadingRow, QuotaState, QuotaWindowState } from "./types";
 
 const usageUrl = "https://api.anthropic.com/api/oauth/usage";
@@ -19,6 +20,9 @@ const fifteenMinutesMs = 15 * 60 * 1000;
 // than this, keeping the fleet at one background call per five minutes.
 const timerFreshMs = fiveMinutesMs - 30 * 1000;
 const fetchTimeoutMs = 5000;
+// The stats server is on the LAN, so a call to it costs milliseconds; every one of them resolves
+// null rather than throwing when it is down, and each caller below falls back to the local files.
+const sharedTimeoutMs = 3000;
 // The footer's cost stat goes red when any window first crosses this, and stays red until
 // clicked. Both the flag and the last-seen levels live in global state so a reload comes back
 // to the same warning rather than re-raising it (or losing it) on the next reading.
@@ -161,6 +165,11 @@ export class QuotaService {
       return this.state;
     }
 
+    if (!(await this.claim(force))) {
+      this.state = { ...this.state, pausedUntil: this.pausedUntil || null };
+      return this.state;
+    }
+
     try {
       const credentials = await this.credentials();
       if (credentials.expiresAt !== null && credentials.expiresAt <= now) {
@@ -260,6 +269,44 @@ export class QuotaService {
     await this.probeInFlight;
   }
 
+  // The usage endpoint rate-limits the whole account, and an arbitrary number of windows across
+  // three machines all want to poll it, so the right to call it is leased: the server hands out
+  // one claim per five-minute cycle and everyone else paints the winner's reading. A user asking
+  // for a reading by hand skips the queue — one person clicking cannot stampede, and the pause
+  // check above still stops them from poking a 429. An unreachable server means no lease to be
+  // had: poll anyway, since a stale quota pane is worse than a rate limit that may not come.
+  private async claim(force: boolean): Promise<boolean> {
+    if (force) {
+      return true;
+    }
+    const reply = await httpJson("POST", "/quota/claim", {}, sharedTimeoutMs, this.log);
+    if (reply === null) {
+      return true;
+    }
+    const pausedUntil = numberOf(reply.pausedUntil) ?? 0;
+    if (pausedUntil > this.pausedUntil) {
+      this.pausedUntil = pausedUntil;
+    }
+    return reply.poll === true;
+  }
+
+  // What every other window on the account knows. The server is the shared copy; the meta file
+  // beside the history is what is left when it cannot be reached, and still joins the Windows and
+  // WSL window groups through /mnt/c.
+  private async fetchShared(): Promise<{ lastReadAt: number; pausedUntil: number; state: QuotaState | null; rows: QuotaReadingRow[] }> {
+    const remote = await httpJson("GET", "/quota", undefined, sharedTimeoutMs, this.log);
+    if (remote === null) {
+      return { ...await this.readSharedMeta(), rows: [] };
+    }
+    const state = recordOf(remote.state);
+    return {
+      lastReadAt: numberOf(remote.readAt) ?? 0,
+      pausedUntil: numberOf(remote.pausedUntil) ?? 0,
+      state: state && Array.isArray(state.windows) ? state as unknown as QuotaState : null,
+      rows: Array.isArray(remote.rows) ? remote.rows.map((row) => normalizeRow(row)).filter((row) => row !== null) : [],
+    };
+  }
+
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) {
       return;
@@ -287,24 +334,37 @@ export class QuotaService {
     }
     this.readings = [...merged.values()].sort((left, right) => left.at - right.at);
     const newest = this.readings[this.readings.length - 1];
+    let kept = false;
     if (!newest || rowChanged(newest, row) || row.at - newest.at >= 60 * 60 * 1000) {
       if (!this.readings.some((reading) => reading.at === row.at)) {
         this.readings.push(row);
       }
       await fs.mkdir(await this.storageDir(), { recursive: true });
       await fs.writeFile(await this.historyPath(), JSON.stringify(this.readings.sort((left, right) => left.at - right.at), null, 2), "utf8");
+      kept = true;
     }
+    // Told even when the row folded into the last one: readAt is what the lease counts from, so
+    // without this push the fleet would decide nobody had read and poll again within the minute.
+    await httpJson("POST", "/quota", { rows: kept ? [row] : [], readAt: row.at, state: this.state }, sharedTimeoutMs, this.log);
   }
 
   private async adoptShared(): Promise<void> {
-    const meta = await this.readSharedMeta();
-    if (meta.pausedUntil > this.pausedUntil) {
-      this.pausedUntil = meta.pausedUntil;
+    const shared = await this.fetchShared();
+    if (shared.pausedUntil > this.pausedUntil) {
+      this.pausedUntil = shared.pausedUntil;
     }
-    if (meta.state && meta.lastReadAt > this.lastReadAt) {
-      this.state = meta.state;
-      this.lastReadAt = meta.lastReadAt;
-      this.readings = await this.loadReadings();
+    // Rows from the other machines, whether or not their newest reading beats ours: this is the
+    // whole point of the shared history, and it is what fills the gaps the graphs used to show.
+    if (shared.rows.length) {
+      const merged = new Map<number, QuotaReadingRow>(this.readings.map((row) => [row.at, row]));
+      for (const row of shared.rows) {
+        merged.set(row.at, row);
+      }
+      this.readings = [...merged.values()].sort((left, right) => left.at - right.at);
+    }
+    if (shared.state && shared.lastReadAt > this.lastReadAt) {
+      this.state = shared.state;
+      this.lastReadAt = shared.lastReadAt;
     }
   }
 
@@ -339,6 +399,7 @@ export class QuotaService {
         await fs.mkdir(await this.storageDir(), { recursive: true });
         await fs.writeFile(await this.metaPath(), JSON.stringify({ lastReadAt: meta.lastReadAt, pausedUntil: this.pausedUntil, state: meta.state }), "utf8");
       }
+      await httpJson("POST", "/quota", { pausedUntil: this.pausedUntil }, sharedTimeoutMs, this.log);
     } catch (error) {
       this.noteFailure(error);
     }
