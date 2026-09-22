@@ -1233,7 +1233,11 @@ ${tooltipScript()}
           // necessarily what the dock is set to now.
           const ranAs = [turn.model && modelLabel(turn.model), turn.effort].filter(Boolean).join(' / ');
           const typed = typedText(turn);
-          bar.title = ranAs ? ranAs + '\\n' + typed : typed;
+          // When it was sent rides at the right end of the model/effort line (tip-aside), or takes
+          // that line itself when the turn predates recording what it ran as.
+          const sent = turn.createdAt ? new Date(turn.createdAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          bar.title = [ranAs || sent, typed].filter(Boolean).join('\\n');
+          if (ranAs && sent) bar.dataset.tipAside = sent;
           // One 🖼️ char per picture this prompt was sent with, reading the same as the prompt
           // box did before it went. They are spans so a click can say which one it hit; the
           // pictures themselves are part of the record now, so a ctrl-click only shows them too.
@@ -2871,6 +2875,7 @@ function tooltipStyle(): string {
   return `
     #tip { position: fixed; left: 0; top: 0; z-index: 9999; display: none; max-width: 60ch; padding: 4px 9px; border: 1px solid var(--border, #d9d8d1); border-radius: 6px; background: var(--surface, #fcfcfb); color: var(--ink, #000); font-size: calc(12.32px * var(--z, 1)); line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 2px 8px rgba(0,0,0,0.18); pointer-events: none; }
     #tip.shown { display: block; }
+    #tip .tip-aside { margin-left: 20px; }
 `;
 }
 
@@ -2886,6 +2891,7 @@ function tooltipScript(): string {
     let tipTimer = 0;
     let tipHost = null;
     let tipX = 0;
+    let tipText = '';
 
     function hideTip() {
       clearTimeout(tipTimer);
@@ -2896,8 +2902,19 @@ function tooltipScript(): string {
     // Anchored to the hovered element's box, not to the cursor: a cursor-anchored bubble that has to
     // flip upward for room lands back on top of the element it describes, hiding whatever is drawn
     // there.
+    // A host's data-tip-aside is set off to the right of the tip's first line.
     function showTip(text, node, x) {
-      tipNode.textContent = text;
+      tipText = text;
+      const aside = node.dataset.tipAside;
+      const cut = text.indexOf('\\n');
+      if (aside && cut > 0) {
+        const tag = document.createElement('span');
+        tag.className = 'tip-aside';
+        tag.textContent = aside;
+        tipNode.replaceChildren(text.slice(0, cut), tag, text.slice(cut));
+      } else {
+        tipNode.textContent = text;
+      }
       tipNode.classList.add('shown');
       tipHost = node;
       tipX = x;
@@ -2939,7 +2956,7 @@ function tooltipScript(): string {
         hideTip();
         return;
       }
-      showTip(tipNode.textContent || '', tipHost, tipX);
+      showTip(tipText, tipHost, tipX);
     }, true);
     window.addEventListener('blur', hideTip);
 `;
