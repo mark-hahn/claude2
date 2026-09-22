@@ -14,10 +14,11 @@ const webview = { cspSource: 'vscode-resource:' };
 const defaults = { model: 'claude-opus-5', effort: 'high', contextWindow: 256000, maxTurns: 10 };
 const pages = {
   sidebar: sidebarHtml(webview),
-  conversation: conversationHtml(webview, 'session-id', defaults, 1),
+  conversation: conversationHtml(webview, 'session-id', defaults, { sonnet: ['low', 'high'], haiku: [] }, [{ enabled: true, model: 'sonnet', effort: 'high' }], 1),
   instructions: managementHtml(webview, 'instructions', 'UTC', 1),
   quota: managementHtml(webview, 'quota', 'UTC', 1),
   plugins: managementHtml(webview, 'plugins', 'UTC', 1),
+  models: managementHtml(webview, 'models', 'UTC', 1, true),
   cap: managementHtml(webview, 'cap', 'UTC', 1),
 };
 

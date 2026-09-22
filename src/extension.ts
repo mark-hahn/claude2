@@ -10,7 +10,8 @@ import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, MODEL_OPTIONS, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { presetsOf, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
+import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -95,6 +96,9 @@ class Claude2Controller implements vscode.Disposable {
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
+  // The load's `claude update` + model check; runs wait on it (see waitForUpdate).
+  private modelsReady: Promise<void> = Promise.resolve();
+  private modelsSettled = false;
   // The conversation a management button toggles back to; the panels themselves are all
   // inactive while a management pane is up front, so remember the last one focused.
   private lastConversationId = "";
@@ -203,6 +207,7 @@ class Claude2Controller implements vscode.Disposable {
     );
     this.quota.start();
     this.watchInstructions();
+    this.modelsReady = this.refreshModels();
     void this.rescueOrphanDrafts();
   }
 
@@ -294,11 +299,8 @@ class Claude2Controller implements vscode.Disposable {
       this.setSearch(stringOf(record?.text));
     } else if (type === "login") {
       await this.loginToAnthropic();
-    } else if (type === "openPane") {
-      const pane = paneOf(record?.pane);
-      if (pane) {
-        await this.openManagement(pane);
-      }
+    } else if (type === "toggleManagement") {
+      await this.toggleManagement();
     }
   }
 
@@ -310,21 +312,51 @@ class Claude2Controller implements vscode.Disposable {
     const session = await this.store.create();
     this.refreshSidebar();
     await this.openConversation(session.id, true);
-    void this.refreshModels();
   }
 
-  // Runs behind the new session so the + click never waits on npm; open panels get the list
-  // when it lands. Silent unless the CLI fails.
+  // Once per load: bring the CLI up to date, then record its model list for this host. A list
+  // that differs from the stored one is stamped with a new date, which raises the update
+  // notification until the Models pane is opened. Silent unless the CLI fails.
   private async refreshModels(): Promise<void> {
+    const warn = (what: string, error: unknown): void => void vscode.window.showWarningMessage(`Claude2: ${what} failed: ${errorMessage(error)}`);
+    await withUpdateLock(() => this.runner.updateCli(this.workspacePath())).catch((error) => warn("claude update", error));
     try {
-      const models = await this.runner.refreshModels(this.workspacePath());
-      MODEL_OPTIONS.splice(0, MODEL_OPTIONS.length, ...models);
-      for (const panel of this.conversationPanels.values()) {
-        void panel.webview.postMessage({ type: "models", models });
+      const models = await this.runner.listModels(this.workspacePath());
+      const info = readModelInfo(this.context.globalState);
+      if (!sameModels(info.models, models)) {
+        await writeModelInfo(this.context.globalState, { ...info, models, date: Date.now() });
       }
     } catch (error) {
-      void vscode.window.showWarningMessage(`Claude2: CLI update/model check failed: ${error instanceof Error ? error.message : String(error)}`);
+      warn("model check", error);
     }
+    this.modelsSettled = true;
+    this.postModelInfo();
+  }
+
+  // Runs are held until the load's update is done, but never more than 15s: past that they
+  // start on the stored info and the update finishes behind them.
+  private async waitForUpdate(): Promise<void> {
+    if (this.modelsSettled) {
+      return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Claude2: waiting for claude update" }, () =>
+      Promise.race([this.modelsReady, new Promise((resolve) => setTimeout(resolve, 15000))]),
+    );
+  }
+
+  // Every footer, the sidebar's Mngmnt button, and the Models tab follow the stored info.
+  private postModelInfo(): void {
+    const info = readModelInfo(this.context.globalState);
+    for (const panel of this.conversationPanels.values()) {
+      void panel.webview.postMessage({ type: "models", models: info.models, presets: info.presets });
+    }
+    void this.managementPanel?.webview.postMessage({ type: "modelsAlert", on: this.modelsAlert() });
+    this.refreshSidebar();
+  }
+
+  public modelsAlert(): boolean {
+    const info = readModelInfo(this.context.globalState);
+    return info.date > info.seenDate;
   }
 
   // Forget every session with nothing in it -- no turn, no unsent draft, no waiting picture --
@@ -442,7 +474,8 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
-      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), this.zoomOf("conversation"));
+      const info = readModelInfo(this.context.globalState);
+      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), info.models, info.presets, this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
       panel.onDidChangeViewState(() => {
         if (panel?.active) {
@@ -486,15 +519,16 @@ class Claude2Controller implements vscode.Disposable {
     return "";
   }
 
-  // Bring the conversation back up front. False when there is no conversation tab to show,
-  // which leaves the management pane where it is rather than toggling to nothing.
-  private revealConversation(): boolean {
-    const panel = this.conversationPanels.get(this.lastConversationId) ?? [...this.conversationPanels.values()].pop();
-    if (!panel) {
-      return false;
+  // The sidebar's Mngmnt button: closes the management pane when it is up front, otherwise
+  // opens it, always on the Quotas tab.
+  private async toggleManagement(): Promise<void> {
+    if (this.managementPanel?.visible) {
+      if (await this.mayLeaveManagement()) {
+        this.managementPanel?.dispose();
+      }
+      return;
     }
-    panel.reveal(vscode.ViewColumn.One);
-    return true;
+    await this.openManagement("quota");
   }
 
   // "Close" works down a ladder: with several session tabs open it keeps the current one,
@@ -1052,7 +1086,8 @@ class Claude2Controller implements vscode.Disposable {
     }
     const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model || defaults.model;
-    const selectedEffort = effort || defaults.effort;
+    // An empty effort with a model is a pick, not a gap: that model takes no effort levels.
+    const selectedEffort = model ? effort : defaults.effort;
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
     // with is what the session reopens on.
     await this.store.setPicks(sessionId, selectedModel, selectedEffort);
@@ -1125,6 +1160,7 @@ class Claude2Controller implements vscode.Disposable {
         flushTimer = setTimeout(flushStream, 80);
       }
     };
+    await this.waitForUpdate();
     const plugins = await this.stats.flags();
     try {
       const result = await this.runner.runPrompt({
@@ -1320,10 +1356,6 @@ class Claude2Controller implements vscode.Disposable {
     if (!(await this.ensureEnabled()) || !(await this.mayLeaveManagement())) {
       return;
     }
-    // The button that opened the pane showing up front closes it again: back to the conversation.
-    if (this.managementPanel?.visible && this.managementPane === pane && this.revealConversation()) {
-      return;
-    }
     if (!this.managementPanel) {
       this.managementPanel = vscode.window.createWebviewPanel("claude2.management", "Claude2", vscode.ViewColumn.One, {
         enableScripts: true,
@@ -1342,8 +1374,8 @@ class Claude2Controller implements vscode.Disposable {
       });
     }
     this.managementPane = pane;
-    this.managementPanel.title = pane === "instructions" ? "Claude2 Instructions" : pane === "quota" ? "Claude2 Quota" : pane === "cap" ? "Claude2 Image" : "Claude2 Stats";
-    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"));
+    this.managementPanel.title = pane === "cap" ? "Claude2 Image" : "Claude2 Management";
+    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"), this.modelsAlert());
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
   }
@@ -1573,7 +1605,24 @@ class Claude2Controller implements vscode.Disposable {
       this.managementPanel?.dispose();
       return;
     }
-    if (type === "loadInstructions") {
+    if (type === "openTab") {
+      const pane = paneOf(record?.pane);
+      if (pane) {
+        await this.openManagement(pane);
+      }
+      return;
+    }
+    if (type === "loadModels") {
+      // Opening the Models tab is what acknowledges a model-list change.
+      const info = readModelInfo(this.context.globalState);
+      await writeModelInfo(this.context.globalState, { ...info, seenDate: info.date });
+      this.postModelInfo();
+      await this.reply(requestId, async () => info);
+    } else if (type === "savePresets") {
+      await writeModelInfo(this.context.globalState, { ...readModelInfo(this.context.globalState), presets: presetsOf(record?.presets) });
+      this.postModelInfo();
+      await this.reply(requestId, async () => readModelInfo(this.context.globalState));
+    } else if (type === "loadInstructions") {
       await this.reply(requestId, async () => await this.instructions.read());
     } else if (type === "saveInstructions") {
       await this.reply(requestId, async () => await this.instructions.write(stringOf(record?.text), stringOrNull(record?.version)));
@@ -1737,7 +1786,7 @@ class Claude2Controller implements vscode.Disposable {
     const session = sessionId ? this.store.get(sessionId) : undefined;
     return {
       model: session?.model || config.get<string>("model", DEFAULT_MODEL),
-      effort: session?.effort || config.get<string>("effort", DEFAULT_EFFORT),
+      effort: session?.model ? session.effort : config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
       maxTurns: config.get<number>("maxTurns", 50),
     };
@@ -1789,12 +1838,13 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       selectedId: this.controller.selectedSessionId(),
       authNeeded: this.controller.isAuthNeeded(),
       panesOpen: this.controller.hasOpenPanes(),
+      modelsAlert: this.controller.modelsAlert(),
     });
   }
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "plugins" || value === "cap" ? value : null;
+  return value === "instructions" || value === "quota" || value === "plugins" || value === "models" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

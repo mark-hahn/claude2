@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { DEFAULT_EFFORT, EFFORT_OPTIONS, MODEL_OPTIONS, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
+import type { ModelMap } from "./modelInfo";
+import { TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -158,8 +159,7 @@ export class ClaudeCliRunner {
       "--include-partial-messages",
       "--model",
       sanitizeModel(options.model),
-      "--effort",
-      sanitizeEffort(options.effort),
+      ...effortArgs(options.effort),
       "--max-turns",
       String(Math.max(1, Math.floor(options.limits.maxTurns) || 1)),
       mode === "resume" ? "--resume" : "--session-id",
@@ -510,16 +510,25 @@ export class ClaudeCliRunner {
     }
   }
 
-  // Brings the CLI up to date, then asks it which models this account can use: the same
-  // initialize handshake the Agent SDK sends, answered without starting a turn.
-  public async refreshModels(workspacePath: string): Promise<string[]> {
+  public async updateCli(workspacePath: string): Promise<void> {
     await collectProcess("claude", ["update"], workspacePath, 180000, null);
+  }
+
+  // Asks the CLI which models this account can use and each one's effort levels: the same
+  // initialize handshake the Agent SDK sends, answered without starting a turn.
+  public async listModels(workspacePath: string): Promise<ModelMap> {
     const request = JSON.stringify({ type: "control_request", request_id: "models", request: { subtype: "initialize" } });
     const output = await collectProcess("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], workspacePath, 30000, request + "\n");
     for (const line of output.split("\n")) {
-      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown }[] } } }) : undefined;
-      const models = (parsed?.response?.response?.models ?? []).map((model) => stringOf(model.value)).filter((value) => value && value !== "default");
-      if (models.length > 0) {
+      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown; supportedEffortLevels?: unknown }[] } } }) : undefined;
+      const models: ModelMap = {};
+      for (const model of parsed?.response?.response?.models ?? []) {
+        const value = stringOf(model.value);
+        if (value && value !== "default") {
+          models[value] = Array.isArray(model.supportedEffortLevels) ? model.supportedEffortLevels.map(stringOf).filter(Boolean) : [];
+        }
+      }
+      if (Object.keys(models).length > 0) {
         return models;
       }
     }
@@ -668,11 +677,12 @@ function errorText(error: unknown): string {
 }
 
 function sanitizeModel(model: string): string {
-  return MODEL_OPTIONS.includes(model) || /^[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(model) ? model : "fable";
+  return /^[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(model) ? model : "fable";
 }
 
-function sanitizeEffort(effort: string): string {
-  return EFFORT_OPTIONS.includes(effort) ? effort : DEFAULT_EFFORT;
+// A model with no effort levels (haiku) runs with no --effort at all.
+function effortArgs(effort: string): string[] {
+  return /^[a-z]+$/.test(effort) ? ["--effort", effort] : [];
 }
 
 function phaseForBlock(blockType: string): ClaudePhase {

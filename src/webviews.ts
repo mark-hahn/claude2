@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
-import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, EFFORT_OPTIONS, GRAFT_TALLY_MARK, MODEL_OPTIONS, TOOL_LINE_MARK } from "./types";
+import type { ModelMap, Preset } from "./modelInfo";
+import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "plugins" | "cap";
+export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -30,9 +31,9 @@ export function sidebarHtml(webview: vscode.Webview): string {
     /* The same grey-out the footer's dock controls use: label and border fade together, so the
        two never disagree about whether the button does anything. */
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
-    #new, #quota { width: 21px; }
-    #instructions { width: 52px; }
-    #plugins { width: 54px; }
+    #new { width: 21px; }
+    #mngmnt { width: 66px; }
+    #mngmnt.alert { background: #fbd9d9; border-color: #e4a7a7; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
@@ -69,9 +70,7 @@ ${tooltipStyle()}  </style>
   <div class="shell">
     <div class="top">
       <div class="row">
-        <button id="quota" title="Quota">$</button>
-        <button id="instructions" title="Instructions">Instr</button>
-        <button id="plugins" title="Plugin stats and controls for every project">Stats</button>
+        <button id="mngmnt" title="Quotas, instructions, stats, and models">Mngmnt</button>
         <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
@@ -109,9 +108,7 @@ ${tooltipScript()}
     let searchText = '';
 
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
-    document.getElementById('instructions').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'instructions' }); });
-    document.getElementById('quota').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'quota' }); });
-    document.getElementById('plugins').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'plugins' }); });
+    document.getElementById('mngmnt').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'toggleManagement' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     // Forks the pane that is up front; the fork itself is decided over there, where the
@@ -168,6 +165,8 @@ ${tooltipScript()}
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
         // Close has nothing to close with no Claude2 pane up.
         document.getElementById('close').disabled = message.panesOpen !== true;
+        // The CLI's model list changed since the Models tab was last opened.
+        document.getElementById('mngmnt').classList.toggle('alert', message.modelsAlert === true);
         // Nothing to fork without a pane up front showing a session with runs in it.
         const selected = sessions.find((session) => session.id === selectedId);
         document.getElementById('fork').disabled = !selected || !(selected.turns || []).length;
@@ -403,11 +402,11 @@ ${tooltipScript()}
 </html>`;
 }
 
-export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, zoom = 1): string {
+export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, modelMap: ModelMap, presetList: Preset[], zoom = 1): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
-  const models = JSON.stringify(MODEL_OPTIONS);
-  const efforts = JSON.stringify(EFFORT_OPTIONS);
+  const models = JSON.stringify(modelMap);
+  const presets = JSON.stringify(presetList);
   const safeSessionId = JSON.stringify(sessionId);
   const defaultModel = JSON.stringify(defaults.model || DEFAULT_MODEL);
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
@@ -534,8 +533,11 @@ ${tooltipStyle()}  </style>
 ${zoomScript(z)}
 ${tooltipScript()}
     const sessionId = ${safeSessionId};
-    const models = ${models};
-    const efforts = ${efforts};
+    // Model id -> its effort levels, and the M button's presets: the host's stored model info,
+    // replaced whenever the extension posts a newer copy.
+    let models = ${models};
+    let presets = ${presets};
+    const fallbackEffort = ${JSON.stringify(DEFAULT_EFFORT)};
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
     const contextWindow = ${contextWindow};
@@ -596,18 +598,11 @@ ${tooltipScript()}
     const finish = document.getElementById('finish');
     const cycleButton = document.getElementById('cycle');
 
-    // The two pairings worth a one-click switch. The pickers themselves stay free: this only steps
-    // between these, and lands back on the first from anything else.
-    const PICK_PRESETS = [
-      { model: 'claude-opus-5', effort: 'high' },
-      { model: 'claude-fable-5', effort: 'xhigh' },
-    ];
-
-    fillSelect(modelSelect, models, defaultModel);
-    fillSelect(effortSelect, efforts, defaultEffort);
+    fillSelect(modelSelect, Object.keys(models), defaultModel);
+    fillEfforts(defaultEffort);
     // The pickers belong to the session, not the panel: every change is written back so
     // reopening this session later comes up on the same model and effort.
-    modelSelect.addEventListener('change', sendPicks);
+    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); sendPicks(); });
     effortSelect.addEventListener('change', sendPicks);
     cycleButton.addEventListener('click', cyclePicks);
     describePicks();
@@ -650,8 +645,11 @@ ${tooltipScript()}
         syncImagePrefix();
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
-      } else if (message.type === 'models' && Array.isArray(message.models)) {
-        fillSelect(modelSelect, message.models, modelSelect.value);
+      } else if (message.type === 'models' && message.models && typeof message.models === 'object') {
+        models = message.models;
+        presets = Array.isArray(message.presets) ? message.presets : presets;
+        fillSelect(modelSelect, Object.keys(models), modelSelect.value);
+        fillEfforts(effortSelect.value);
       }
     });
 
@@ -751,19 +749,33 @@ ${tooltipScript()}
       }
     }
 
+    // The effort picker offers only what the selected model takes. A model the list no longer
+    // has gets every level any listed model takes; one with none (haiku) gets an empty picker,
+    // and runs without --effort.
+    function fillEfforts(selected) {
+      const list = models[modelSelect.value] || [...new Set(Object.values(models).flat())];
+      if (list.length === 0) {
+        effortSelect.replaceChildren();
+        return;
+      }
+      fillSelect(effortSelect, list, list.includes(selected) ? selected : list.includes(fallbackEffort) ? fallbackEffort : list[0]);
+    }
+
     function sendPicks() {
       describePicks();
       vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value });
     }
 
-    // Step to the next preset. A pairing set by hand through the pickers matches none of them, so
-    // findIndex gives -1 and the first preset is where the next click lands.
+    // Step to the next enabled preset (set in the Models pane). A pairing set by hand through the
+    // pickers matches none of them, so findIndex gives -1 and the first is where the click lands.
     function cyclePicks() {
-      const at = PICK_PRESETS.findIndex((preset) => preset.model === modelSelect.value && preset.effort === effortSelect.value);
-      const next = PICK_PRESETS[(at + 1) % PICK_PRESETS.length];
+      const enabled = presets.filter((preset) => preset.enabled && preset.model);
+      if (enabled.length === 0) return;
+      const at = enabled.findIndex((preset) => preset.model === modelSelect.value && preset.effort === effortSelect.value);
+      const next = enabled[(at + 1) % enabled.length];
       // The preset may name a model the CLI's list lacks; fillSelect keeps it selectable.
-      fillSelect(modelSelect, [...modelSelect.options].map((option) => option.value), next.model);
-      effortSelect.value = next.effort;
+      fillSelect(modelSelect, Object.keys(models), next.model);
+      fillEfforts(next.effort);
       sendPicks();
     }
 
@@ -1546,14 +1558,192 @@ ${tooltipScript()}
 </html>`;
 }
 
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1): string {
+// Every management pane but Image opens under the same row of tabs; `alert` turns the Models
+// tab light red until a changed model list has been looked at.
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1, alert = false): string {
   if (pane === "plugins") {
-    return pluginsHtml(webview, zoom);
+    return pluginsHtml(webview, zoom, alert);
+  }
+  if (pane === "models") {
+    return modelsHtml(webview, zoom, alert);
   }
   if (pane === "cap") {
     return capHtml(webview, zoom);
   }
-  return pane === "instructions" ? instructionsHtml(webview, zoom) : quotaHtml(webview, timezone, zoom);
+  return pane === "instructions" ? instructionsHtml(webview, zoom, alert) : quotaHtml(webview, timezone, zoom, alert);
+}
+
+const managementTabs: [ManagementPane, string][] = [
+  ["quota", "Quotas"],
+  ["instructions", "Instructions"],
+  ["plugins", "Stats"],
+  ["models", "Models"],
+];
+
+// The tabs lead each pane's title row, where the pane's own heading used to be; they act as
+// radio buttons, the extension swapping the whole pane on a click.
+function tabsHtml(pane: ManagementPane, alert: boolean): string {
+  const tabs = managementTabs.map(([id, label]) => `<button class="tab${id === pane ? " selected" : ""}${id === "models" && alert ? " alert" : ""}" data-pane="${id}">${label}</button>`);
+  return `<div class="tabs">${tabs.join("")}</div>`;
+}
+
+function tabsStyle(): string {
+  return `    .tabs { display: flex; gap: 6px; flex: none; }
+    .tabs .tab.selected { background: #e2e2e2; }
+    .tabs .tab.alert { background: #fbd9d9; border-color: #e4a7a7; }
+`;
+}
+
+function tabsScript(): string {
+  return `
+    for (const tab of document.querySelectorAll('.tab')) {
+      tab.addEventListener('click', () => { if (!tab.classList.contains('selected')) vscode.postMessage({ type: 'openTab', pane: tab.dataset.pane }); });
+    }
+    window.addEventListener('message', (event) => {
+      if (event.data.type === 'modelsAlert') document.querySelector('.tab[data-pane="models"]').classList.toggle('alert', event.data.on === true);
+    });
+`;
+}
+
+// The Models pane: what this host's CLI offers (every window on the host sees the same), and the
+// four presets the footer's M button steps through. Opening it is what clears the update alert.
+function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
+  return `<!doctype html>
+<html lang="en" style="--z: ${z}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <style>
+    :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
+    .pane { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+    .title { display: flex; align-items: center; gap: 12px; }
+    .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .box { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px 16px; }
+    h2 { font-size: calc(17px * var(--z)); font-weight: 600; margin: 0 0 8px; }
+    table { border-collapse: collapse; margin-bottom: 8px; }
+    td { padding: 3px 24px 3px 0; }
+    .preset { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+    .preset input { width: 18px; height: 18px; margin: 0; }
+    select { font: inherit; color: var(--ink); min-width: 14em; }
+    .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+${tabsStyle()}  </style>
+</head>
+<body>
+  <div class="pane">
+    <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
+    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div></div>
+    <div class="box"><h2>Presets</h2><div id="presets"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${tabsScript()}
+${zoomScript(z)}
+    const pending = new Map();
+    let models = {};
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'reply' && pending.has(message.requestId)) {
+        pending.get(message.requestId)(message);
+        pending.delete(message.requestId);
+      }
+    });
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
+    document.getElementById('save').addEventListener('click', () => void save());
+    void load();
+
+    function request(type, payload) {
+      const requestId = String(Date.now()) + Math.random();
+      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
+    }
+
+    async function load() {
+      const reply = await request('loadModels', {});
+      if (!reply.ok) {
+        document.getElementById('changed').textContent = 'Could not load the model info: ' + (reply.error || 'unknown error');
+        return;
+      }
+      const info = reply.payload;
+      models = info.models || {};
+      const table = document.getElementById('models');
+      table.replaceChildren();
+      for (const [model, efforts] of Object.entries(models)) {
+        const row = table.insertRow();
+        row.insertCell().textContent = model;
+        row.insertCell().textContent = efforts.length ? efforts.join(', ') : 'no effort levels';
+      }
+      document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
+      const box = document.getElementById('presets');
+      box.replaceChildren();
+      for (let i = 0; i < 4; i++) {
+        const preset = (info.presets || [])[i] || { enabled: false, model: '', effort: '' };
+        const row = document.createElement('div');
+        row.className = 'preset';
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = preset.enabled;
+        const model = document.createElement('select');
+        const effort = document.createElement('select');
+        fill(model, Object.keys(models), preset.model || Object.keys(models)[0] || '');
+        fillEffort(model, effort, preset.effort);
+        check.addEventListener('change', unsaved);
+        model.addEventListener('change', () => { fillEffort(model, effort, effort.value); unsaved(); });
+        effort.addEventListener('change', unsaved);
+        row.append(check, model, effort);
+        box.appendChild(row);
+      }
+      note('');
+    }
+
+    // A preset's saved model stays selectable even when the list no longer has it.
+    function fill(select, values, selected) {
+      select.replaceChildren();
+      for (const value of values.includes(selected) ? values : [...values, selected]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === selected;
+        select.appendChild(option);
+      }
+    }
+
+    // The same rule as the footer: the model's own levels, every level for a model no longer
+    // listed, and nothing for a model that takes none.
+    function fillEffort(model, effort, selected) {
+      const list = models[model.value] || [...new Set(Object.values(models).flat())];
+      if (list.length === 0) {
+        effort.replaceChildren();
+        return;
+      }
+      fill(effort, list, list.includes(selected) ? selected : list[0]);
+    }
+
+    async function save() {
+      const presets = [...document.querySelectorAll('.preset')].map((row) => {
+        const [check, model, effort] = row.children;
+        return { enabled: check.checked, model: model.value, effort: effort.value };
+      });
+      const reply = await request('savePresets', { presets });
+      note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
+    }
+
+    function unsaved() {
+      note('Not saved');
+    }
+
+    function note(text) {
+      document.getElementById('note').textContent = text;
+    }
+  </script>
+</body>
+</html>`;
 }
 
 // The Image pane shows whichever attached picture was last asked for -- by adding it, or by
@@ -1750,7 +1940,7 @@ ${tooltipScript()}
 // The Plugins pane: one table over every project the stats server knows — a column per
 // project plus an All column, stat rows above two checkbox rows that switch graft and
 // ponytail per project. Data arrives from the extension in the loadPluginsReport reply.
-function pluginsHtml(webview: vscode.Webview, zoom: number): string {
+function pluginsHtml(webview: vscode.Webview, zoom: number, alert: boolean): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
   return `<!doctype html>
@@ -1778,15 +1968,16 @@ function pluginsHtml(webview: vscode.Webview, zoom: number): string {
     td:last-child, th:last-child { font-weight: 600; }
     td.mid { text-align: center; }
     input[type=checkbox] { width: calc(15px * var(--z)); height: calc(15px * var(--z)); margin: 0; }
-  </style>
+${tabsStyle()}  </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Stats</h1><span id="note"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
+    <div class="title">${tabsHtml("plugins", alert)}<span id="note"></span><div class="actions"><button id="reload">Reload</button><button id="close">Close</button></div></div>
     <div class="scroll"><table id="table"></table></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+${tabsScript()}
 ${zoomScript(z)}
     const pending = new Map();
     window.addEventListener('message', (event) => {
@@ -1907,7 +2098,7 @@ ${zoomScript(z)}
 </html>`;
 }
 
-function instructionsHtml(webview: vscode.Webview, zoom: number): string {
+function instructionsHtml(webview: vscode.Webview, zoom: number, alert: boolean): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
   return `<!doctype html>
@@ -1933,11 +2124,11 @@ function instructionsHtml(webview: vscode.Webview, zoom: number): string {
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
     .error { background: var(--error); border: 1px solid var(--border); border-left: 3px solid #c62828; border-radius: 8px; margin: 16px 0 0; padding: 10px 14px; }
-${tooltipStyle()}  </style>
+${tooltipStyle()}${tabsStyle()}  </style>
 </head>
 <body>
   <div class="pane">
-    <div class="title"><h1>Instructions</h1><div class="actions"><span id="hint" class="hint"></span><button id="bottom" title="Scroll to bottom" aria-label="Scroll to bottom">⇊</button><button id="close">Close</button></div></div>
+    <div class="title">${tabsHtml("instructions", alert)}<div class="actions"><span id="hint" class="hint"></span><button id="bottom" title="Scroll to bottom" aria-label="Scroll to bottom">⇊</button><button id="close">Close</button></div></div>
     <label><span id="path" class="path">CLAUDE.md</span><textarea id="text" spellcheck="true" disabled></textarea></label>
     <p id="error" class="error" hidden></p>
   </div>
@@ -1946,6 +2137,7 @@ ${tooltipStyle()}  </style>
     // CLAUDE.md after a short pause, Ctrl-S writes at once, and leaving the pane flushes first.
     // Each write also copies CLAUDE.md to .github/copilot-instructions.md.
     const vscode = acquireVsCodeApi();
+${tabsScript()}
 ${zoomScript(z)}
     const textBox = document.getElementById('text');
     const pathLabel = document.getElementById('path');
@@ -2094,7 +2286,7 @@ ${zoomScript(z)}
 </html>`;
 }
 
-function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): string {
+function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, alert: boolean): string {
   const nonce = getNonce();
   const safeTimezone = JSON.stringify(timezone);
   const z = zoomFactor(zoom);
@@ -2138,16 +2330,17 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number): str
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
     @media (max-width: 900px) { .graphs { grid-template-columns: 1fr; } .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
-${tooltipStyle()}  </style>
+${tooltipStyle()}${tabsStyle()}  </style>
 </head>
 <body>
   <div id="pane" class="pane">
-    <div class="title"><h1>Plan quota over time</h1><div id="credits" class="credits"></div><div class="actions"><span id="readTime"></span><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
+    <div class="title">${tabsHtml("quota", alert)}<div id="credits" class="credits"></div><div class="actions"><span id="readTime"></span><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
     <div id="error" class="error" hidden></div>
     <div id="graphs" class="graphs"></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+${tabsScript()}
 ${zoomScript(z)}
     const timeZone = ${safeTimezone};
     const pending = new Map();

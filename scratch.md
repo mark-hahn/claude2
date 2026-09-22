@@ -1,5 +1,8 @@
 
+show worst of 5h, 7d, and 7d fable usage % in footer
+
 # updated management pane and new model updates
+- this replaces the current logic for claude updates, MODEL_OPTIONS, and EFFORT_OPTIONS 
 
 ## new management pane contents
 - the management pane now has a new design with multiple subpanes
@@ -28,16 +31,16 @@
 
 ## models subpane
 - the models subpane has 2 boxes
-  - the models box lists the current models and efforts
+  - the models box lists the current models and the efforts for each model
     - it also shows a modification date for the last time those changed
   - the presets box lets you choose the presets for models and efforts
     - these are the presets the M button in the footer cycles through
     - the presets box has 4 rows for 4 presets, each row has:
       - a checkbox to enable the preset
       - a selector drop-down with all the model choices
-      - a selector drop-down of all efforts
+      - a selector drop-down of all efforts for that model
 
-# info storage in server
+## info storage in server
 - the models/efforts/presets info is shared across all extensions so models subpanes always match
 - the centralized claude2-stats pm2 task in the server stores the info
   - it is just simple persistent storage of the info and a modification date
@@ -46,27 +49,31 @@
     - when the info to be saved doesn't match the current stored info then a modification date is updated
   - another endpoint is called to read the info and date
 
-# info handling by extension
+## info handling by extension
 - the models, efforts, and presets are not hard-wired in the code anymore
-- there is a local vscode persistent store of the info and mod date for each of windows, wsl, and server 
+- keep a local vscode persistent store of the info and mod date for each of windows, wsl, and server 
 - every time an extension is loaded:
-  - it checks the cli to get latest supported models/efforts
-    - see temp.md for forwarded instructions to access the cli for models/efforts
-    - if the info from the cli doesn't match the local info then it sends that new info to the server
-      - it doesn't change local info or date
-  - it then always reads the info and date from the server:
-    - it saves the info but not the date to the local copy
-    - if the server date is newer than the local it sets an update notification flag
-    - when the notification flag is set:
-      - the mngmnt button in sidebar has a light-red background
-      - the models tab button in the management pane has a light-red background 
+  - run `claude update` with a lock
+  - fetch the model and effort lists from cli and save for use below as info
+  - delay starting any session until upodate is finished
+    - this should only be a few seconds delay
+    - show a toast saying waiting for claude update  
+  - if the info from the cli doesn't match the local info then:
+    - send that new info to the server
+    - don't change local info or date
+  - then always read the info and date from the server:
+    - save the info but not the date to the local copy
+    - if the server date is newer than the local date set an update notification flag
+  - when the notification flag is set:
+    - the mngmnt button in sidebar has a light-red background
+    - the models tab button in the management pane has a light-red background 
 - every time the models subpane is opened:
   - it gets the latest info and date from the server and displays it
   - it clears the notification flag and updates the local copy of the mod date
-- the presets, models, and effort selections in the model row of the footer always use local stored info
+- the presets, models, and effort selections in the model row of the footer should always use live local stored info
 
-# actions
-- if these instructions are ambiguous, incomplete or contradictory then:
+## actions
+- if these instructions are ambiguous, incomplete, contradictory, or you think there is a better way to do this then:
   - write the problems to claude2-mngmnt-problems.md and stop
   - make no changes other than writing to claude2-mngmnt-problems.md
 - otherwise implement these instructions immediately

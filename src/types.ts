@@ -63,10 +63,6 @@ export interface InstallStats {
   updatedAt: number;
 }
 
-// Fallback until the CLI reports its own list; refreshModels() replaces the contents in place.
-export const MODEL_OPTIONS = ["fable", "opus", "sonnet", "claude-fable-5", "claude-opus-5", "claude-sonnet-5"];
-export const EFFORT_OPTIONS = ["low", "medium", "high", "xhigh", "max"];
-
 export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | "compacting" | null;
 
 // One picture riding with a prompt. `kind` picks the sentence appended for it, and is what the
