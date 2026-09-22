@@ -14,10 +14,12 @@ export interface Preset {
 }
 
 // Per-model UI choices from the Models pane: `on` false hides the model everywhere, `alias`
-// is a display-only name shown instead of the model id. A model with no entry is on, unaliased.
+// is a display-only name shown instead of the model id, and `effort` is the level the model's
+// preset runs at. A model with no entry is on, unaliased.
 export interface ModelPref {
   on: boolean;
   alias: string;
+  effort: string;
 }
 export type ModelPrefs = Record<string, ModelPref>;
 
@@ -26,6 +28,8 @@ export type ModelPrefs = Record<string, ModelPref>;
 // update notification.
 export interface ModelInfo {
   models: ModelMap;
+  // Model id -> its Anthropic name from the CLI's list, e.g. "Sonnet 5"; shown in the Models pane.
+  names: Record<string, string>;
   presets: Preset[];
   prefs: ModelPrefs;
   // Index into `presets` of the one new sessions start on; see defaultPresetOf.
@@ -45,6 +49,7 @@ const allEfforts = ["low", "medium", "high", "xhigh", "max"];
 const seedDate = Date.parse("2026-09-22T00:00:00Z");
 const seed: ModelInfo = {
   models: { "opus[1m]": allEfforts, "claude-fable-5-1[1m]": allEfforts, sonnet: allEfforts, haiku: [] },
+  names: { "opus[1m]": "Opus 5.5 with 1M context", "claude-fable-5-1[1m]": "Fable 5.1", sonnet: "Sonnet 5", haiku: "Haiku 4.5" },
   presets: [
     { enabled: true, model: "claude-opus-5", effort: "high" },
     { enabled: true, model: "claude-fable-5", effort: "xhigh" },
@@ -60,7 +65,7 @@ const seed: ModelInfo = {
 export function readModelInfo(state: vscode.Memento): ModelInfo {
   const info = state.get<ModelInfo>(infoKey) ?? seed;
   // Records written before the Models pane had these fields carry none.
-  return { ...info, prefs: info.prefs ?? {}, defaultPreset: info.defaultPreset ?? 0 };
+  return { ...info, names: info.names ?? {}, prefs: info.prefs ?? {}, defaultPreset: info.defaultPreset ?? 0 };
 }
 
 export async function writeModelInfo(state: vscode.Memento, info: ModelInfo): Promise<void> {
@@ -71,9 +76,9 @@ export function sameModels(a: ModelMap, b: ModelMap): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-// Only the four rows the pane shows, each field forced to a string or boolean.
+// Each field forced to a string or boolean.
 export function presetsOf(value: unknown): Preset[] {
-  const rows = Array.isArray(value) ? value.slice(0, 4) : [];
+  const rows = Array.isArray(value) ? value : [];
   return rows.map((row) => {
     const record = (row ?? {}) as Record<string, unknown>;
     return { enabled: record.enabled === true, model: String(record.model ?? ""), effort: String(record.effort ?? "") };
@@ -115,7 +120,7 @@ export function prefsOf(value: unknown, models: ModelMap): ModelPrefs {
   return Object.fromEntries(
     rows.map(([model, pref]) => {
       const record = (pref ?? {}) as Record<string, unknown>;
-      return [model, { on: record.on !== false, alias: String(record.alias ?? "") }];
+      return [model, { on: record.on !== false, alias: String(record.alias ?? ""), effort: String(record.effort ?? "") }];
     }),
   );
 }

@@ -329,11 +329,12 @@ class Claude2Controller implements vscode.Disposable {
     const warn = (what: string, error: unknown): void => void vscode.window.showWarningMessage(`Claude2: ${what} failed: ${errorMessage(error)}`);
     await withUpdateLock(() => this.runner.updateCli(this.workspacePath())).catch((error) => warn("claude update", error));
     try {
-      const models = await this.runner.listModels(this.workspacePath());
+      const { models, names } = await this.runner.listModels(this.workspacePath());
       const info = readModelInfo(this.context.globalState);
-      if (!sameModels(info.models, models)) {
+      // A renamed model (an alias now resolving to a new version) is news too.
+      if (!sameModels(info.models, models) || JSON.stringify(info.names) !== JSON.stringify(names)) {
         // A model that just left the list takes any preset naming it off with it.
-        await writeModelInfo(this.context.globalState, { ...info, models, presets: prunePresets(info.presets, info.prefs, models), date: Date.now() });
+        await writeModelInfo(this.context.globalState, { ...info, models, names, presets: prunePresets(info.presets, info.prefs, models), date: Date.now() });
       }
     } catch (error) {
       warn("model check", error);
@@ -1649,7 +1650,7 @@ class Claude2Controller implements vscode.Disposable {
       this.postModelInfo();
       await this.reply(requestId, async () => info);
     } else if (type === "savePresets") {
-      // One Save covers both boxes: the per-model choices and the presets picked from them.
+      // One Save covers the per-model choices and the presets picked from them.
       const stored = readModelInfo(this.context.globalState);
       const prefs = prefsOf(record?.prefs, stored.models);
       const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
@@ -1659,9 +1660,16 @@ class Claude2Controller implements vscode.Disposable {
         if (!presets[defaultPreset]?.enabled) {
           throw new Error(presets.some((preset) => preset.enabled)
             ? "The default preset is not enabled, or its model is unchecked."
-            : "No preset is enabled: check at least one model and one preset.");
+            : "No preset is enabled: check at least one shown model's Preset box.");
         }
         presets.filter((preset) => preset.enabled).forEach((preset) => sanitizeModel(preset.model));
+        // A preset's effort has to be one its model takes -- none at all for a model with no levels.
+        for (const preset of presets.filter((row) => row.enabled)) {
+          const levels = stored.models[preset.model] ?? [];
+          if (levels.length ? !levels.includes(preset.effort) : preset.effort) {
+            throw new Error(`${preset.model} has no effort level "${preset.effort}".`);
+          }
+        }
         await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
         this.postModelInfo();
         return readModelInfo(this.context.globalState);

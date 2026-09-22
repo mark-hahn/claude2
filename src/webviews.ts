@@ -1641,8 +1641,9 @@ function tabsScript(): string {
 `;
 }
 
-// The Models pane: what this host's CLI offers (every window on the host sees the same), and the
-// four presets the footer's M button steps through. Opening it is what clears the update alert.
+// The Models pane: what this host's CLI offers (every window on the host sees the same), one
+// column per model, and which of them are the presets the footer's M button steps through.
+// Opening it is what clears the update alert.
 function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
@@ -1664,11 +1665,12 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     .box { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px 16px; }
     h2 { font-size: calc(17px * var(--z)); font-weight: 600; margin: 0 0 8px; }
     table { border-collapse: collapse; margin-bottom: 8px; }
-    td { padding: 3px 24px 3px 0; }
-    .preset { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
-    .preset input[type=checkbox], #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
-    #models input[type=text] { font: inherit; color: var(--ink); width: 14em; padding: 2px 6px; }
-    #models th { text-align: left; font-weight: 600; padding: 3px 24px 3px 0; }
+    #models td, #models th { padding: 3px 20px 3px 0; text-align: left; vertical-align: top; }
+    #models th { font-weight: 600; }
+    #models tr:first-child th { max-width: 8em; }
+    #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
+    #models input[type=text] { font: inherit; color: var(--ink); width: 9em; padding: 2px 6px; }
+    #models select { min-width: 6em; }
     select { font: inherit; color: var(--ink); min-width: 14em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 ${tabsStyle()}  </style>
@@ -1676,8 +1678,7 @@ ${tabsStyle()}  </style>
 <body>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
-    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div></div>
-    <div class="box"><h2>Presets</h2><div id="presets"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -1685,9 +1686,11 @@ ${tabsScript()}
 ${zoomScript(z)}
     const pending = new Map();
     let models = {};
+    let names = {};
     let prefs = {};
-    let presets = [];
-    let defaultPreset = 0;
+    // Models whose Preset box is checked, and the one new sessions start on.
+    let presetModels = new Set();
+    let defaultModel = '';
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -1698,7 +1701,7 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
-    document.getElementById('default').addEventListener('change', (event) => { defaultPreset = Number(event.target.value); unsaved(); });
+    document.getElementById('default').addEventListener('change', (event) => { defaultModel = event.target.value; unsaved(); });
     void load();
 
     function request(type, payload) {
@@ -1714,140 +1717,131 @@ ${zoomScript(z)}
       }
       const info = reply.payload;
       models = info.models || {};
+      names = info.names || {};
       prefs = info.prefs || {};
-      presets = [];
-      for (let i = 0; i < 4; i++) {
-        presets.push(Object.assign({ enabled: false, model: '', effort: '' }, (info.presets || [])[i]));
+      const presets = (info.presets || []).filter((preset) => preset.enabled);
+      presetModels = new Set(presets.map((preset) => preset.model));
+      // Records saved before the pane had a per-model effort keep it on their preset instead.
+      for (const preset of presets) {
+        if (preset.model in models && !pref(preset.model).effort) pref(preset.model).effort = preset.effort;
       }
-      defaultPreset = info.defaultPreset || 0;
+      const chosen = (info.presets || [])[info.defaultPreset || 0];
+      defaultModel = chosen && chosen.enabled ? chosen.model : '';
       renderModels();
-      renderPresets();
       document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
       note('');
     }
 
     function pref(model) {
-      return (prefs[model] = prefs[model] || { on: true, alias: '' });
+      return (prefs[model] = prefs[model] || { on: true, alias: '', effort: '' });
     }
 
-    // One row per model the CLI offers: its id, its effort levels, the checkbox that decides
-    // whether it shows up in the footer's picker at all, and the display name to use instead
-    // of the id. Switching a model off can strand a preset, so the presets are redrawn with it.
+    // One column per model the CLI offers, headed by its Anthropic name (the id on hover). Down
+    // each column: whether it shows up in the footer's picker at all, whether it is a preset, the
+    // display name to use instead of the id, and the effort its preset runs at. A hidden model
+    // cannot be a preset.
     function renderModels() {
       const table = document.getElementById('models');
       table.replaceChildren();
+      const ids = Object.keys(models);
       const head = table.insertRow();
-      for (const label of ['Model', 'Effort levels', 'Show', 'Alias']) {
-        const cell = document.createElement('th');
-        cell.textContent = label;
-        head.appendChild(cell);
+      head.appendChild(document.createElement('th'));
+      for (const model of ids) {
+        const th = document.createElement('th');
+        // "Opus 5.5 with 1M context" reads "Opus 5.5 1M"; anything still long wraps.
+        th.textContent = (names[model] || model).replace(/ with ([^ ]+) context$/, ' $1');
+        th.title = [names[model], model].filter(Boolean).join('\\n');
+        head.appendChild(th);
       }
-      for (const [model, efforts] of Object.entries(models)) {
-        const row = table.insertRow();
-        row.insertCell().textContent = model;
-        row.insertCell().textContent = efforts.length ? efforts.join(', ') : 'no effort levels';
-        const check = document.createElement('input');
-        check.type = 'checkbox';
-        check.checked = pref(model).on !== false;
-        check.addEventListener('change', () => { pref(model).on = check.checked; renderPresets(); unsaved(); });
-        row.insertCell().appendChild(check);
+      const row = (label, cell) => {
+        const tr = table.insertRow();
+        const th = document.createElement('th');
+        th.textContent = label;
+        tr.appendChild(th);
+        for (const model of ids) {
+          const td = tr.insertCell();
+          const content = cell(model, models[model]);
+          if (typeof content === 'string') td.textContent = content; else td.appendChild(content);
+        }
+      };
+      row('Show', (model) => {
+        const check = checkbox(pref(model).on !== false);
+        check.addEventListener('change', () => { pref(model).on = check.checked; renderModels(); unsaved(); });
+        return check;
+      });
+      row('Preset', (model) => {
+        const check = checkbox(presetModels.has(model) && pref(model).on !== false);
+        check.disabled = pref(model).on === false;
+        check.addEventListener('change', () => {
+          if (check.checked) presetModels.add(model); else presetModels.delete(model);
+          renderDefault();
+          unsaved();
+        });
+        return check;
+      });
+      row('Alias', (model) => {
         const alias = document.createElement('input');
         alias.type = 'text';
         alias.value = pref(model).alias || '';
         alias.placeholder = model;
-        alias.addEventListener('input', () => { pref(model).alias = alias.value; renderPresets(); unsaved(); });
-        row.insertCell().appendChild(alias);
-      }
+        alias.addEventListener('input', () => { pref(model).alias = alias.value; renderDefault(); unsaved(); });
+        return alias;
+      });
+      row('Effort', (model, efforts) => {
+        const effort = document.createElement('select');
+        effort.disabled = efforts.length === 0;
+        pref(model).effort = efforts.includes(pref(model).effort) ? pref(model).effort : efforts[0] || '';
+        for (const value of efforts) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          option.selected = value === pref(model).effort;
+          effort.appendChild(option);
+        }
+        effort.addEventListener('change', () => { pref(model).effort = effort.value; renderDefault(); unsaved(); });
+        return effort;
+      });
+      renderDefault();
     }
 
-    function shownModels() {
-      return Object.keys(models).filter((model) => pref(model).on !== false);
+    function checkbox(checked) {
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = checked;
+      return check;
+    }
+
+    // The presets as saved: every shown model with its Preset box checked, at its own effort.
+    function presetList() {
+      return Object.keys(models)
+        .filter((model) => presetModels.has(model) && pref(model).on !== false)
+        .map((model) => ({ enabled: true, model, effort: pref(model).effort || '' }));
     }
 
     function label(model) {
       return (prefs[model] || {}).alias || model;
     }
 
-    // A preset can only be on while it names a model that is both still listed and shown, so
-    // one whose model went away or got switched off comes up off and cannot be switched back.
-    function renderPresets() {
-      const box = document.getElementById('presets');
-      box.replaceChildren();
-      const shown = shownModels();
-      for (const preset of presets) {
-        const usable = shown.includes(preset.model);
-        if (!usable) {
-          preset.enabled = false;
-        }
-        const row = document.createElement('div');
-        row.className = 'preset';
-        const check = document.createElement('input');
-        check.type = 'checkbox';
-        check.checked = preset.enabled;
-        check.disabled = !usable;
-        const model = document.createElement('select');
-        const effort = document.createElement('select');
-        fill(model, shown, preset.model || shown[0] || '', label);
-        preset.model = model.value;
-        fillEffort(model, effort, preset.effort);
-        preset.effort = effort.value;
-        check.addEventListener('change', () => { preset.enabled = check.checked; renderPresets(); unsaved(); });
-        model.addEventListener('change', () => {
-          preset.model = model.value;
-          fillEffort(model, effort, effort.value);
-          preset.effort = effort.value;
-          renderPresets();
-          unsaved();
-        });
-        effort.addEventListener('change', () => { preset.effort = effort.value; renderPresets(); unsaved(); });
-        row.append(check, model, effort);
-        box.appendChild(row);
-      }
-      renderDefault();
-    }
-
-    // Only presets that are on can be the new-session default. One that got switched off hands
-    // the job to the first that is on -- the same fallback the extension applies.
+    // Only presets can be the new-session default. One that got switched off hands the job to
+    // the first preset left.
     function renderDefault() {
       const select = document.getElementById('default');
       select.replaceChildren();
-      const on = presets.map((preset, index) => index).filter((index) => presets[index].enabled);
-      if (!on.includes(defaultPreset)) defaultPreset = on.length ? on[0] : 0;
-      for (const index of on) {
+      const presets = presetList();
+      if (!presets.some((preset) => preset.model === defaultModel)) defaultModel = presets.length ? presets[0].model : '';
+      for (const preset of presets) {
         const option = document.createElement('option');
-        option.value = String(index);
-        option.textContent = [label(presets[index].model), presets[index].effort].filter(Boolean).join(' / ');
-        option.selected = index === defaultPreset;
+        option.value = preset.model;
+        option.textContent = [label(preset.model), preset.effort].filter(Boolean).join(' / ');
+        option.selected = preset.model === defaultModel;
         select.appendChild(option);
       }
     }
 
-    // A preset's saved model stays selectable even when the list no longer has it -- or no
-    // longer shows it -- so a stranded preset still says which model it was pointed at.
-    function fill(select, values, selected, label) {
-      select.replaceChildren();
-      for (const value of values.includes(selected) ? values : [...values, selected]) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label ? label(value) : value;
-        option.selected = value === selected;
-        select.appendChild(option);
-      }
-    }
-
-    // The same rule as the footer: the model's own levels, every level for a model no longer
-    // listed, and nothing for a model that takes none.
-    function fillEffort(model, effort, selected) {
-      const list = models[model.value] || [...new Set(Object.values(models).flat())];
-      if (list.length === 0) {
-        effort.replaceChildren();
-        return;
-      }
-      fill(effort, list, list.includes(selected) ? selected : list[0]);
-    }
-
-    // The one Save writes both boxes: the per-model choices and the presets picked from them.
+    // The one Save writes the per-model choices and the presets picked from them.
     async function save() {
+      const presets = presetList();
+      const defaultPreset = presets.findIndex((preset) => preset.model === defaultModel);
       const reply = await request('savePresets', { presets, prefs, defaultPreset });
       note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
     }

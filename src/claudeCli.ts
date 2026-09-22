@@ -516,20 +516,23 @@ export class ClaudeCliRunner {
 
   // Asks the CLI which models this account can use and each one's effort levels: the same
   // initialize handshake the Agent SDK sends, answered without starting a turn.
-  public async listModels(workspacePath: string): Promise<ModelMap> {
+  // Each model's Anthropic name is its description up to the " · ", e.g. "Sonnet 5".
+  public async listModels(workspacePath: string): Promise<{ models: ModelMap; names: Record<string, string> }> {
     const request = JSON.stringify({ type: "control_request", request_id: "models", request: { subtype: "initialize" } });
     const output = await collectProcess("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], workspacePath, 30000, request + "\n");
     for (const line of output.split("\n")) {
-      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown; supportedEffortLevels?: unknown }[] } } }) : undefined;
+      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown; supportedEffortLevels?: unknown; description?: unknown }[] } } }) : undefined;
       const models: ModelMap = {};
+      const names: Record<string, string> = {};
       for (const model of parsed?.response?.response?.models ?? []) {
         const value = stringOf(model.value);
         if (value && value !== "default") {
           models[value] = Array.isArray(model.supportedEffortLevels) ? model.supportedEffortLevels.map(stringOf).filter(Boolean) : [];
+          names[value] = stringOf(model.description).split(" · ")[0].trim();
         }
       }
       if (Object.keys(models).length > 0) {
-        return models;
+        return { models, names };
       }
     }
     throw new Error("the CLI returned no model list.");

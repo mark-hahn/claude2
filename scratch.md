@@ -1,4 +1,15 @@
 
+in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
+
+in the quota pane the graph axis labels are too big, the should match rest of text in pane
+
 # models pane changes
 - remove the presets boxes
 - in each model row of the model list:
@@ -13,24 +24,6 @@
   - the table should be flipped so the possible models are the columns
     - the table rows should be all the elements that were listed in a model row
     - the first row should be the list of possible efforts for the model
-
-# answers to questions left for me
-1. already handled
-2. 
-
-
-
-
-in the quota pane the graph axis labels are too big, the should match rest of text in pane
-
-in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 # changes to conversation boxes
 - in all boxes at any time the raw response text should never be shown 
