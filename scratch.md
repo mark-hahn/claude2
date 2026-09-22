@@ -1,10 +1,6 @@
 
 
 
-in the footer:
-  - 
-
-
 ???????
 too many bars above block
 show path to folder this is running in
