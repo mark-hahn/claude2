@@ -37,6 +37,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
     #close { width: 56px; }
+    #fork { width: 47px; }
     #trash { width: 56px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
@@ -71,11 +72,12 @@ ${tooltipStyle()}  </style>
         <button id="quota" title="Quota">$</button>
         <button id="instructions" title="Instructions">Instr</button>
         <button id="plugins" title="Plugin stats and controls for every project">Stats</button>
+        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
       <div class="row">
         <button id="new" title="New Claude2 session">+</button>
-        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
+        <button id="fork" title="Fork here: copy the session, then drop every block below the selected one" disabled>Fork</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
         <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
       </div>
@@ -112,6 +114,9 @@ ${tooltipScript()}
     document.getElementById('plugins').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'openPane', pane: 'plugins' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
+    // Forks the pane that is up front; the fork itself is decided over there, where the
+    // selected block lives, so this only has to name the session.
+    document.getElementById('fork').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'forkActive', sessionId: selectedId }); });
     trashButton.addEventListener('click', (event) => {
       // Ctrl-click is the bulk action for whichever list is showing: on the active list
       // everything goes to the trash at once, on the trash list everything in it is
@@ -163,6 +168,9 @@ ${tooltipScript()}
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
         // Close has nothing to close with no Claude2 pane up.
         document.getElementById('close').disabled = message.panesOpen !== true;
+        // Nothing to fork without a pane up front showing a session with runs in it.
+        const selected = sessions.find((session) => session.id === selectedId);
+        document.getElementById('fork').disabled = !selected || !(selected.turns || []).length;
         if (editingId) {
           pendingRender = true;
           return;
@@ -515,7 +523,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="fork" title="Fork here: copy the session, then drop every block below the selected one">Fork</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
         </div>
       </div>
     </div>
@@ -580,7 +588,6 @@ ${tooltipScript()}
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
-    const forkButton = document.getElementById('fork');
     const bottomButton = document.getElementById('bottom');
     const loadButton = document.getElementById('load');
     const capButton = document.getElementById('cap');
@@ -633,10 +640,14 @@ ${tooltipScript()}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
+      } else if (message.type === 'forkSelected') {
+        forkSelectedBlock();
       } else if (message.type === 'imagesState') {
         imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
         syncImagePrefix();
+      } else if (message.type === 'insertFile') {
+        insertFileTag(message.name);
       }
     });
 
@@ -676,15 +687,23 @@ ${tooltipScript()}
     // shows it in the Image pane, ctrl deletes it (the extension asks first).
     promptBox.addEventListener('click', (event) => {
       const index = imageCharAt(event);
-      if (index < 0) return;
-      vscode.postMessage(event.ctrlKey ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
+      if (index >= 0) {
+        vscode.postMessage(event.ctrlKey ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
+        return;
+      }
+      // A file tag is plain text, so the caret the click just set says which one was hit. Only
+      // ctrl does anything: a tag has nothing to show, it can only be taken back off.
+      if (event.ctrlKey) removeFileTag(promptBox.selectionStart);
+    });
+    // The 🖼️ chars are clickable, so the pointer says so over them.
+    promptBox.addEventListener('mousemove', (event) => {
+      promptBox.style.cursor = imageCharAt(event, true) < 0 ? '' : 'pointer';
     });
     stopButton.addEventListener('click', () => {
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
     document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
-    forkButton.addEventListener('click', forkSelectedBlock);
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
     document.getElementById('cap').addEventListener('click', (event) => {
       // Every click takes another picture and adds it to the ones already waiting. The button
@@ -694,6 +713,7 @@ ${tooltipScript()}
       // Ctrl-click leaves the window up, for a picture of the window itself.
       vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey !== true });
     });
+    document.getElementById('file').addEventListener('click', () => vscode.postMessage({ type: 'pickFile', sessionId }));
     // Manual scrolling never changes the selection; it is free only inside the window the
     // auto-scrolling rules allow (bordering bars and selected bar visible), so the scroll
     // position is clamped rather than the selection moved.
@@ -772,14 +792,51 @@ ${tooltipScript()}
       promptBox.setSelectionRange(at, at);
     }
 
+    // An attached file rides in the text as a <name> tag rather than in a prefix of its own: the
+    // draft carries it for free, and the extension turns each tag back into a path on the way out.
+    // New tags lead the typing, after any 🖼️ chars, the way another picture would.
+    function insertFileTag(name) {
+      if (!name) return;
+      promptBox.value = IMG.repeat(imageCount) + '<' + name + '> ' + stripImagePrefix(promptBox.value);
+      promptBox.setSelectionRange(promptBox.value.length, promptBox.value.length);
+      promptBox.focus();
+      sendDraft('draftChanged');
+    }
+
+    // Takes off the tag the caret sits in, with the space that follows it. A '<' the user typed
+    // is only ever a tag to the extension if it matches an attached file, so cutting one here
+    // that turns out to be plain typing costs nothing beyond the retype.
+    function removeFileTag(caret) {
+      const text = promptBox.value;
+      const start = text.lastIndexOf('<', caret);
+      if (start < 0) return;
+      const end = text.indexOf('>', start);
+      // The caret has to be inside the tag -- ending on its '>' counts -- and a newline in
+      // between means these two brackets were never one tag.
+      if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return;
+      const cut = text[end + 1] === ' ' ? end + 2 : end + 1;
+      promptBox.value = text.slice(0, start) + text.slice(cut);
+      promptBox.setSelectionRange(start, start);
+      sendDraft('draftChanged');
+    }
+
     // Which 🖼️ char the pointer came down on, or -1 for a click anywhere else. The caret cannot
     // answer this -- it lands on the boundary between two chars, so a click on either side of one
     // gives the same offset -- so the x position decides, against a width measured in the box's
     // own font. The caret is still worth asking whether the click was in the prefix at all.
-    function imageCharAt(event) {
-      if (!imageCount || promptBox.selectionStart > imageCount * IMG.length) return -1;
+    function imageCharAt(event, hover) {
+      if (!imageCount) return -1;
       const style = getComputedStyle(promptBox);
-      const left = promptBox.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+      const box = promptBox.getBoundingClientRect();
+      // A hover has no caret to ask -- moving the mouse does not move it -- so the first line,
+      // the only one the prefix can be on, is decided by y instead.
+      if (hover) {
+        const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop) - promptBox.scrollTop;
+        if (event.clientY < top || event.clientY > top + parseFloat(style.lineHeight)) return -1;
+      } else if (promptBox.selectionStart > imageCount * IMG.length) {
+        return -1;
+      }
+      const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
       const index = Math.floor((event.clientX - left) / imageCharWidth(style.font));
       return index >= 0 && index < imageCount ? index : -1;
     }
@@ -803,7 +860,9 @@ ${tooltipScript()}
     // how the CLI reads each picture, so they stay in what was sent; they are just not what the
     // user typed, and a prompt bar shows the typing with 🖼️ chars in front of it.
     function typedText(turn) {
-      return (turn.prompt || '').replace(/\\n\\n\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '');
+      return (turn.prompt || '')
+        .replace(/\\n\\n\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '')
+        .replace(/\\n\\n\\[<[^>\\n]*> is the file [^\\]]*\\]/g, '');
     }
 
     // The turn a stop has been asked for, so the Stop button can show that the request is in
@@ -1091,7 +1150,6 @@ ${tooltipScript()}
         stopButton.classList.remove('stopping');
       }
       bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
-      forkButton.disabled = !turns.length;
       loadButton.disabled = !turns.length;
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
       // still pinned to the bottom when it was there (how a streaming box follows its text).

@@ -85,6 +85,10 @@ class Claude2Controller implements vscode.Disposable {
   // Pictures waiting on each session's next prompt, in the order their 🖼️ chars read. Every
   // Cap click and every image pasted into the prompt box adds one; submitting takes the lot.
   private readonly pendingImages = new Map<string, PendingImage[]>();
+  // Files attached to each session's next prompt, keyed by the <name> tag standing for them in the
+  // prompt box. Unlike pictures these are never copied or persisted: the file stays where it is and
+  // the CLI reads it from the path, so nothing survives a window reload but the tag in the draft.
+  private readonly pendingFiles = new Map<string, { name: string; path: string }[]>();
   // Which picture the Image pane is showing: an entry of `pendingImages` when turnId is null,
   // otherwise one already submitted with that turn -- those are shown but never edited.
   private paneImage: { sessionId: string; turnId: string | null; index: number } | null = null;
@@ -283,6 +287,9 @@ class Claude2Controller implements vscode.Disposable {
         return;
       }
       await this.deleteSession(sessionId);
+    } else if (type === "forkActive") {
+      // The pane holds the selection, so it decides which block the fork cuts at.
+      void this.conversationPanels.get(requestedSessionId)?.webview.postMessage({ type: "forkSelected" });
     } else if (type === "searchChanged") {
       this.setSearch(stringOf(record?.text));
     } else if (type === "login") {
@@ -509,6 +516,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.pasteImage(sessionId, stringOf(record?.dataUri));
     } else if (type === "showImage") {
       await this.showImage(sessionId, stringOf(record?.turnId) || null, numberOf(record?.index));
+    } else if (type === "pickFile") {
+      await this.pickFile(sessionId);
     } else if (type === "deleteImage") {
       await this.deleteImage(sessionId, numberOf(record?.index));
     } else if (type === "submitPrompt") {
@@ -627,6 +636,51 @@ class Claude2Controller implements vscode.Disposable {
       void vscode.window.showErrorMessage(`Could not read the pasted image: ${errorMessage(error)}`);
       this.postImages(sessionId);
     }
+  }
+
+  // The File button's picker: the workspace's own files in a quick pick, with one entry that falls
+  // through to the file dialog for anything outside it. Both list whatever filesystem the extension
+  // host runs on -- the WSL or SSH side -- which is the side the CLI reads the path from too.
+  private async pickFile(sessionId: string): Promise<void> {
+    const browse = "Browse…";
+    const uris = await vscode.workspace.findFiles("**/*", "**/{node_modules,.git}/**", 5000);
+    const paths = new Map(uris.map((uri) => [vscode.workspace.asRelativePath(uri, false), uri.fsPath]));
+    const picked = await vscode.window.showQuickPick([browse, ...[...paths.keys()].sort()], {
+      placeHolder: "File to attach to the prompt",
+    });
+    if (!picked) {
+      return;
+    }
+    let file = paths.get(picked);
+    if (picked === browse) {
+      // Deliberately not a recursive listing of anywhere outside the workspace: over WSL a glob
+      // across /mnt/c crawls, so the dialog browses a directory at a time instead.
+      const chosen = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: "Attach" });
+      file = chosen?.[0]?.fsPath;
+    }
+    if (!file) {
+      return;
+    }
+    // A picture picked here is a picture, not a file reference: it goes the way a pasted one does,
+    // so it gets a 🖼️ char, the Image pane, and a place in the turn's record. The tag route would
+    // reach the model just the same, and leave none of that behind.
+    if (IMAGE_FILES.test(file)) {
+      await this.addImage(sessionId, "paste", file);
+      return;
+    }
+    const files = this.pendingFiles.get(sessionId) ?? [];
+    const base = path.basename(file, path.extname(file));
+    let name = base;
+    // Two files can share a base name, and a tag has to name exactly one path, so the second
+    // one attached under a name already spoken for gets counted instead.
+    for (let n = 2; files.some((entry) => entry.name === name && entry.path !== file); n += 1) {
+      name = `${base} ${n}`;
+    }
+    if (!files.some((entry) => entry.name === name)) {
+      files.push({ name, path: file });
+      this.pendingFiles.set(sessionId, files);
+    }
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "insertFile", name });
   }
 
   // A picture from either source joins the end of the session's list and is shown at once. The
@@ -968,6 +1022,17 @@ class Claude2Controller implements vscode.Disposable {
       if (this.paneImage?.sessionId === sessionId && this.paneImage.turnId === null) {
         this.paneImage = { sessionId, turnId, index: Math.min(this.paneImage.index, images.length - 1) };
         void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
+      }
+    }
+    // Attached files leave with this prompt too, but only the ones whose tag is still in the text:
+    // taking a tag back off the box is the whole of how a file is unattached, so a tag that is
+    // gone means the file is not coming. The tags themselves stay in, and read in the prompt bar.
+    const attached = this.pendingFiles.get(sessionId) ?? [];
+    if (attached.length) {
+      this.pendingFiles.delete(sessionId);
+      const sent = attached.filter((file) => prompt.includes(`<${file.name}>`));
+      if (sent.length) {
+        prompt = `${prompt}\n\n${sent.map((file) => fileNote(file)).join("\n\n")}`;
       }
     }
     const defaults = this.conversationDefaults(sessionId);
@@ -1736,6 +1801,16 @@ function imageNote(image: PromptImage): string {
     ? `[A screenshot of the user's desktop is attached. Read the image file ${image.path} to view it.]`
     : `[An image is attached. Read the image file ${image.path} to view it.]`;
 }
+
+// The sentence appended for one attached file, the counterpart of imageNote: the <name> tag in the
+// prompt is only a label, and this is what tells the CLI which path it stands for.
+function fileNote(file: { name: string; path: string }): string {
+  return `[<${file.name}> is the file ${file.path}. Read that file to see it.]`;
+}
+
+// The extensions mediaTypeOf knows how to name. Anything else picked with the File button is
+// attached as a file rather than as a picture.
+const IMAGE_FILES = /\.(png|jpe?g|gif|webp)$/i;
 
 function mediaTypeOf(file: string): string {
   const extension = path.extname(file).toLowerCase();

@@ -1,8 +1,28 @@
 
-change cursor to pointer over image char
+if i select an image file will that be treated like an image pasted into prompt editor
 
-add a `File` button
-move fork to after +
+# adding files to a prompt
+- i want to add files to a prompt just like images
+- add a `File` button to the nav row to the right of the cap button
+  - when clicked use the split choosing suggested above to choose file
+- file is added to the prompt with `<filename> ` prepended to the prompt text
+  - `<filename> ` is the final part of the file path without the extension surrounded by angle brackets
+    - like "/mnt/book.txt" -> "<book>" where < and > are included chars
+  - <filename> in the prompt box is similar to the image char for images
+    - but you can't click it to view it
+    - you can ctrl-click it to remove it from the prompt
+- prompt text added to the prompt bar is the same as what was in the edit box like text with images
+- file does not need to be persisted like images
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
+
+change cursor to pointer over image char in prompt editor box
+move fork button to sidebar after the + button
 move the close button in the sidebar to the right of the stats button
 
 # multiple images in a prompt
@@ -50,14 +70,6 @@ move the close button in the sidebar to the right of the stats button
 3. use stated default
 
 - if you need to correct me because i'm wrong stop and let me know
-
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 change the label of the plugins button to `Stats`
 
