@@ -13,12 +13,21 @@ export interface Preset {
   effort: string;
 }
 
+// Per-model UI choices from the Models pane: `on` false hides the model everywhere, `alias`
+// is a display-only name shown instead of the model id. A model with no entry is on, unaliased.
+export interface ModelPref {
+  on: boolean;
+  alias: string;
+}
+export type ModelPrefs = Record<string, ModelPref>;
+
 // What the CLI offers on this host, the presets picked from it, when the model list last
 // changed, and the last change anyone looked at in the Models pane. `date > seenDate` is the
 // update notification.
 export interface ModelInfo {
   models: ModelMap;
   presets: Preset[];
+  prefs: ModelPrefs;
   date: number;
   seenDate: number;
 }
@@ -40,12 +49,15 @@ const seed: ModelInfo = {
     { enabled: false, model: "sonnet", effort: "high" },
     { enabled: false, model: "haiku", effort: "" },
   ],
+  prefs: {},
   date: seedDate,
   seenDate: seedDate,
 };
 
 export function readModelInfo(state: vscode.Memento): ModelInfo {
-  return state.get<ModelInfo>(infoKey) ?? seed;
+  const info = state.get<ModelInfo>(infoKey) ?? seed;
+  // Records written before the Models pane had per-model choices carry no `prefs`.
+  return info.prefs ? info : { ...info, prefs: {} };
 }
 
 export async function writeModelInfo(state: vscode.Memento, info: ModelInfo): Promise<void> {
@@ -63,6 +75,23 @@ export function presetsOf(value: unknown): Preset[] {
     const record = (row ?? {}) as Record<string, unknown>;
     return { enabled: record.enabled === true, model: String(record.model ?? ""), effort: String(record.effort ?? "") };
   });
+}
+
+// A preset can only stay on while its model is still listed and still enabled; the pane and
+// the CLI's list both change under it, so both writers run this.
+export function prunePresets(presets: Preset[], prefs: ModelPrefs, models: ModelMap): Preset[] {
+  return presets.map((preset) => (preset.model in models && prefs[preset.model]?.on !== false ? preset : { ...preset, enabled: false }));
+}
+
+// Only entries for models the CLI still lists, each field forced to a boolean or string.
+export function prefsOf(value: unknown, models: ModelMap): ModelPrefs {
+  const rows = Object.entries((value ?? {}) as Record<string, unknown>).filter(([model]) => model in models);
+  return Object.fromEntries(
+    rows.map(([model, pref]) => {
+      const record = (pref ?? {}) as Record<string, unknown>;
+      return [model, { on: record.on !== false, alias: String(record.alias ?? "") }];
+    }),
+  );
 }
 
 const lockFile = path.join(os.tmpdir(), "claude2-update.lock");

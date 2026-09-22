@@ -3,6 +3,31 @@ the graph axis labels are too big, the should match rest of text in pane
 
 show worst of 5h, 7d, and 7d fable usage % in footer
 
+show markdown while streaming
+
+currently the model selector in the footer has a hard-wired list -- could the list be obtained from cli
+
+in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
+
+- in models pane for each model in the list add a checkbox and an text input
+- the checkbox enables the model to be in the model selector in the footer
+  - if unchecked it is hidden everywhere
+- text in the input box is an alias for the model to be used instead of the actual model name in the ui
+  - it is for display only
+  - i think it is just used in model selector and in prompt bar tooltip
+- this model data is saved along with the preset data
+  - it shares one save button for both
+- the presets choices and the model choices might conflict
+  - the model selected for a preset must be an enabled model
+  - disable any presets that have a disabled or missing model
+
 # updated management pane and new model updates
 - this replaces the current logic for claude updates, MODEL_OPTIONS, and EFFORT_OPTIONS 
 
@@ -79,23 +104,6 @@ show worst of 5h, 7d, and 7d fable usage % in footer
   - write the problems to claude2-mngmnt-problems.md and stop
   - make no changes other than writing to claude2-mngmnt-problems.md
 - otherwise implement these instructions immediately
-
-
-
-show markdown while streaming
-
-currently the model selector in the footer has a hard-wired list -- could the list be obtained from cli
-
-in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
-
-i have an idea to automatically 
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 if i select an image file will that be treated like an image pasted into prompt editor
 

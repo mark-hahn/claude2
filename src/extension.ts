@@ -10,7 +10,7 @@ import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { presetsOf, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
+import { prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
 import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
@@ -332,7 +332,8 @@ class Claude2Controller implements vscode.Disposable {
       const models = await this.runner.listModels(this.workspacePath());
       const info = readModelInfo(this.context.globalState);
       if (!sameModels(info.models, models)) {
-        await writeModelInfo(this.context.globalState, { ...info, models, date: Date.now() });
+        // A model that just left the list takes any preset naming it off with it.
+        await writeModelInfo(this.context.globalState, { ...info, models, presets: prunePresets(info.presets, info.prefs, models), date: Date.now() });
       }
     } catch (error) {
       warn("model check", error);
@@ -367,7 +368,7 @@ class Claude2Controller implements vscode.Disposable {
   private postModelInfo(): void {
     const info = readModelInfo(this.context.globalState);
     for (const panel of this.conversationPanels.values()) {
-      void panel.webview.postMessage({ type: "models", models: info.models, presets: info.presets });
+      void panel.webview.postMessage({ type: "models", models: info.models, presets: info.presets, prefs: info.prefs });
     }
     void this.managementPanel?.webview.postMessage({ type: "modelsAlert", on: this.modelsAlert() });
     this.refreshSidebar();
@@ -494,7 +495,7 @@ class Claude2Controller implements vscode.Disposable {
         retainContextWhenHidden: true,
       });
       const info = readModelInfo(this.context.globalState);
-      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), info.models, info.presets, this.zoomOf("conversation"));
+      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
       panel.onDidChangeViewState(() => {
         if (panel?.active) {
@@ -1638,7 +1639,11 @@ class Claude2Controller implements vscode.Disposable {
       this.postModelInfo();
       await this.reply(requestId, async () => info);
     } else if (type === "savePresets") {
-      await writeModelInfo(this.context.globalState, { ...readModelInfo(this.context.globalState), presets: presetsOf(record?.presets) });
+      // One Save covers both boxes: the per-model choices and the presets picked from them.
+      const stored = readModelInfo(this.context.globalState);
+      const prefs = prefsOf(record?.prefs, stored.models);
+      const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
+      await writeModelInfo(this.context.globalState, { ...stored, presets, prefs });
       this.postModelInfo();
       await this.reply(requestId, async () => readModelInfo(this.context.globalState));
     } else if (type === "loadInstructions") {

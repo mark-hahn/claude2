@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { ModelMap, Preset } from "./modelInfo";
+import type { ModelInfo } from "./modelInfo";
 import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "cap";
@@ -402,11 +402,12 @@ ${tooltipScript()}
 </html>`;
 }
 
-export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, modelMap: ModelMap, presetList: Preset[], zoom = 1): string {
+export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, info: ModelInfo, zoom = 1): string {
   const nonce = getNonce();
   const z = zoomFactor(zoom);
-  const models = JSON.stringify(modelMap);
-  const presets = JSON.stringify(presetList);
+  const models = JSON.stringify(info.models);
+  const presets = JSON.stringify(info.presets);
+  const prefs = JSON.stringify(info.prefs);
   const safeSessionId = JSON.stringify(sessionId);
   const defaultModel = JSON.stringify(defaults.model || DEFAULT_MODEL);
   const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
@@ -537,6 +538,11 @@ ${tooltipScript()}
     // replaced whenever the extension posts a newer copy.
     let models = ${models};
     let presets = ${presets};
+    // Per-model choices from the Models pane: a model switched off is left out of the picker,
+    // and an alias is shown in its place wherever a model id would read.
+    let prefs = ${prefs};
+    const modelLabel = (model) => (prefs[model] || {}).alias || model;
+    const pickableModels = () => Object.keys(models).filter((model) => (prefs[model] || {}).on !== false);
     const fallbackEffort = ${JSON.stringify(DEFAULT_EFFORT)};
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
@@ -598,7 +604,7 @@ ${tooltipScript()}
     const finish = document.getElementById('finish');
     const cycleButton = document.getElementById('cycle');
 
-    fillSelect(modelSelect, Object.keys(models), defaultModel);
+    fillSelect(modelSelect, pickableModels(), defaultModel, modelLabel);
     fillEfforts(defaultEffort);
     // The pickers belong to the session, not the panel: every change is written back so
     // reopening this session later comes up on the same model and effort.
@@ -648,7 +654,8 @@ ${tooltipScript()}
       } else if (message.type === 'models' && message.models && typeof message.models === 'object') {
         models = message.models;
         presets = Array.isArray(message.presets) ? message.presets : presets;
-        fillSelect(modelSelect, Object.keys(models), modelSelect.value);
+        prefs = message.prefs && typeof message.prefs === 'object' ? message.prefs : prefs;
+        fillSelect(modelSelect, pickableModels(), modelSelect.value, modelLabel);
         fillEfforts(effortSelect.value);
       }
     });
@@ -737,13 +744,13 @@ ${tooltipScript()}
       }, 80);
     });
 
-    function fillSelect(select, values, selected) {
+    function fillSelect(select, values, selected, label) {
       select.replaceChildren();
       // A session's saved pick stays selectable even when the current list no longer has it.
       for (const value of values.includes(selected) ? values : [...values, selected]) {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value;
+        option.textContent = label ? label(value) : value;
         option.selected = value === selected;
         select.appendChild(option);
       }
@@ -769,19 +776,18 @@ ${tooltipScript()}
     // Step to the next enabled preset (set in the Models pane). A pairing set by hand through the
     // pickers matches none of them, so findIndex gives -1 and the first is where the click lands.
     function cyclePicks() {
-      const enabled = presets.filter((preset) => preset.enabled && preset.model);
+      const enabled = presets.filter((preset) => preset.enabled && pickableModels().includes(preset.model));
       if (enabled.length === 0) return;
       const at = enabled.findIndex((preset) => preset.model === modelSelect.value && preset.effort === effortSelect.value);
       const next = enabled[(at + 1) % enabled.length];
-      // The preset may name a model the CLI's list lacks; fillSelect keeps it selectable.
-      fillSelect(modelSelect, Object.keys(models), next.model);
+      fillSelect(modelSelect, pickableModels(), next.model, modelLabel);
       fillEfforts(next.effort);
       sendPicks();
     }
 
     // The letter says nothing about what is selected, so the hover does.
     function describePicks() {
-      cycleButton.title = modelSelect.value + ' / ' + effortSelect.value + ' — click for the next preset';
+      cycleButton.title = modelLabel(modelSelect.value) + ' / ' + effortSelect.value + ' — click for the next preset';
     }
 
     function sendDraft(type) {
@@ -1191,7 +1197,7 @@ ${tooltipScript()}
           if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
           // The hover leads with the model and effort this prompt actually ran under, which is not
           // necessarily what the dock is set to now.
-          const ranAs = [turn.model, turn.effort].filter(Boolean).join(' / ');
+          const ranAs = [turn.model && modelLabel(turn.model), turn.effort].filter(Boolean).join(' / ');
           const typed = typedText(turn);
           bar.title = ranAs ? ranAs + '\\n' + typed : typed;
           // One 🖼️ char per picture this prompt was sent with, reading the same as the prompt
@@ -1630,7 +1636,9 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     table { border-collapse: collapse; margin-bottom: 8px; }
     td { padding: 3px 24px 3px 0; }
     .preset { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
-    .preset input { width: 18px; height: 18px; margin: 0; }
+    .preset input[type=checkbox], #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
+    #models input[type=text] { font: inherit; color: var(--ink); width: 14em; padding: 2px 6px; }
+    #models th { text-align: left; font-weight: 600; padding: 3px 24px 3px 0; }
     select { font: inherit; color: var(--ink); min-width: 14em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 ${tabsStyle()}  </style>
@@ -1647,6 +1655,8 @@ ${tabsScript()}
 ${zoomScript(z)}
     const pending = new Map();
     let models = {};
+    let prefs = {};
+    let presets = [];
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -1672,43 +1682,104 @@ ${zoomScript(z)}
       }
       const info = reply.payload;
       models = info.models || {};
+      prefs = info.prefs || {};
+      presets = [];
+      for (let i = 0; i < 4; i++) {
+        presets.push(Object.assign({ enabled: false, model: '', effort: '' }, (info.presets || [])[i]));
+      }
+      renderModels();
+      renderPresets();
+      document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
+      note('');
+    }
+
+    function pref(model) {
+      return (prefs[model] = prefs[model] || { on: true, alias: '' });
+    }
+
+    // One row per model the CLI offers: its id, its effort levels, the checkbox that decides
+    // whether it shows up in the footer's picker at all, and the display name to use instead
+    // of the id. Switching a model off can strand a preset, so the presets are redrawn with it.
+    function renderModels() {
       const table = document.getElementById('models');
       table.replaceChildren();
+      const head = table.insertRow();
+      for (const label of ['Model', 'Effort levels', 'Show', 'Alias']) {
+        const cell = document.createElement('th');
+        cell.textContent = label;
+        head.appendChild(cell);
+      }
       for (const [model, efforts] of Object.entries(models)) {
         const row = table.insertRow();
         row.insertCell().textContent = model;
         row.insertCell().textContent = efforts.length ? efforts.join(', ') : 'no effort levels';
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = pref(model).on !== false;
+        check.addEventListener('change', () => { pref(model).on = check.checked; renderPresets(); unsaved(); });
+        row.insertCell().appendChild(check);
+        const alias = document.createElement('input');
+        alias.type = 'text';
+        alias.value = pref(model).alias || '';
+        alias.placeholder = model;
+        alias.addEventListener('input', () => { pref(model).alias = alias.value; renderPresets(); unsaved(); });
+        row.insertCell().appendChild(alias);
       }
-      document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
+    }
+
+    function shownModels() {
+      return Object.keys(models).filter((model) => pref(model).on !== false);
+    }
+
+    function label(model) {
+      return (prefs[model] || {}).alias || model;
+    }
+
+    // A preset can only be on while it names a model that is both still listed and shown, so
+    // one whose model went away or got switched off comes up off and cannot be switched back.
+    function renderPresets() {
       const box = document.getElementById('presets');
       box.replaceChildren();
-      for (let i = 0; i < 4; i++) {
-        const preset = (info.presets || [])[i] || { enabled: false, model: '', effort: '' };
+      const shown = shownModels();
+      for (const preset of presets) {
+        const usable = shown.includes(preset.model);
+        if (!usable) {
+          preset.enabled = false;
+        }
         const row = document.createElement('div');
         row.className = 'preset';
         const check = document.createElement('input');
         check.type = 'checkbox';
         check.checked = preset.enabled;
+        check.disabled = !usable;
         const model = document.createElement('select');
         const effort = document.createElement('select');
-        fill(model, Object.keys(models), preset.model || Object.keys(models)[0] || '');
+        fill(model, shown, preset.model || shown[0] || '', label);
+        preset.model = model.value;
         fillEffort(model, effort, preset.effort);
-        check.addEventListener('change', unsaved);
-        model.addEventListener('change', () => { fillEffort(model, effort, effort.value); unsaved(); });
-        effort.addEventListener('change', unsaved);
+        preset.effort = effort.value;
+        check.addEventListener('change', () => { preset.enabled = check.checked; unsaved(); });
+        model.addEventListener('change', () => {
+          preset.model = model.value;
+          fillEffort(model, effort, effort.value);
+          preset.effort = effort.value;
+          renderPresets();
+          unsaved();
+        });
+        effort.addEventListener('change', () => { preset.effort = effort.value; unsaved(); });
         row.append(check, model, effort);
         box.appendChild(row);
       }
-      note('');
     }
 
-    // A preset's saved model stays selectable even when the list no longer has it.
-    function fill(select, values, selected) {
+    // A preset's saved model stays selectable even when the list no longer has it -- or no
+    // longer shows it -- so a stranded preset still says which model it was pointed at.
+    function fill(select, values, selected, label) {
       select.replaceChildren();
       for (const value of values.includes(selected) ? values : [...values, selected]) {
         const option = document.createElement('option');
         option.value = value;
-        option.textContent = value;
+        option.textContent = label ? label(value) : value;
         option.selected = value === selected;
         select.appendChild(option);
       }
@@ -1725,12 +1796,9 @@ ${zoomScript(z)}
       fill(effort, list, list.includes(selected) ? selected : list[0]);
     }
 
+    // The one Save writes both boxes: the per-model choices and the presets picked from them.
     async function save() {
-      const presets = [...document.querySelectorAll('.preset')].map((row) => {
-        const [check, model, effort] = row.children;
-        return { enabled: check.checked, model: model.value, effort: effort.value };
-      });
-      const reply = await request('savePresets', { presets });
+      const reply = await request('savePresets', { presets, prefs });
       note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
     }
 
