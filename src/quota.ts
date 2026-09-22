@@ -151,6 +151,9 @@ export class QuotaService {
   }
 
   public start(): void {
+    // The fleet's last reading and history, without an API call, so the footer's projection
+    // shows as soon as a pane opens instead of after the first timed read.
+    void this.ensureLoaded().then(() => this.adoptShared()).then(() => this.syncAlert(), (error) => this.log(`quota: preload failed: ${errorMessage(error)}`));
     this.schedule(5000 + Math.floor(Math.random() * 10000));
   }
 
