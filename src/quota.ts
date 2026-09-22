@@ -57,6 +57,7 @@ export class QuotaService {
   // What this window last painted. globalState is shared by every window, but only the window
   // that took the reading (or took the click) knows it changed, so the rest compare on each tick.
   private lastAlertShown = false;
+  private lastProjectedShown: number | null = null;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
@@ -80,10 +81,48 @@ export class QuotaService {
   // reading behind — within the same five minutes it would have refreshed the quota anyway.
   private syncAlert(): void {
     const now = this.alerting();
-    if (now !== this.lastAlertShown) {
+    const projected = this.projectedPct();
+    if (now !== this.lastAlertShown || projected !== this.lastProjectedShown) {
       this.lastAlertShown = now;
+      this.lastProjectedShown = projected;
       this.onAlert();
     }
+  }
+
+  // The worst plan window's projected level at its reset: used now plus the recent burn rate
+  // carried to the reset. "Recent" is the last seventh of the window (43 min of 5h, a day of 7d),
+  // read off the newest reading at or before then — rows are only kept when a value changes, so
+  // that row still holds the level of that moment. With no such row inside the current window, the
+  // whole-window average, its elapsed time floored at the lookback so a fresh window can't spike.
+  public projectedPct(): number | null {
+    const now = Date.now();
+    let worst: number | null = null;
+    for (const window of this.state.windows) {
+      if (window.pct === null || window.resetsAt === null) {
+        continue;
+      }
+      const resetMs = window.resetsAt * 1000;
+      if (resetMs <= now) {
+        continue;
+      }
+      // ponytail: the model-scoped (Fable) window is assumed weekly like 7d.
+      const lengthMs = window.key === "five" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+      const lookbackMs = lengthMs / 7;
+      const startMs = resetMs - lengthMs;
+      const field = window.key === "five" ? "five_pct" : window.key === "seven" ? "seven_pct" : "fable_pct";
+      let reference: QuotaReadingRow | null = null;
+      for (const row of this.readings) {
+        if (row.at >= startMs && row.at <= now - lookbackMs && row[field] !== null && (!reference || row.at > reference.at)) {
+          reference = row;
+        }
+      }
+      const perMs = reference
+        ? Math.max(0, window.pct - (reference[field] ?? 0)) / lookbackMs
+        : window.pct / Math.max(now - startMs, lookbackMs);
+      const projected = Math.round(window.pct + perMs * (resetMs - now));
+      worst = worst === null ? projected : Math.max(worst, projected);
+    }
+    return worst;
   }
 
   // Raises the warning only on a crossing: a window that was already at or above the line when

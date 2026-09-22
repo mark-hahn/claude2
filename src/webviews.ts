@@ -429,18 +429,18 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
   <style>
-    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; --edh: calc(63px * var(--z) + 22px); }
+    :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; --edh: calc(42px * var(--z) + 22px); }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(14px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
     .shell { height: 100vh; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
     /* Prompt editor and every control sit on one bottom dock, so the editor's bottom edge is the
        window's bottom edge; the controls stack to its right instead of below it. */
     .dock { display: flex; align-items: stretch; gap: 10px; border-top: 1px solid var(--border); background: var(--page); padding: 8px 12px; }
-    .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
+    .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
-    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; width: 10ch; flex: none; }
+    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; width: calc(11.5ch - 2px); flex: 1 0 auto; }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -476,6 +476,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
     .stats { display: flex; gap: 12px; align-items: center; margin-right: 2px; }
+    /* Both rows stretch to the wider one, so M and F line up on the left and the stats on the
+       right. Top-row slack widens the model and effort selects; bottom-row slack sits before the stats. */
+    .bar .group { flex: 1 0 auto; }
+    .footer .stats { margin-left: auto; }
     .sep { color: var(--muted); }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
@@ -524,13 +528,14 @@ ${tooltipStyle()}  </style>
     <div class="dock">
       <textarea id="prompt" spellcheck="true"></textarea>
       <div class="dock-controls">
-        <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep">|</span><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
+          <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep" id="projected-sep">|</span><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div></div>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="bottom" title="Last response">▼▼</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
+          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
     </div>
@@ -561,7 +566,7 @@ ${tooltipScript()}
     let status = null;
     // Which plugins this workspace runs with and the numbers only the extension can read:
     // graft's savings for this session, and the workspace's ponytail ceiling count.
-    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0, quotaAlert: false };
+    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0, quotaAlert: false, quotaProjected: null };
     // When the last status arrived, so the elapsed time it carries can be run forward locally
     // between messages instead of sitting still through a long tool call.
     let statusAt = 0;
@@ -605,7 +610,6 @@ ${tooltipScript()}
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
-    const bottomButton = document.getElementById('bottom');
     const loadButton = document.getElementById('load');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
@@ -719,7 +723,6 @@ ${tooltipScript()}
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
-    document.getElementById('bottom').addEventListener('click', () => selectBlock(session.turns.length - 1));
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
     document.getElementById('cap').addEventListener('click', (event) => {
       // Every click takes another picture and adds it to the ones already waiting. The button
@@ -1211,7 +1214,6 @@ ${tooltipScript()}
         saveBoxScrolls();
         wasStreaming = null;
       }
-      bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
       loadButton.disabled = !turns.length;
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
       // still pinned to the bottom when it was there (how a streaming box follows its text).
@@ -1420,6 +1422,10 @@ ${tooltipScript()}
       document.getElementById('pony').textContent = skips + ':' + (footer.ceilings || 0);
       document.getElementById('pony').style.display = footer.ponytail ? '' : 'none';
       document.getElementById('pony-sep').style.display = footer.ponytail ? '' : 'none';
+      const projected = typeof footer.quotaProjected === 'number' ? footer.quotaProjected : null;
+      document.getElementById('projected').textContent = projected === null ? '' : projected + '%';
+      document.getElementById('projected').style.display = projected === null ? 'none' : '';
+      document.getElementById('projected-sep').style.display = projected === null ? 'none' : '';
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,

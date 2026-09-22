@@ -1,10 +1,18 @@
 
+
+
+in the footer:
+  - 
+
+
 ???????
 too many bars above block
 show path to folder this is running in
 show time since last response output
 
 ======================
+
+  in the footer remove the double arrow scroll to bottom button
 
 in the sidebar header:
   - reduce the margin between the + button and the clean button by 20%

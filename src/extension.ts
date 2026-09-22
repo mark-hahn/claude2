@@ -1805,7 +1805,7 @@ class Claude2Controller implements vscode.Disposable {
     panel.title = session.name;
     // Which plugin stat the footer shows, and the numbers only this side can read: graft's
     // savings for the session and the workspace's ceiling count.
-    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting() };
+    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting(), quotaProjected: this.quota.projectedPct() };
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
     this.refreshSidebar();
   }
