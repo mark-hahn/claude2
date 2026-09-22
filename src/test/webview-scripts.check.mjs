@@ -14,7 +14,7 @@ const webview = { cspSource: 'vscode-resource:' };
 const defaults = { model: 'claude-opus-5', effort: 'high', contextWindow: 256000, maxTurns: 10 };
 const pages = {
   sidebar: sidebarHtml(webview),
-  conversation: conversationHtml(webview, 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, date: 0, seenDate: 0 }, 1),
+  conversation: conversationHtml(webview, 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, defaultPreset: 0, date: 0, seenDate: 0 }, 1),
   instructions: managementHtml(webview, 'instructions', 'UTC', 1),
   quota: managementHtml(webview, 'quota', 'UTC', 1),
   plugins: managementHtml(webview, 'plugins', 'UTC', 1),

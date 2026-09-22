@@ -436,7 +436,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
-    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; }
+    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; width: 10ch; flex: none; }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -1647,7 +1647,7 @@ ${tabsStyle()}  </style>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
     <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div></div>
-    <div class="box"><h2>Presets</h2><div id="presets"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><h2>Presets</h2><div id="presets"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -1657,6 +1657,7 @@ ${zoomScript(z)}
     let models = {};
     let prefs = {};
     let presets = [];
+    let defaultPreset = 0;
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -1667,6 +1668,7 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
+    document.getElementById('default').addEventListener('change', (event) => { defaultPreset = Number(event.target.value); unsaved(); });
     void load();
 
     function request(type, payload) {
@@ -1687,6 +1689,7 @@ ${zoomScript(z)}
       for (let i = 0; i < 4; i++) {
         presets.push(Object.assign({ enabled: false, model: '', effort: '' }, (info.presets || [])[i]));
       }
+      defaultPreset = info.defaultPreset || 0;
       renderModels();
       renderPresets();
       document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
@@ -1758,7 +1761,7 @@ ${zoomScript(z)}
         preset.model = model.value;
         fillEffort(model, effort, preset.effort);
         preset.effort = effort.value;
-        check.addEventListener('change', () => { preset.enabled = check.checked; unsaved(); });
+        check.addEventListener('change', () => { preset.enabled = check.checked; renderPresets(); unsaved(); });
         model.addEventListener('change', () => {
           preset.model = model.value;
           fillEffort(model, effort, effort.value);
@@ -1766,9 +1769,26 @@ ${zoomScript(z)}
           renderPresets();
           unsaved();
         });
-        effort.addEventListener('change', () => { preset.effort = effort.value; unsaved(); });
+        effort.addEventListener('change', () => { preset.effort = effort.value; renderPresets(); unsaved(); });
         row.append(check, model, effort);
         box.appendChild(row);
+      }
+      renderDefault();
+    }
+
+    // Only presets that are on can be the new-session default. One that got switched off hands
+    // the job to the first that is on -- the same fallback the extension applies.
+    function renderDefault() {
+      const select = document.getElementById('default');
+      select.replaceChildren();
+      const on = presets.map((preset, index) => index).filter((index) => presets[index].enabled);
+      if (!on.includes(defaultPreset)) defaultPreset = on.length ? on[0] : 0;
+      for (const index of on) {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = [label(presets[index].model), presets[index].effort].filter(Boolean).join(' / ');
+        option.selected = index === defaultPreset;
+        select.appendChild(option);
       }
     }
 
@@ -1798,7 +1818,7 @@ ${zoomScript(z)}
 
     // The one Save writes both boxes: the per-model choices and the presets picked from them.
     async function save() {
-      const reply = await request('savePresets', { presets, prefs });
+      const reply = await request('savePresets', { presets, prefs, defaultPreset });
       note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
     }
 

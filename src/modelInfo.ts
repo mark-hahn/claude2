@@ -28,6 +28,8 @@ export interface ModelInfo {
   models: ModelMap;
   presets: Preset[];
   prefs: ModelPrefs;
+  // Index into `presets` of the one new sessions start on; see defaultPresetOf.
+  defaultPreset: number;
   date: number;
   seenDate: number;
 }
@@ -50,14 +52,15 @@ const seed: ModelInfo = {
     { enabled: false, model: "haiku", effort: "" },
   ],
   prefs: {},
+  defaultPreset: 0,
   date: seedDate,
   seenDate: seedDate,
 };
 
 export function readModelInfo(state: vscode.Memento): ModelInfo {
   const info = state.get<ModelInfo>(infoKey) ?? seed;
-  // Records written before the Models pane had per-model choices carry no `prefs`.
-  return info.prefs ? info : { ...info, prefs: {} };
+  // Records written before the Models pane had these fields carry none.
+  return { ...info, prefs: info.prefs ?? {}, defaultPreset: info.defaultPreset ?? 0 };
 }
 
 export async function writeModelInfo(state: vscode.Memento, info: ModelInfo): Promise<void> {
@@ -81,6 +84,12 @@ export function presetsOf(value: unknown): Preset[] {
 // the CLI's list both change under it, so both writers run this.
 export function prunePresets(presets: Preset[], prefs: ModelPrefs, models: ModelMap): Preset[] {
   return presets.map((preset) => (preset.model in models && prefs[preset.model]?.on !== false ? preset : { ...preset, enabled: false }));
+}
+
+// The preset new sessions start on: the chosen one while it is on, else the first one that is.
+export function defaultPresetOf(info: ModelInfo): Preset | undefined {
+  const chosen = info.presets[info.defaultPreset];
+  return chosen?.enabled ? chosen : info.presets.find((preset) => preset.enabled);
 }
 
 // Only entries for models the CLI still lists, each field forced to a boolean or string.

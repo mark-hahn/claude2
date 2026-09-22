@@ -10,7 +10,7 @@ import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
+import { defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
 import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
@@ -1643,7 +1643,8 @@ class Claude2Controller implements vscode.Disposable {
       const stored = readModelInfo(this.context.globalState);
       const prefs = prefsOf(record?.prefs, stored.models);
       const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
-      await writeModelInfo(this.context.globalState, { ...stored, presets, prefs });
+      const defaultPreset = Number.isInteger(record?.defaultPreset) ? (record?.defaultPreset as number) : 0;
+      await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
       this.postModelInfo();
       await this.reply(requestId, async () => readModelInfo(this.context.globalState));
     } else if (type === "loadInstructions") {
@@ -1803,14 +1804,15 @@ class Claude2Controller implements vscode.Disposable {
     await this.context.globalState.update(`zoom.${kind}`, zoomFactor(value));
   }
 
-  // A session that has picked a model/effort keeps it across reopens; the configured
-  // default only fills in for a session that never picked.
+  // A session that has picked a model/effort keeps it across reopens; one that never picked
+  // starts on the Models pane's default preset, or the configured default when no preset is on.
   private conversationDefaults(sessionId = ""): ConversationDefaults {
     const config = vscode.workspace.getConfiguration("claude2");
     const session = sessionId ? this.store.get(sessionId) : undefined;
+    const preset = defaultPresetOf(readModelInfo(this.context.globalState));
     return {
-      model: session?.model || config.get<string>("model", DEFAULT_MODEL),
-      effort: session?.model ? session.effort : config.get<string>("effort", DEFAULT_EFFORT),
+      model: session?.model || preset?.model || config.get<string>("model", DEFAULT_MODEL),
+      effort: session?.model ? session.effort : preset ? preset.effort : config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
       maxTurns: config.get<number>("maxTurns", 50),
     };

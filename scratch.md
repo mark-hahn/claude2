@@ -1,7 +1,6 @@
 
 handle stale models
 
-implement your suggestion for installs to query the quota and share the readings through the server -- what fixes the 429 problem? an arbitrary number of vscode instances can be running
 
 default model
 
@@ -26,6 +25,8 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+implement your suggestion for installs to query the quota and share the readings through the server -- what fixes the 429 problem? an arbitrary number of vscode instances can be running
 
 - in models pane for each model in the list add a checkbox and an text input
 - the checkbox enables the model to be in the model selector in the footer
