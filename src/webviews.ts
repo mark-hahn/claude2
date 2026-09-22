@@ -463,6 +463,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .response.markdown table { border-collapse: collapse; margin: 0 0 10px; font-size: calc(14px * var(--z)); }
     .response.markdown th, .response.markdown td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
     .response.markdown th { background: rgba(0,0,0,0.05); }
+    /* A run of tool lines between the prose, shown only while the box's tool groups are. */
+    .response.markdown .tool-group { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0 0 8px; }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
@@ -562,18 +564,19 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
-    // The one open box's view: markdown by default, raw text with tool groups after a ctrl-click.
-    // The streaming box answers to neither — it always shows raw text with tool lines, and
-    // becomes a markdown box when its run ends.
-    let rawBox = false;
+    // Every box is markdown. The one open box hides its tool groups by default and a click
+    // toggles them. The streaming box always shows them and ignores clicks.
+    let toolsBox = false;
+    // The turn streaming at the last render, and the one whose run ended while its box was
+    // open: that box keeps its tool groups and ignores clicks until it is closed, and then
+    // becomes a standard box.
+    let streamingTurn = null;
+    let wasStreaming = null;
     // Each box's scroll position by turn id: a pixel offset, or 'bottom' to pin to the end.
-    // Mirrored to the extension so the memory outlives this webview; a reopened box restores
-    // from here and falls back to the bottom when no position is remembered.
+    // Mirrored to the extension so the memory outlives this webview; a box with no remembered
+    // position is on its first open and starts at the top (the streaming box at the bottom).
     let boxScrolls = {};
     let boxScrollsLoaded = false;
-    // Turn ids whose markdown box has been shown since this webview loaded: the first showing
-    // starts at the top, every one after that comes back where it was left.
-    const markdownSeen = new Set();
     let boxScrollTimer = 0;
     let shownActiveTurn = null;
     let anchorIndex = 0;
@@ -928,17 +931,38 @@ ${tooltipScript()}
       promptBox.focus();
     }
 
-    // Raw and streaming boxes: text is plain, except for a leading **bold** run on a line, used
-    // for a tool name and by the model's own prose alike. Built as text nodes so nothing else
-    // in the response is treated as markup.
-    function fillResponse(box, text) {
-      // Graft (since removed) closed responses with a tally line; old stored responses still
-      // carry those lines, so no box ever shows them.
-      const lines = text.split('\\n').filter((line) => !line.startsWith(GRAFT_TALLY_MARK));
-      lines.forEach((line, index) => {
-        if (index) box.appendChild(document.createTextNode('\\n'));
-        appendFormattedLine(box, line);
-      });
+    // Fills a box with the response as markdown. With tools, each run of tool lines sits
+    // between the prose around it as a monospace group; tool lines are plain text except
+    // for a leading **bold** tool name. Blank lines do not end a group.
+    function fillBox(box, text, tools) {
+      if (!tools) {
+        box.innerHTML = renderMarkdown(strippedText(text));
+        return;
+      }
+      box.replaceChildren();
+      let prose = [];
+      let group = null;
+      const flushProse = () => {
+        const kept = strippedText(prose.join('\\n'));
+        if (kept) box.insertAdjacentHTML('beforeend', renderMarkdown(kept));
+        prose = [];
+      };
+      for (const line of text.split('\\n')) {
+        if (!isToolLine(line)) {
+          prose.push(line);
+          if (line.trim() && !line.startsWith(GRAFT_TALLY_MARK)) group = null;
+          continue;
+        }
+        flushProse();
+        if (group) group.appendChild(document.createTextNode('\\n'));
+        else {
+          group = document.createElement('div');
+          group.className = 'tool-group';
+          box.appendChild(group);
+        }
+        appendFormattedLine(group, line);
+      }
+      flushProse();
     }
 
     function appendFormattedLine(box, line) {
@@ -1145,13 +1169,13 @@ ${tooltipScript()}
         anchorIndex = turns.length - 1;
         boxOpen = true;
         boxScrollNext = 'restore';
-        rawBox = false;
+        toolsBox = false;
       }
       if (pendingTurnCount && turns.length >= pendingTurnCount) {
         anchorIndex = pendingTurnCount - 1;
         boxOpen = true;
         boxScrollNext = 'restore';
-        rawBox = false;
+        toolsBox = false;
         pendingTurnCount = 0;
       }
       // A run that just started selects and opens its new block. The user is free to move
@@ -1172,6 +1196,16 @@ ${tooltipScript()}
       if (stoppingTurn && (!active || status.turnId !== stoppingTurn)) {
         stoppingTurn = null;
         stopButton.classList.remove('stopping');
+      }
+      // A run that ended (or gave way to a new one) leaves its box as the wasStreaming box. That
+      // box closing, for any reason, makes it standard, and its next open is a first open.
+      if (streamingTurn && (!active || status.turnId !== streamingTurn)) wasStreaming = streamingTurn;
+      streamingTurn = active ? status.turnId : null;
+      const openTurn = boxOpen && turns[anchorIndex] ? turns[anchorIndex].id : null;
+      if (wasStreaming && wasStreaming !== openTurn) {
+        delete boxScrolls[wasStreaming];
+        saveBoxScrolls();
+        wasStreaming = null;
       }
       bottomButton.disabled = turns.length < 2 || anchorIndex === turns.length - 1;
       loadButton.disabled = !turns.length;
@@ -1238,8 +1272,8 @@ ${tooltipScript()}
             boxOpen = !boxOpen;
             if (boxOpen) {
               boxScrollNext = 'restore';
-              // Every fresh open starts as a markdown box.
-              rawBox = false;
+              // Every fresh open starts with its tool groups hidden.
+              toolsBox = false;
             }
             render();
           });
@@ -1248,23 +1282,15 @@ ${tooltipScript()}
           // Only the selected block's box exists, and only while open. A streaming turn is no
           // exception: moved away from or closed, its text keeps arriving invisibly.
           if (index === anchorIndex && boxOpen) {
-            // The streaming box is always raw — its tool lines are the run's progress display —
-            // and turns into a markdown box on the render that follows the run's end.
-            const raw = isActiveTurn || rawBox;
+            // The streaming and wasStreaming boxes keep their tool groups up — they are the
+            // run's progress display — and do not answer clicks.
+            const locked = isActiveTurn || turn.id === wasStreaming;
+            const tools = locked || toolsBox;
             const response = document.createElement('div');
-            response.className = 'response' + (raw ? '' : ' markdown') + (turn.error ? ' error' : '');
+            response.className = 'response markdown' + (turn.error ? ' error' : '');
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
-            if (raw) fillResponse(response, turn.response || '');
-            else {
-              response.innerHTML = renderMarkdown(strippedText(turn.response || ''));
-              // finished gates the pre-stream render: a just-sent turn flashes as an empty
-              // markdown box before its run goes active, and must not count as seen.
-              if (turn.finished && !markdownSeen.has(turn.id)) {
-                markdownSeen.add(turn.id);
-                boxScrollNext = 'top';
-              }
-            }
+            fillBox(response, turn.response || '', tools);
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';
@@ -1275,17 +1301,16 @@ ${tooltipScript()}
               if (event.altKey) {
                 // The whole box, as shown: a failed turn keeps its partial text and gains the reason.
                 const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
-                vscode.postMessage({ type: 'copyText', sessionId, text: raw ? body : strippedText(body) });
+                vscode.postMessage({ type: 'copyText', sessionId, text: tools ? body : strippedText(body) });
                 response.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
                 return;
               }
-              // Only ctrl-click toggles the view; a plain click is left to text selection.
-              if (!event.ctrlKey) return;
-              // A click on a rendered link is the link, not the toggle.
+              if (locked) return;
+              // A click on a rendered link is the link, not the toggle; a drag that selected
+              // text is a selection.
               if (event.target.closest && event.target.closest('a')) return;
-              // The streaming box does not answer the toggle; its tool lines stay up.
-              if (status && status.active && status.turnId === turn.id) return;
-              rawBox = !rawBox;
+              if (!window.getSelection().isCollapsed) return;
+              toolsBox = !toolsBox;
               // The two views shape the text differently, so a kept scroll offset lands
               // nowhere useful: every toggle starts from the top.
               boxScrollNext = 'top';
@@ -1304,8 +1329,9 @@ ${tooltipScript()}
       if (boxScrollNext === null && anchorIndex !== wasAnchor) boxScrollNext = 'restore';
       let boxScroll = boxScrollNext !== null ? boxScrollNext : selectedResponseAtBottom ? 'bottom' : selectedResponseTop;
       if (boxScroll === 'restore') {
-        const saved = turns[anchorIndex] ? boxScrolls[turns[anchorIndex].id] : undefined;
-        boxScroll = saved === undefined ? 'bottom' : saved;
+        const turn = turns[anchorIndex];
+        const saved = turn ? boxScrolls[turn.id] : undefined;
+        boxScroll = saved !== undefined ? saved : active && turn && status.turnId === turn.id ? 'bottom' : 'top';
       }
       boxScrollNext = null;
       requestAnimationFrame(() => syncSelectedBlock(boxScroll));
@@ -1450,8 +1476,7 @@ ${tooltipScript()}
       if (message.delta) {
         const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
         const savedTop = response.scrollTop;
-        response.replaceChildren();
-        fillResponse(response, turn.response || '');
+        fillBox(response, turn.response || '', true);
         if (Number(node.dataset.index) === anchorIndex) {
           requestAnimationFrame(() => syncSelectedBlock(atBottom ? 'bottom' : savedTop));
         }
@@ -1465,6 +1490,10 @@ ${tooltipScript()}
     function noteBoxScroll(turnId, response) {
       const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
       boxScrolls[turnId] = atBottom ? 'bottom' : response.scrollTop;
+      saveBoxScrolls();
+    }
+
+    function saveBoxScrolls() {
       window.clearTimeout(boxScrollTimer);
       boxScrollTimer = window.setTimeout(() => {
         vscode.postMessage({ type: 'boxScrollsChanged', sessionId, boxScrolls });
@@ -1482,7 +1511,7 @@ ${tooltipScript()}
       // position and as a markdown box.
       boxOpen = true;
       boxScrollNext = 'restore';
-      rawBox = false;
+      toolsBox = false;
       render();
     }
 

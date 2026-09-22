@@ -1,21 +1,28 @@
 
-handle stale models
-
-
-default model
-
-# centralize quota history
-- currently quota history is stored separately for each host type
-  - graphs have missing data
-- suggest how to centralize quota history
 
 the graph axis labels are too big, the should match rest of text in pane
 
-show worst of 5h, 7d, and 7d fable usage % in footer
-
-show markdown while streaming
-
-currently the model selector in the footer has a hard-wired list -- could the list be obtained from cli
+# changes to conversation boxes
+- in all boxes at any time the raw response text should never be shown 
+- always show markup in every box
+  - a click in the box should toggle showing the tool groups
+  - hidden tool groups should be the default except for a box actively streaming
+- when a box is actively streaming:
+  - it should always show markdown with tool groups visible
+  - a click should do nothing
+  - scrolling should be allowed
+- when streaming finishes:
+  - the box should not automatically scroll to the top
+  - a flag `wasStreaming` should be set for that box
+    - while wasStreaming is set:
+      - the box should still show tool groups
+      - the box should still not respond to clicks
+- when a box with wasStreaming is set and is closed for any reason:
+  - the wasStreaming flag should be cleared
+  - the box should become a standard box
+  - the box should be scrolled to the top when opened the first time
+    - this is true for all boxes
+- all boxes should have their scrolling position persisted until install is reloaded
 
 in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
 
@@ -25,6 +32,13 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+# centralize quota history
+- currently quota history is stored separately for each host type
+  - graphs have missing data
+- suggest how to centralize quota history
+
+default model
 
 implement your suggestion for installs to query the quota and share the readings through the server -- what fixes the 429 problem? an arbitrary number of vscode instances can be running
 

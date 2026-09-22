@@ -1809,10 +1809,14 @@ class Claude2Controller implements vscode.Disposable {
   private conversationDefaults(sessionId = ""): ConversationDefaults {
     const config = vscode.workspace.getConfiguration("claude2");
     const session = sessionId ? this.store.get(sessionId) : undefined;
-    const preset = defaultPresetOf(readModelInfo(this.context.globalState));
+    const info = readModelInfo(this.context.globalState);
+    const preset = defaultPresetOf(info);
+    // A saved pick the CLI no longer lists (retired model) falls back like a session that never picked.
+    const known = Object.keys(info.models).length === 0 || (session?.model ?? "") in info.models;
+    const saved = known ? session?.model : "";
     return {
-      model: session?.model || preset?.model || config.get<string>("model", DEFAULT_MODEL),
-      effort: session?.model ? session.effort : preset ? preset.effort : config.get<string>("effort", DEFAULT_EFFORT),
+      model: saved || preset?.model || config.get<string>("model", DEFAULT_MODEL),
+      effort: saved ? session!.effort : preset ? preset.effort : config.get<string>("effort", DEFAULT_EFFORT),
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
       maxTurns: config.get<number>("maxTurns", 50),
     };
