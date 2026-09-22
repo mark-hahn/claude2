@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, type ClaudeSession, type ClaudeTurn, type PonySkip, type PromptImage } from "./types";
+import { CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type PonySkip, type PromptImage } from "./types";
 
 const sessionsKey = "claude2.sessions.v1";
 
@@ -12,8 +12,8 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     response: typeof turn.response === "string" ? turn.response : "",
     createdAt: typeof turn.createdAt === "number" ? turn.createdAt : Date.now(),
     completedAt: typeof turn.completedAt === "number" ? turn.completedAt : null,
-    model: typeof turn.model === "string" ? turn.model : "fable",
-    effort: typeof turn.effort === "string" ? turn.effort : DEFAULT_EFFORT,
+    model: typeof turn.model === "string" ? turn.model : "",
+    effort: typeof turn.effort === "string" ? turn.effort : "",
     tokensIn: typeof turn.tokensIn === "number" ? turn.tokensIn : 0,
     tokensOut: typeof turn.tokensOut === "number" ? turn.tokensOut : 0,
     contextWindow: typeof turn.contextWindow === "number" ? turn.contextWindow : CLAUDE2_CONTEXT_WINDOW,
@@ -67,7 +67,9 @@ export class SessionStore {
     return this.sessions.find((session) => session.id === sessionId);
   }
 
-  public async create(): Promise<ClaudeSession> {
+  // The Models pane default is copied in here, once; from then on the session's picks are all
+  // that is ever run.
+  public async create(model: string, effort: string): Promise<ClaudeSession> {
     const now = Date.now();
     const session: ClaudeSession = {
       id: randomUUID(),
@@ -75,8 +77,8 @@ export class SessionStore {
       createdAt: now,
       updatedAt: now,
       trashed: false,
-      model: "",
-      effort: "",
+      model,
+      effort,
       turns: [],
     };
     this.sessions.unshift(session);

@@ -5,13 +5,13 @@ import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { captureScreen } from "./capture";
-import { ClaudeCliRunner, copySessionTranscript, truncateSessionTranscript, type RunLimits } from "./claudeCli";
+import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
-import { defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { CLAUDE2_CONTEXT_WINDOW, DEFAULT_EFFORT, DEFAULT_MODEL, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
+import { CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -180,7 +180,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     this.drafts.delete(sessionId);
-    const session = await this.store.create();
+    const session = await this.createSession();
     this.drafts.set(session.id, text);
     this.saveDrafts();
     this.refreshSidebar();
@@ -317,7 +317,7 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     await this.discardEmptySessions();
-    const session = await this.store.create();
+    const session = await this.createSession();
     this.refreshSidebar();
     await this.openConversation(session.id, true);
   }
@@ -1061,6 +1061,16 @@ class Claude2Controller implements vscode.Disposable {
       this.postConversationState(sessionId);
       return;
     }
+    // Only what the pickers showed runs: no model, or a malformed one, sends nothing.
+    try {
+      sanitizeModel(model);
+      effortArgs(effort);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Prompt not sent: ${errorMessage(error)}`);
+      this.noteDraft(sessionId, prompt);
+      this.postConversationState(sessionId);
+      return;
+    }
     const run = this.runTurn(sessionId, prompt, model, effort).catch((error) => {
       this.channel.appendLine(`Claude turn failed: ${errorMessage(error)}`);
     });
@@ -1105,9 +1115,9 @@ class Claude2Controller implements vscode.Disposable {
       }
     }
     const defaults = this.conversationDefaults(sessionId);
-    const selectedModel = model || defaults.model;
-    // An empty effort with a model is a pick, not a gap: that model takes no effort levels.
-    const selectedEffort = model ? effort : defaults.effort;
+    const selectedModel = model;
+    // An empty effort is a pick, not a gap: that model takes no effort levels.
+    const selectedEffort = effort;
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
     // with is what the session reopens on.
     await this.store.setPicks(sessionId, selectedModel, selectedEffort);
@@ -1151,7 +1161,7 @@ class Claude2Controller implements vscode.Disposable {
     // The first turn gives the sidebar's md button something to show.
     this.refreshSidebar();
     if (wasFirstPrompt) {
-      void this.nameSessionFromPrompt(sessionId, prompt, selectedModel);
+      void this.nameSessionFromPrompt(sessionId, prompt);
     }
 
     let streamedResponse = "";
@@ -1292,9 +1302,9 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private async nameSessionFromPrompt(sessionId: string, prompt: string, model: string): Promise<void> {
+  private async nameSessionFromPrompt(sessionId: string, prompt: string): Promise<void> {
     try {
-      const title = await this.runner.generateTitle(prompt, model, this.workspacePath());
+      const title = await this.runner.generateTitle(prompt, cheapestModel(readModelInfo(this.context.globalState).models), this.workspacePath());
       const session = this.store.get(sessionId);
       if (session && this.ownsName(session)) {
         this.draftNames.delete(sessionId);
@@ -1353,7 +1363,7 @@ class Claude2Controller implements vscode.Disposable {
     let name = firstWords(draft);
     if (draft.split(" ").length >= 6) {
       try {
-        name = await this.runner.generateTitle(draft, this.conversationDefaults().model, this.workspacePath());
+        name = await this.runner.generateTitle(draft, cheapestModel(readModelInfo(this.context.globalState).models), this.workspacePath());
       } catch (error) {
         this.channel.appendLine(`Claude draft naming failed: ${errorMessage(error)}`);
       }
@@ -1644,9 +1654,18 @@ class Claude2Controller implements vscode.Disposable {
       const prefs = prefsOf(record?.prefs, stored.models);
       const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
       const defaultPreset = Number.isInteger(record?.defaultPreset) ? (record?.defaultPreset as number) : 0;
-      await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
-      this.postModelInfo();
-      await this.reply(requestId, async () => readModelInfo(this.context.globalState));
+      await this.reply(requestId, async () => {
+        // A bad pane refuses to save at all, so the stored default is always one the user picked.
+        if (!presets[defaultPreset]?.enabled) {
+          throw new Error(presets.some((preset) => preset.enabled)
+            ? "The default preset is not enabled, or its model is unchecked."
+            : "No preset is enabled: check at least one model and one preset.");
+        }
+        presets.filter((preset) => preset.enabled).forEach((preset) => sanitizeModel(preset.model));
+        await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
+        this.postModelInfo();
+        return readModelInfo(this.context.globalState);
+      });
     } else if (type === "loadInstructions") {
       await this.reply(requestId, async () => await this.instructions.read());
     } else if (type === "saveInstructions") {
@@ -1804,19 +1823,20 @@ class Claude2Controller implements vscode.Disposable {
     await this.context.globalState.update(`zoom.${kind}`, zoomFactor(value));
   }
 
-  // A session that has picked a model/effort keeps it across reopens; one that never picked
-  // starts on the Models pane's default preset, or the configured default when no preset is on.
-  private conversationDefaults(sessionId = ""): ConversationDefaults {
+  // The only place the Models pane default is read: a new session's pickers start on it.
+  private async createSession(): Promise<ClaudeSession> {
+    const preset = defaultPresetOf(readModelInfo(this.context.globalState));
+    return await this.store.create(preset?.model ?? "", preset?.effort ?? "");
+  }
+
+  // The pickers show the session's own picks and nothing else -- a blank stays blank, and a
+  // model the CLI no longer lists stays shown, so what is on screen is what would run.
+  private conversationDefaults(sessionId: string): ConversationDefaults {
     const config = vscode.workspace.getConfiguration("claude2");
-    const session = sessionId ? this.store.get(sessionId) : undefined;
-    const info = readModelInfo(this.context.globalState);
-    const preset = defaultPresetOf(info);
-    // A saved pick the CLI no longer lists (retired model) falls back like a session that never picked.
-    const known = Object.keys(info.models).length === 0 || (session?.model ?? "") in info.models;
-    const saved = known ? session?.model : "";
+    const session = this.store.get(sessionId);
     return {
-      model: saved || preset?.model || config.get<string>("model", DEFAULT_MODEL),
-      effort: saved ? session!.effort : preset ? preset.effort : config.get<string>("effort", DEFAULT_EFFORT),
+      model: session?.model ?? "",
+      effort: session?.effort ?? "",
       contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
       maxTurns: config.get<number>("maxTurns", 50),
     };

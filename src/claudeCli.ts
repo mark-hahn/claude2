@@ -474,6 +474,8 @@ export class ClaudeCliRunner {
     });
   }
 
+  // Called with the cheapest model: a short title needs nothing more, and it keeps background
+  // naming off the quota of whatever model the user picked.
   public async generateTitle(prompt: string, model: string, workspacePath: string): Promise<string> {
     const titlePrompt = [
       "Name this Claude conversation in two to six plain words.",
@@ -487,8 +489,6 @@ export class ClaudeCliRunner {
       "json",
       "--model",
       sanitizeModel(model),
-      "--effort",
-      "low",
       "--max-budget-usd",
       String(titleBudgetUsd),
       "--tools",
@@ -676,13 +676,24 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function sanitizeModel(model: string): string {
-  return /^[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(model) ? model : "fable";
+// A bad name refuses the run rather than quietly running some other model.
+export function sanitizeModel(model: string): string {
+  if (!model) {
+    throw new Error("No model to run: no preset is enabled in the Models pane.");
+  }
+  if (!/^[a-z0-9.-]+(\[[a-z0-9]+\])?$/i.test(model)) {
+    throw new Error(`Malformed model name: ${JSON.stringify(model)}`);
+  }
+  return model;
 }
 
-// A model with no effort levels (haiku) runs with no --effort at all.
-function effortArgs(effort: string): string[] {
-  return /^[a-z]+$/.test(effort) ? ["--effort", effort] : [];
+// A model with no effort levels (haiku) runs with no --effort at all; anything else malformed
+// refuses the run rather than letting the CLI pick an effort.
+export function effortArgs(effort: string): string[] {
+  if (effort && !/^[a-z]+$/.test(effort)) {
+    throw new Error(`Malformed effort: ${JSON.stringify(effort)}`);
+  }
+  return effort ? ["--effort", effort] : [];
 }
 
 function phaseForBlock(blockType: string): ClaudePhase {

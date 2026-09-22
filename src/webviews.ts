@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { ModelInfo } from "./modelInfo";
-import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, DEFAULT_MODEL, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
+import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "cap";
 
@@ -409,8 +409,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   const presets = JSON.stringify(info.presets);
   const prefs = JSON.stringify(info.prefs);
   const safeSessionId = JSON.stringify(sessionId);
-  const defaultModel = JSON.stringify(defaults.model || DEFAULT_MODEL);
-  const defaultEffort = JSON.stringify(defaults.effort || DEFAULT_EFFORT);
+  const defaultModel = JSON.stringify(defaults.model);
+  const defaultEffort = JSON.stringify(defaults.effort);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
   const maxTurns = JSON.stringify(defaults.maxTurns);
@@ -564,7 +564,7 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
-    // Every box is markdown. The one open box hides its tool groups by default and a click
+    // Every box is markdown. The one open box hides its tool groups by default and a ctrl-click
     // toggles them. The streaming box always shows them and ignores clicks.
     let toolsBox = false;
     // The turn streaming at the last render, and the one whose run ended while its box was
@@ -1305,7 +1305,8 @@ ${tooltipScript()}
                 response.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
                 return;
               }
-              if (locked) return;
+              // A plain click is left to text selection; only a ctrl-click toggles.
+              if (locked || !event.ctrlKey) return;
               // A click on a rendered link is the link, not the toggle; a drag that selected
               // text is a selection.
               if (event.target.closest && event.target.closest('a')) return;
@@ -2466,8 +2467,15 @@ ${zoomScript(z)}
     let expanded = null;
     let loading = true;
     let updating = false;
-    let measured = { width: 256, height: 140 };
     let resizeObserver = null;
+    // Plots are drawn at their real pixel size so the axis text stays at the pane's CSS size
+    // instead of scaling up with the viewBox.
+    const plotObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const plot = entry.target;
+        if (plot.clientWidth > 0 && plot.clientHeight > 0) plot.innerHTML = plot.draw(plot.clientWidth, plot.clientHeight);
+      }
+    });
 
     document.getElementById('update').addEventListener('click', () => void load(true));
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
@@ -2522,6 +2530,7 @@ ${zoomScript(z)}
       const visibleGraphs = expanded ? graphs.filter((graph) => graph.key === expanded) : graphs;
       pane.className = 'pane' + (expanded ? ' expanded' : '');
       graphsNode.className = 'graphs' + (expanded ? ' single' : '');
+      if (plotObserver) plotObserver.disconnect();
       graphsNode.replaceChildren();
       if (loading && rows.length === 0) {
         const empty = document.createElement('div');
@@ -2608,8 +2617,9 @@ ${zoomScript(z)}
       const plot = document.createElement('div');
       plot.className = 'plot';
       plot.dataset.expand = graph.key;
-      const size = expanded === graph.key ? measured : { width: 256, height: 140 };
-      plot.innerHTML = drawSvg(period, size.width, size.height, graph.delta);
+      plot.draw = (width, height) => drawSvg(period, width, height, graph.delta);
+      plot.innerHTML = plot.draw(256, 140);
+      if (plotObserver) plotObserver.observe(plot);
       const figures = document.createElement('div');
       figures.className = 'figures';
       figures.innerHTML = figuresHtml(period, graph.delta);
@@ -2629,7 +2639,6 @@ ${zoomScript(z)}
       root.querySelectorAll('[data-expand]').forEach((plot) => {
         plot.addEventListener('click', () => {
           expanded = expanded === plot.dataset.expand ? null : plot.dataset.expand;
-          measured = { width: 256, height: 140 };
           render();
         });
       });
@@ -2659,12 +2668,7 @@ ${zoomScript(z)}
       const roomWidth = container.clientWidth - frameX;
       const roomHeight = container.clientHeight - chromeY;
       const width = Math.max(256, Math.floor(Math.min(roomWidth, roomHeight * (256 / 140))));
-      const height = Math.round(width * (140 / 256));
       card.style.width = (width + frameX) + 'px';
-      if (Math.abs(width - measured.width) > 1 || Math.abs(height - measured.height) > 1) {
-        measured = { width, height };
-        render();
-      }
     }
 
     function buildWindowGraph(key, title, lengthMs, seriesDefs, rows) {

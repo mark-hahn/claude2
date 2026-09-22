@@ -86,10 +86,27 @@ export function prunePresets(presets: Preset[], prefs: ModelPrefs, models: Model
   return presets.map((preset) => (preset.model in models && prefs[preset.model]?.on !== false ? preset : { ...preset, enabled: false }));
 }
 
-// The preset new sessions start on: the chosen one while it is on, else the first one that is.
+// The preset new sessions start on: the chosen one while it is on, else none -- a new session
+// then starts with a blank model, and nothing runs until one is picked.
 export function defaultPresetOf(info: ModelInfo): Preset | undefined {
   const chosen = info.presets[info.defaultPreset];
-  return chosen?.enabled ? chosen : info.presets.find((preset) => preset.enabled);
+  return chosen?.enabled ? chosen : undefined;
+}
+
+// ponytail: the CLI's model list carries no prices, so cheapness is ranked by family name;
+// a new family lands here or it is never picked.
+const cheapestFirst = ["haiku", "sonnet", "opus", "fable"];
+
+// The cheapest model the CLI lists, for background calls (titles, the quota probe) that need
+// no more. Nothing matching is an error, not a fallback.
+export function cheapestModel(models: ModelMap): string {
+  for (const family of cheapestFirst) {
+    const model = Object.keys(models).find((id) => id.includes(family));
+    if (model) {
+      return model;
+    }
+  }
+  throw new Error(`no known model family in the CLI's list (${Object.keys(models).join(", ")}).`);
 }
 
 // Only entries for models the CLI still lists, each field forced to a boolean or string.

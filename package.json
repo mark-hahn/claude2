@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.88",
+  "version": "0.0.91",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -69,23 +69,6 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the Claude2 extension."
-        },
-        "claude2.model": {
-          "type": "string",
-          "default": "claude-opus-5",
-          "description": "Default Claude model for new Claude2 prompts."
-        },
-        "claude2.effort": {
-          "type": "string",
-          "enum": [
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max"
-          ],
-          "default": "high",
-          "description": "Default Claude effort level for new Claude2 prompts."
         },
         "claude2.contextWindowTokens": {
           "type": "number",

@@ -4,7 +4,6 @@ export const CLAUDE2_CONTEXT_WINDOW = 256000;
 // and a further 13,000 of headroom, and auto-compacts the conversation at what is left. That figure,
 // not the window, is the ceiling the gauge is really counting towards.
 export const CLAUDE2_COMPACT_RESERVE = 33000;
-export const DEFAULT_MODEL = "claude-opus-5";
 export const DEFAULT_EFFORT = "high";
 
 // U+2063 INVISIBLE SEPARATOR, prefixed to every tool-call line in a response. It is what the

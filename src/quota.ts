@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { cheapestModel, readModelInfo } from "./modelInfo";
 import { httpJson } from "./pluginStats";
 import type { QuotaHistoryPayload, QuotaReadingRow, QuotaState, QuotaWindowState } from "./types";
 
@@ -228,8 +229,9 @@ export class QuotaService {
       await this.probeInFlight;
       return;
     }
+    const model = cheapestModel(readModelInfo(this.context.globalState).models);
     this.probeInFlight = new Promise<void>((resolve, reject) => {
-      const child = spawn("claude", ["-p", "quota", "--max-turns", "1", "--output-format", "stream-json", "--include-partial-messages", "--tools", ""], {
+      const child = spawn("claude", ["-p", "quota", "--model", model, "--max-turns", "1", "--output-format", "stream-json", "--include-partial-messages", "--tools", ""], {
         cwd: this.workspacePath,
         env: childEnv(),
         stdio: ["ignore", "pipe", "pipe"],

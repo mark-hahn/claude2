@@ -1,6 +1,36 @@
 
+# models pane changes
+- remove the presets boxes
+- in each model row of the model list:
+  - add a checkbox to the right of the show checkbox
+    - this is the preset checkbox and selects the row to be one of the presets
+  - add an effort selector to the right of the alias text inputs
+    - the selector should have the possible efforts for that model
+    - the selection assings an effort to the alias
+      - everywhere an alias is used it has to have that effort
+- in the models box use a table instead of rows
+  - this instruction assumes the row changes are taken into account before now
+  - the table should be flipped so the possible models are the columns
+    - the table rows should be all the elements that were listed in a model row
+    - the first row should be the list of possible efforts for the model
 
-the graph axis labels are too big, the should match rest of text in pane
+# answers to questions left for me
+1. already handled
+2. 
+
+
+
+
+in the quota pane the graph axis labels are too big, the should match rest of text in pane
+
+in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
+
+???????
+too many bars above block
+show path to folder this is running in
+show time since last response output
+
+======================
 
 # changes to conversation boxes
 - in all boxes at any time the raw response text should never be shown 
@@ -23,15 +53,6 @@ the graph axis labels are too big, the should match rest of text in pane
   - the box should be scrolled to the top when opened the first time
     - this is true for all boxes
 - all boxes should have their scrolling position persisted until install is reloaded
-
-in the tooltip over a prompt bar add the date/time the prompt was submitted to the right of the model/effort with a 20px margin between
-
-???????
-too many bars above block
-show path to folder this is running in
-show time since last response output
-
-======================
 
 # centralize quota history
 - currently quota history is stored separately for each host type
