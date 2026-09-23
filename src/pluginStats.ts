@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { modelHours } from "./claudeCli";
 import { type ClaudeSession, type InstallStats, type PluginFlags } from "./types";
 
 // All plugin stats live on one server task (claude2-stats on hahnca.com, see claude2-stats/),
@@ -294,4 +295,30 @@ export class PluginStats {
     const body = await httpJson("POST", `/flags/${project.replace(/[^A-Za-z0-9._-]+/g, "-")}`, { [plugin]: enabled }, 5000, this.log);
     return body !== null;
   }
+}
+
+export interface ModelUsage {
+  // Messages per model per hour since the epoch, every machine summed; the pane buckets them.
+  hours: Record<string, Record<string, number>>;
+  // Each machine that has reported, with when; empty when the server could not be reached.
+  machines: Record<string, number>;
+}
+
+// The account's quota is spent by every machine, so this machine pushes its own per-hour counts
+// and sums every machine's from the server. Unreachable, it falls back to this machine alone.
+export async function modelUsage(log: (line: string) => void): Promise<ModelUsage> {
+  const local = await modelHours();
+  await httpJson("POST", `/models/${hostType()}`, { hours: local }, 10000, log);
+  const reply = (await httpJson("GET", "/models", undefined, 10000, log))?.machines as Record<string, { updatedAt: number; hours: Record<string, Record<string, number>> }> | undefined;
+  const machines = reply ?? { [hostType()]: { updatedAt: 0, hours: local } };
+  const summed: Record<string, Record<string, number>> = {};
+  for (const { hours } of Object.values(machines)) {
+    for (const [model, byHour] of Object.entries(hours)) {
+      const row = (summed[model] ??= {});
+      for (const [hour, count] of Object.entries(byHour)) {
+        row[hour] = (row[hour] ?? 0) + count;
+      }
+    }
+  }
+  return { hours: summed, machines: reply ? Object.fromEntries(Object.entries(reply).map(([name, machine]) => [name, machine.updatedAt])) : {} };
 }

@@ -1282,7 +1282,8 @@ ${tooltipScript()}
           if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
           // The hover leads with the model and effort this prompt actually ran under, which is not
           // necessarily what the dock is set to now.
-          const ranAs = [turn.model && modelLabel(turn.model), turn.effort].filter(Boolean).join(' / ');
+          // modelId is what actually answered, which an alias like opus[1m] does not say.
+          const ranAs = [turn.model && modelLabel(turn.model), turn.effort, turn.modelId].filter(Boolean).join(' / ');
           const typed = typedText(turn);
           // When it was sent rides at the right end of the model/effort line (tip-aside), or takes
           // that line itself when the turn predates recording what it ran as.
@@ -1728,10 +1729,17 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     table { border-collapse: collapse; margin-bottom: 8px; }
     #models td, #models th { padding: 3px 20px 3px 0; text-align: left; vertical-align: top; }
     #models th { font-weight: 600; }
-    #models tr:first-child th { max-width: 8em; }
+    /* The value headers and the Descr row below them never wrap; the columns grow to fit them. */
+    #models tr:first-child th, #models tr:nth-child(2) td { white-space: nowrap; }
     #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
     #models input[type=text] { font: inherit; color: var(--ink); width: 9em; padding: 2px 6px; }
     #models select { min-width: 6em; }
+    #usage td, #usage th { padding: 3px 0 3px 24px; text-align: right; }
+    #usage td:first-child, #usage th:first-child { padding-left: 0; text-align: left; }
+    #usage th { font-weight: 600; }
+    .usage-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+    .usage-head h2 { margin: 0; }
+    #usageMode { min-width: 0; }
     #turns { font: inherit; color: var(--ink); width: 6em; padding: 2px 6px; }
     select { font: inherit; color: var(--ink); min-width: 14em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
@@ -1740,7 +1748,8 @@ ${tabsStyle()}  </style>
 <body>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
-    <div class="box"><h2>Models</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row">Turn limit per prompt <input id="turns" type="number" min="50" max="250" step="1"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><h2>Models By Value</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row">Turn limit per prompt <input id="turns" type="number" min="50" max="250" step="1"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><div class="usage-head"><h2>Messages Per Model ID</h2><select id="usageMode"><option>Past</option><option>Days</option></select></div><table id="usage"><tr><td>Counting…</td></tr></table><div id="machines"></div></div>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -1766,6 +1775,8 @@ ${zoomScript(z)}
     document.getElementById('default').addEventListener('change', (event) => { defaultModel = event.target.value; unsaved(); });
     document.getElementById('turns').addEventListener('input', unsaved);
     void load();
+    void loadUsage();
+    document.getElementById('usageMode').addEventListener('change', renderUsage);
 
     function request(type, payload) {
       const requestId = String(Date.now()) + Math.random();
@@ -1796,12 +1807,73 @@ ${zoomScript(z)}
       note('');
     }
 
+    // Every model any machine's transcripts used, busiest of all time first.
+    // Per-hour counts for every model, as the extension summed them; null until they arrive.
+    let usageHours = null;
+
+    async function loadUsage() {
+      const reply = await request('loadModelUsage', {});
+      if (!reply.ok) {
+        const table = document.getElementById('usage');
+        table.replaceChildren();
+        table.insertRow().insertCell().textContent = 'Could not count messages: ' + (reply.error || 'unknown error');
+        return;
+      }
+      usageHours = reply.payload.hours || {};
+      const machines = Object.entries(reply.payload.machines || {});
+      document.getElementById('machines').textContent = machines.length
+        ? 'Counted from ' + machines.map(([name, at]) => name + ' (' + new Date(at).toLocaleString() + ')').join(', ')
+        : 'This machine only: the stats server could not be reached';
+      renderUsage();
+    }
+
+    // Past: trailing windows ending now. Days: the last seven local calendar days, oldest first.
+    function usageColumns() {
+      const hour = 3600000;
+      if (document.getElementById('usageMode').value === 'Past') {
+        const hourNow = Math.floor(Date.now() / hour);
+        return [['24 hours', 24], ['3 days', 72], ['Week', 168], ['All time', Infinity]]
+          .map(([label, age]) => ({ label, has: (h) => hourNow - h < age }));
+      }
+      const columns = [];
+      for (let back = 6; back >= 0; back--) {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        start.setDate(start.getDate() - back);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 1);
+        const label = start.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+        columns.push({ label, has: (h) => h * hour >= start.getTime() && h * hour < end.getTime() });
+      }
+      return columns;
+    }
+
+    function renderUsage() {
+      if (!usageHours) return;
+      const table = document.getElementById('usage');
+      table.replaceChildren();
+      const columns = usageColumns();
+      const head = table.insertRow();
+      for (const text of ['Model', ...columns.map((column) => column.label)]) {
+        const th = document.createElement('th');
+        th.textContent = text;
+        head.appendChild(th);
+      }
+      const sum = (model, has) => Object.entries(usageHours[model]).reduce((total, [h, count]) => total + (has(Number(h)) ? count : 0), 0);
+      const total = (model) => sum(model, () => true);
+      for (const model of Object.keys(usageHours).sort((a, b) => total(b) - total(a))) {
+        const tr = table.insertRow();
+        tr.insertCell().textContent = model;
+        for (const column of columns) tr.insertCell().textContent = sum(model, column.has).toLocaleString();
+      }
+    }
+
     function pref(model) {
       return (prefs[model] = prefs[model] || { on: true, alias: '', effort: '' });
     }
 
-    // One column per model the CLI offers, headed by its Anthropic name (the id on hover). Down
-    // each column: whether it shows up in the footer's picker at all, whether it is a preset, the
+    // One column per model the CLI offers, headed by the value sent with --model. Down each
+    // column: the CLI's name for it, whether it shows up in the footer's picker at all, whether it is a preset, the
     // display name to use instead of the id, and the effort its preset runs at. A hidden model
     // cannot be a preset.
     function renderModels() {
@@ -1812,9 +1884,7 @@ ${zoomScript(z)}
       head.appendChild(document.createElement('th'));
       for (const model of ids) {
         const th = document.createElement('th');
-        // "Opus 5.5 with 1M context" reads "Opus 5.5 1M"; anything still long wraps.
-        th.textContent = (names[model] || model).replace(/ with ([^ ]+) context$/, ' $1');
-        th.title = [names[model], model].filter(Boolean).join('\\n');
+        th.textContent = model;
         head.appendChild(th);
       }
       const row = (label, cell) => {
@@ -1828,6 +1898,8 @@ ${zoomScript(z)}
           if (typeof content === 'string') td.textContent = content; else td.appendChild(content);
         }
       };
+      // The CLI's name for what the value runs on now: its description up to " · ".
+      row('Descr', (model) => names[model] || '');
       row('Show', (model) => {
         const check = checkbox(pref(model).on !== false);
         check.addEventListener('change', () => { pref(model).on = check.checked; renderModels(); unsaved(); });

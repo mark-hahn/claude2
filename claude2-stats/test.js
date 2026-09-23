@@ -55,4 +55,9 @@ async function run(base) {
   const flags = await get("/flags/claude2");
   assert.deepStrictEqual(flags, { graft: false, ponytail: true }, "flag merge and defaults");
   assert.strictEqual((await get("/flags/other")).graft, true, "unknown project defaults on");
+
+  await post("/models/wsl", { hours: { "claude-opus-5": { 100: 4, 101: 2 } } });
+  await post("/models/wsl", { hours: { "claude-opus-5": { 100: 3, 102: 1 }, "bad model!": { 100: 9 } } });
+  const models = (await get("/models")).machines.wsl.hours;
+  assert.deepStrictEqual(models, { "claude-opus-5": { 100: 4, 101: 2, 102: 1 } }, "hour counts merge with max, cleaned-up hours stay, bad names drop");
 }

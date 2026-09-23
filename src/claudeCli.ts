@@ -144,6 +144,7 @@ export class ClaudeCliRunner {
       compactedAt: null,
       elapsedMs: 0,
       startedAt: Date.now(),
+      modelId: "",
     };
 
     // The prompt goes in on stdin so that text beginning with "-" is never parsed as a CLI option,
@@ -361,6 +362,12 @@ export class ClaudeCliRunner {
             const eventType = stringOf(event.type);
             if (eventType === "message_start") {
               status.turns += 1;
+              // Subagents stream through here too, tagged with their parent tool call, and may run
+              // on another model; only the main conversation's says what the prompt ran on.
+              const answeredBy = stringOf(recordOf(event.message)?.model);
+              if (answeredBy && !message.parent_tool_use_id) {
+                status.modelId = answeredBy;
+              }
             } else if (eventType === "content_block_start") {
               const block = recordOf(event.content_block);
               status.phase = phaseForBlock(stringOf(block?.type));
@@ -598,6 +605,40 @@ function transcriptPath(workspacePath: string, sessionId: string): string {
   const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
   const projectKey = workspacePath.replace(/[^a-zA-Z0-9]/g, "-");
   return path.join(configDir, "projects", projectKey, `${sessionId}.jsonl`);
+}
+
+// Assistant messages per model per hour (since the epoch) across every transcript on this machine.
+// A streamed reply is written as several lines sharing one message id, and a forked session copies
+// its parent's lines, so ids are deduped.
+// ponytail: rereads all transcripts (~1s for 140MB) on every count; cache by file mtime if it gets slow.
+export async function modelHours(): Promise<Record<string, Record<string, number>>> {
+  const projectsDir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
+  const files = (await fs.promises.readdir(projectsDir, { recursive: true }).catch(() => [] as string[])).filter((file) => file.endsWith(".jsonl"));
+  const messages = new Map<string, { model: string; at: number }>();
+  for (const file of files) {
+    const text = await fs.promises.readFile(path.join(projectsDir, file), "utf8").catch(() => "");
+    for (const line of text.split("\n")) {
+      if (!line.includes('"type":"assistant"')) {
+        continue;
+      }
+      try {
+        const entry = JSON.parse(line) as { uuid?: string; timestamp?: string; message?: { id?: string; model?: string } };
+        const model = entry.message?.model;
+        if (model && model !== "<synthetic>") {
+          messages.set(entry.message?.id || entry.uuid || line, { model, at: Date.parse(entry.timestamp ?? "") || 0 });
+        }
+      } catch {
+        // A line cut off mid-write by a running session.
+      }
+    }
+  }
+  const usage: Record<string, Record<string, number>> = {};
+  for (const { model, at } of messages.values()) {
+    const hours = (usage[model] ??= {});
+    const hour = String(Math.floor(at / 3600000));
+    hours[hour] = (hours[hour] ?? 0) + 1;
+  }
+  return usage;
 }
 
 function sessionTranscriptExists(workspacePath: string, sessionId: string): boolean {

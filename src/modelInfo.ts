@@ -28,7 +28,8 @@ export type ModelPrefs = Record<string, ModelPref>;
 // update notification.
 export interface ModelInfo {
   models: ModelMap;
-  // Model id -> its Anthropic name from the CLI's list, e.g. "Sonnet 5"; shown in the Models pane.
+  // Model value -> its Anthropic name from the CLI's list (the description up to " · "), e.g.
+  // "Sonnet 5"; the Models pane's Descr row.
   names: Record<string, string>;
   presets: Preset[];
   prefs: ModelPrefs;

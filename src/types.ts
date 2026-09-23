@@ -81,7 +81,14 @@ export interface ClaudeTurn {
   response: string;
   createdAt: number;
   completedAt: number | null;
+  // The value sent with --model, as the CLI's model list gave it: often an alias like "opus[1m]".
   model: string;
+  // The other names for that model, kept for debugging. modelName is the CLI list's description
+  // name when the prompt was sent ("Opus 5.5 with 1M context"), modelAlias the Models pane alias
+  // then, and modelId what actually answered ("claude-opus-5-5"), read off the reply itself.
+  modelName: string;
+  modelAlias: string;
+  modelId: string;
   effort: string;
   tokensIn: number;
   tokensOut: number;
@@ -127,6 +134,8 @@ export interface RunningStatus {
   compactedAt: number | null;
   elapsedMs: number;
   startedAt: number;
+  // The model id the API answered the main conversation with; empty until the first reply starts.
+  modelId: string;
 }
 
 export interface ClaudeRunResult {

@@ -7,7 +7,7 @@ import * as path from "path";
 import { captureScreen } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
-import { PluginStats, type StatsDelta } from "./pluginStats";
+import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
@@ -216,6 +216,9 @@ class Claude2Controller implements vscode.Disposable {
     this.quota.start();
     this.watchInstructions();
     this.modelsReady = this.refreshModels();
+    // Every machine's transcripts count toward the one account, so each reports its own on start,
+    // not only when its Models tab happens to open.
+    void modelUsage((line) => this.channel.appendLine(line));
     void this.rescueOrphanDrafts();
   }
 
@@ -1131,6 +1134,7 @@ class Claude2Controller implements vscode.Disposable {
     if (this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
+    const modelInfo = readModelInfo(this.context.globalState);
     const turn: ClaudeTurn = {
       id: turnId,
       prompt,
@@ -1139,6 +1143,9 @@ class Claude2Controller implements vscode.Disposable {
       createdAt: Date.now(),
       completedAt: null,
       model: selectedModel,
+      modelName: modelInfo.names[selectedModel] ?? "",
+      modelAlias: modelInfo.prefs[selectedModel]?.alias ?? "",
+      modelId: "",
       effort: selectedEffort,
       tokensIn: 0,
       tokensOut: 0,
@@ -1173,6 +1180,7 @@ class Claude2Controller implements vscode.Disposable {
     let streamDirty = false;
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     let lastContext = priorContext;
+    let lastModelId = "";
     let lastPonySkips: PonySkip[] = [];
     let lastTurns = 0;
     const flushStream = (): void => {
@@ -1214,6 +1222,7 @@ class Claude2Controller implements vscode.Disposable {
         },
         onStatus: (status) => {
           lastContext = status.contextTokens || lastContext;
+          lastModelId = status.modelId || lastModelId;
           lastPonySkips = status.ponySkips.length ? status.ponySkips : lastPonySkips;
           lastTurns = status.turns || lastTurns;
           queueStream();
@@ -1232,6 +1241,7 @@ class Claude2Controller implements vscode.Disposable {
         turns: result.turns,
         durationMs: result.durationMs,
         ponySkips: result.ponySkips,
+        modelId: lastModelId,
       }, true);
       await this.store.flush();
       void this.noteTurnStats(sessionId, {
@@ -1269,6 +1279,7 @@ class Claude2Controller implements vscode.Disposable {
           durationMs: Math.max(0, Date.now() - turn.createdAt),
           ponySkips: lastPonySkips,
           turns: lastTurns,
+          modelId: lastModelId,
           finished: true,
           stopped: false,
         }, true);
@@ -1649,6 +1660,8 @@ class Claude2Controller implements vscode.Disposable {
       await writeModelInfo(this.context.globalState, { ...info, seenDate: info.date });
       this.postModelInfo();
       await this.reply(requestId, async () => ({ ...info, maxTurns: this.runLimits().maxTurns }));
+    } else if (type === "loadModelUsage") {
+      await this.reply(requestId, () => modelUsage((line) => this.channel.appendLine(line)));
     } else if (type === "savePresets") {
       // One Save covers the per-model choices and the presets picked from them.
       const stored = readModelInfo(this.context.globalState);

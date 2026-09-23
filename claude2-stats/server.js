@@ -12,6 +12,8 @@
 //   GET  /quota                          -> { rows, readAt, pausedUntil, state }
 //   POST /quota   body: { rows?, readAt?, pausedUntil?, state? } -> merge a reading
 //   POST /quota/claim                    -> { poll } : the right to call the usage endpoint
+//   GET  /models                         -> { machines: { <host>: { updatedAt, hours } } }
+//   POST /models/<host>  body: { hours } -> merge { <model>: { <hour since epoch>: messages } }
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -47,10 +49,10 @@ const quotaFreshMs = 4.5 * 60 * 1000;
 const quotaClaimMs = 30 * 1000;
 const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
 
-let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota } };
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {} };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) } };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {} };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -124,6 +126,22 @@ function mergeQuota(body) {
       quota.state = body.state;
     }
   }
+}
+
+// Assistant messages per model per hour, one block per machine, each counted from that machine's
+// own transcripts. Every push is the machine's whole history, and an hour's count only grows, so
+// max() keeps it idempotent -- and keeps hours whose transcripts Claude Code has since cleaned up.
+function mergeModels(host, body) {
+  const machine = data.models[host] || (data.models[host] = { updatedAt: 0, hours: {} });
+  const incoming = body.hours && typeof body.hours === "object" ? body.hours : {};
+  for (const [model, hours] of Object.entries(incoming)) {
+    if (!namePattern.test(model) || !hours || typeof hours !== "object") continue;
+    const known = machine.hours[model] || (machine.hours[model] = {});
+    for (const [hour, count] of Object.entries(hours)) {
+      if (/^\d+$/.test(hour)) known[hour] = Math.max(numberOf(known[hour]), numberOf(count));
+    }
+  }
+  machine.updatedAt = Date.now();
 }
 
 function readBody(request, limit = 32768) {
@@ -200,6 +218,18 @@ async function handle(request, response) {
     mergeQuota(body);
     save();
     return json(200, { ok: true, rows: data.quota.rows.length });
+  }
+  if (request.method === "GET" && url.pathname === "/models") {
+    return json(200, { machines: data.models });
+  }
+  if (request.method === "POST" && parts[0] === "models" && parts.length === 2 && namePattern.test(parts[1])) {
+    const body = JSON.parse((await readBody(request, 2 * 1024 * 1024)) || "{}");
+    if (typeof body !== "object" || body === null) {
+      return json(400, { error: "expected a JSON object" });
+    }
+    mergeModels(parts[1], body);
+    save();
+    return json(200, { ok: true });
   }
   if (request.method === "POST" && parts.length === 2 && namePattern.test(parts[1])) {
     const body = JSON.parse((await readBody(request)) || "{}");
