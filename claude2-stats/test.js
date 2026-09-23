@@ -36,6 +36,9 @@ async function run(base) {
   await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 5, turns: 40, costUsd: 12.5, ponyCeilings: 3, srcLines: 5000 });
   await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 3, turns: 41, costUsd: 12.5, ponyCeilings: 2, turnsPonyOn: 7 });
   await post("/flags/claude2", { graft: false });
+  assert.deepStrictEqual(await get("/settings"), {}, "settings start empty");
+  await post("/settings", { maxTurns: 120 });
+  assert.deepStrictEqual(await get("/settings"), { maxTurns: 120 }, "settings round-trip");
   const turns = await post("/turns", { events: [{ id: "a", turns: 1 }, { id: "b", turns: 1 }, "junk"] });
   assert.deepStrictEqual(turns, { ok: true, count: 2 }, "turn events append, non-objects dropped");
   const lines = fs.readFileSync(path.join(dir, "turns.jsonl"), "utf8").trim().split("\n");

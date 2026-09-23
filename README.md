@@ -26,16 +26,16 @@ driving the `claude` CLI directly instead of wrapping a terminal.
 
 ## Settings
 
-| Setting                        | Default                 | Purpose                                  |
-| ------------------------------ | ----------------------- | ---------------------------------------- |
-| `claude2.enabled`              | `true`                  | Enable the extension                     |
-| `claude2.model`                | `claude-opus-5`         | Default model for new prompts            |
-| `claude2.effort`               | `high`                  | Default effort (`low`…`max`)             |
-| `claude2.contextWindowTokens`  | `256000`                | Context window shown in conversations    |
-| `claude2.maxTurns`             | `50`                    | `--max-turns` per prompt                 |
-| `claude2.maxBudgetUsd`         | `0`                     | `--max-budget-usd` per prompt (0 = none) |
-| `claude2.permissionMode`       | `auto`                  | CLI permission mode                      |
-| `claude2.timezone`             | `America/Los_Angeles`   | Timezone used by the quota pane          |
+Set in the management pane's Settings tab, not VS Code settings. One copy lives on the
+claude2-stats server, shared by every host type; other windows pick a save up when they reload.
+
+| Setting                  | Default               | Purpose                                  |
+| ------------------------ | --------------------- | ---------------------------------------- |
+| Turn limit per prompt    | `50`                  | `--max-turns` per prompt (50-250)        |
+| Max context tokens       | `256000`              | Auto-compact window (100k-1M)            |
+| Max budget per prompt    | `0`                   | `--max-budget-usd` per prompt (0 = none) |
+| Permission mode          | `auto`                | CLI permission mode                      |
+| Quota pane timezone      | `America/Los_Angeles` | IANA timezone used by the quota pane     |
 
 ## Commands
 

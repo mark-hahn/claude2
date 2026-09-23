@@ -10,8 +10,9 @@ import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
+import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -98,6 +99,9 @@ class Claude2Controller implements vscode.Disposable {
   private managementPane: ManagementPane | null = null;
   // The load's `claude update` + model check; runs wait on it (see waitForUpdate).
   private modelsReady: Promise<void> = Promise.resolve();
+  // The Settings pane's values as of this window's load; a Save here updates them too.
+  private settings: Settings;
+  private settingsReady: Promise<void>;
   private modelsSettled = false;
   // The conversation a management button toggles back to; the panels themselves are all
   // inactive while a management pane is up front, so remember the last one focused.
@@ -123,6 +127,8 @@ class Claude2Controller implements vscode.Disposable {
     // turn events queued while the stats server was unreachable drain on activation
     void this.stats.flushTurns();
     this.authNeeded = context.globalState.get<boolean>(authNeededKey, false);
+    this.settings = cachedSettings(context.globalState);
+    this.settingsReady = fetchSettings(context.globalState, (line) => this.channel.appendLine(line)).then((settings) => { this.settings = settings; });
     // The footer's ponytail stat needs a ceiling count before the window's first turn takes one.
     void this.ponyCeilingCount().then((count) => { this.ceilings = count; });
     this.loadDrafts();
@@ -316,9 +322,6 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   private async newSession(): Promise<void> {
-    if (!(await this.ensureEnabled())) {
-      return;
-    }
     await this.discardEmptySessions();
     const session = await this.createSession();
     this.refreshSidebar();
@@ -497,7 +500,7 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   private async openConversation(sessionId: string, focusPrompt = false): Promise<void> {
-    if (!sessionId || !(await this.ensureEnabled())) {
+    if (!sessionId) {
       return;
     }
     const session = this.store.get(sessionId);
@@ -1130,6 +1133,7 @@ class Claude2Controller implements vscode.Disposable {
         prompt = `${prompt}\n\n${sent.map((file) => fileNote(file)).join("\n\n")}`;
       }
     }
+    await this.settingsReady;
     const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model;
     // An empty effort is a pick, not a gap: that model takes no effort levels.
@@ -1407,7 +1411,7 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   private async openManagement(pane: ManagementPane): Promise<void> {
-    if (!(await this.ensureEnabled()) || !(await this.mayLeaveManagement())) {
+    if (!(await this.mayLeaveManagement())) {
       return;
     }
     if (!this.managementPanel) {
@@ -1671,7 +1675,7 @@ class Claude2Controller implements vscode.Disposable {
       const info = readModelInfo(this.context.globalState);
       await writeModelInfo(this.context.globalState, { ...info, seenDate: info.date });
       this.postModelInfo();
-      await this.reply(requestId, async () => ({ ...info, maxTurns: this.runLimits().maxTurns }));
+      await this.reply(requestId, async () => info);
     } else if (type === "loadModelUsage") {
       await this.reply(requestId, () => modelUsage((line) => this.channel.appendLine(line)));
     } else if (type === "savePresets") {
@@ -1680,11 +1684,7 @@ class Claude2Controller implements vscode.Disposable {
       const prefs = prefsOf(record?.prefs, stored.models);
       const presets = prunePresets(presetsOf(record?.presets), prefs, stored.models);
       const defaultPreset = Number.isInteger(record?.defaultPreset) ? (record?.defaultPreset as number) : 0;
-      const maxTurns = Number(record?.maxTurns);
       await this.reply(requestId, async () => {
-        if (!Number.isInteger(maxTurns) || maxTurns < 50 || maxTurns > 250) {
-          throw new Error("The turn limit must be a whole number from 50 to 250.");
-        }
         // A bad pane refuses to save at all, so the stored default is always one the user picked.
         if (!presets[defaultPreset]?.enabled) {
           throw new Error(presets.some((preset) => preset.enabled)
@@ -1700,11 +1700,18 @@ class Claude2Controller implements vscode.Disposable {
           }
         }
         await writeModelInfo(this.context.globalState, { ...stored, presets, prefs, defaultPreset });
-        // Application scope: it lands in the client's user settings, which every host type --
-        // windows, wsl, ssh -- reads, so one save covers them all from their next reload.
-        await vscode.workspace.getConfiguration("claude2").update("maxTurns", maxTurns, vscode.ConfigurationTarget.Global);
         this.postModelInfo();
         return readModelInfo(this.context.globalState);
+      });
+    } else if (type === "loadSettings") {
+      // The server's current copy, which another host may have saved since this window loaded.
+      await this.reply(requestId, () => fetchSettings(this.context.globalState, (line) => this.channel.appendLine(line)));
+    } else if (type === "saveSettings") {
+      await this.reply(requestId, async () => {
+        const settings = checkSettings(record?.settings);
+        await saveSettings(this.context.globalState, settings, (line) => this.channel.appendLine(line));
+        this.settings = settings;
+        return settings;
       });
     } else if (type === "loadInstructions") {
       await this.reply(requestId, async () => await this.instructions.read());
@@ -1872,39 +1879,29 @@ class Claude2Controller implements vscode.Disposable {
   // The pickers show the session's own picks and nothing else -- a blank stays blank, and a
   // model the CLI no longer lists stays shown, so what is on screen is what would run.
   private conversationDefaults(sessionId: string): ConversationDefaults {
-    const config = vscode.workspace.getConfiguration("claude2");
     const session = this.store.get(sessionId);
     return {
       model: session?.model ?? "",
       effort: session?.effort ?? "",
-      contextWindow: config.get<number>("contextWindowTokens", CLAUDE2_CONTEXT_WINDOW),
-      maxTurns: config.get<number>("maxTurns", 50),
+      contextWindow: this.settings.contextWindowTokens,
+      maxTurns: this.settings.maxTurns,
     };
   }
 
   private runLimits(): RunLimits {
-    const config = vscode.workspace.getConfiguration("claude2");
     return {
-      maxTurns: config.get<number>("maxTurns", 50),
-      maxBudgetUsd: config.get<number>("maxBudgetUsd", 0),
-      permissionMode: config.get<string>("permissionMode", "auto"),
+      maxTurns: this.settings.maxTurns,
+      maxBudgetUsd: this.settings.maxBudgetUsd,
+      permissionMode: this.settings.permissionMode,
     };
   }
 
   private timezone(): string {
-    return vscode.workspace.getConfiguration("claude2").get<string>("timezone", "America/Los_Angeles");
+    return this.settings.timezone;
   }
 
   private workspacePath(): string {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  }
-
-  private async ensureEnabled(): Promise<boolean> {
-    const enabled = vscode.workspace.getConfiguration("claude2").get<boolean>("enabled", true);
-    if (!enabled) {
-      await vscode.window.showWarningMessage("Claude2 is disabled in settings.");
-    }
-    return enabled;
   }
 }
 
@@ -1934,7 +1931,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
 }
 
 function paneOf(value: unknown): ManagementPane | null {
-  return value === "instructions" || value === "quota" || value === "plugins" || value === "models" || value === "cap" ? value : null;
+  return value === "instructions" || value === "quota" || value === "plugins" || value === "models" || value === "settings" || value === "cap" ? value : null;
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

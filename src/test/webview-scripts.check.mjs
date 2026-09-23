@@ -19,6 +19,7 @@ const pages = {
   quota: managementHtml(webview, 'quota', 'UTC', 1),
   plugins: managementHtml(webview, 'plugins', 'UTC', 1),
   models: managementHtml(webview, 'models', 'UTC', 1, true),
+  settings: managementHtml(webview, 'settings', 'UTC', 1),
   cap: managementHtml(webview, 'cap', 'UTC', 1),
 };
 

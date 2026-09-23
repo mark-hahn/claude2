@@ -1,6 +1,6 @@
 
-the models table now has 6 columns:	`opus	claude-fable-5-1	sonnet	haiku	claude-opus-5	claude-fable-5`.
-i thought the cli only gave us 4
+i want max turns and max context to be set by model
+move them from settings pane to rows in the model table
 
 models update details
 
@@ -12,6 +12,18 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+# settings pane
+- add a new settings pane to management pane 
+  - it should have tab button `Settings` to the right of the models tab button
+  - it should have a save button
+- move all settings to settings pane including max turns
+  - the models pane should now have only things related to models
+  - remove claude2 settings from vscode settings
+- extension enabled setting isn't needed because vscode already does that
+
+the models table now has 6 columns:	`opus	claude-fable-5-1	sonnet	haiku	claude-opus-5	claude-fable-5`.
+i thought the cli only gave us 4
 
 add all 4 names to claude2's saved turn. if nothing else they might be useful for debugging. i like to hoarde data.
 

@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.107",
+  "version": "0.0.109",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -61,52 +61,7 @@
         "title": "Open Quota",
         "category": "Claude2"
       }
-    ],
-    "configuration": {
-      "title": "Claude2",
-      "properties": {
-        "claude2.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable the Claude2 extension."
-        },
-        "claude2.contextWindowTokens": {
-          "type": "number",
-          "default": 256000,
-          "description": "Context window token count shown in Claude2 conversations."
-        },
-        "claude2.maxTurns": {
-          "type": "number",
-          "default": 50,
-          "minimum": 50,
-          "maximum": 250,
-          "scope": "application",
-          "description": "Maximum agentic turns per Claude2 prompt (passed to the Claude CLI as --max-turns). Set in the Models pane."
-        },
-        "claude2.maxBudgetUsd": {
-          "type": "number",
-          "default": 0,
-          "description": "Maximum notional spend per Claude2 prompt in USD (--max-budget-usd). 0 means no limit."
-        },
-        "claude2.permissionMode": {
-          "type": "string",
-          "enum": [
-            "acceptEdits",
-            "auto",
-            "bypassPermissions",
-            "dontAsk",
-            "plan"
-          ],
-          "default": "auto",
-          "description": "Claude CLI permission mode used for Claude2 prompts."
-        },
-        "claude2.timezone": {
-          "type": "string",
-          "default": "America/Los_Angeles",
-          "description": "IANA timezone used by the Claude quota pane."
-        }
-      }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

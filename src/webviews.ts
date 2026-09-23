@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import type { ModelInfo } from "./modelInfo";
+import { permissionModes } from "./settings";
 import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
 
-export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "cap";
+export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "settings" | "cap";
 
 export interface ConversationDefaults {
   model: string;
@@ -1665,6 +1666,9 @@ export function managementHtml(webview: vscode.Webview, pane: ManagementPane, ti
   if (pane === "models") {
     return modelsHtml(webview, zoom, alert);
   }
+  if (pane === "settings") {
+    return settingsHtml(webview, zoom, alert);
+  }
   if (pane === "cap") {
     return capHtml(webview, zoom);
   }
@@ -1676,6 +1680,7 @@ const managementTabs: [ManagementPane, string][] = [
   ["instructions", "Instructions"],
   ["plugins", "Stats"],
   ["models", "Models"],
+  ["settings", "Settings"],
 ];
 
 // The tabs lead each pane's title row, where the pane's own heading used to be; they act as
@@ -1740,7 +1745,6 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     .usage-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
     .usage-head h2 { margin: 0; }
     #usageMode { min-width: 0; }
-    #turns { font: inherit; color: var(--ink); width: 6em; padding: 2px 6px; }
     select { font: inherit; color: var(--ink); min-width: 14em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 ${tabsStyle()}  </style>
@@ -1748,7 +1752,7 @@ ${tabsStyle()}  </style>
 <body>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
-    <div class="box"><h2>Models By Value</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row">Turn limit per prompt <input id="turns" type="number" min="50" max="250" step="1"></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box"><h2>Models By Value</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
     <div class="box"><div class="usage-head"><h2>Messages Per Model ID</h2><select id="usageMode"><option>Past</option><option>Days</option></select></div><table id="usage"><tr><td>Counting…</td></tr></table><div id="machines"></div></div>
   </div>
   <script nonce="${nonce}">
@@ -1773,7 +1777,6 @@ ${zoomScript(z)}
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
     document.getElementById('default').addEventListener('change', (event) => { defaultModel = event.target.value; unsaved(); });
-    document.getElementById('turns').addEventListener('input', unsaved);
     void load();
     void loadUsage();
     document.getElementById('usageMode').addEventListener('change', renderUsage);
@@ -1801,7 +1804,6 @@ ${zoomScript(z)}
       }
       const chosen = (info.presets || [])[info.defaultPreset || 0];
       defaultModel = chosen && chosen.enabled ? chosen.model : '';
-      document.getElementById('turns').value = String(info.maxTurns);
       renderModels();
       document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
       note('');
@@ -1976,13 +1978,108 @@ ${zoomScript(z)}
     async function save() {
       const presets = presetList();
       const defaultPreset = presets.findIndex((preset) => preset.model === defaultModel);
-      const maxTurns = Number(document.getElementById('turns').value);
-      const reply = await request('savePresets', { presets, prefs, defaultPreset, maxTurns });
+      const reply = await request('savePresets', { presets, prefs, defaultPreset });
       note(reply.ok ? 'Saved' : 'Save failed: ' + (reply.error || 'unknown error'));
     }
 
     function unsaved() {
       note('Not saved');
+    }
+
+    function note(text) {
+      document.getElementById('note').textContent = text;
+    }
+  </script>
+</body>
+</html>`;
+}
+
+// The Settings pane: every Claude2 setting, one copy on the stats server shared by every host
+// type. Other windows pick a save up when they reload.
+function settingsHtml(webview: vscode.Webview, zoom: number, alert: boolean): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
+  const modes = permissionModes.map((mode) => `<option>${mode}</option>`).join("");
+  return `<!doctype html>
+<html lang="en" style="--z: ${z}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <style>
+    :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
+    .pane { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+    .title { display: flex; align-items: center; gap: 12px; }
+    .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
+    .box { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px 16px; }
+    #fields td { padding: 4px 16px 4px 0; }
+    input, select { font: inherit; color: var(--ink); padding: 2px 6px; }
+    input[type=number] { width: 8em; }
+    input[type=text] { width: 14em; }
+    .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+${tabsStyle()}  </style>
+</head>
+<body>
+  <div class="pane">
+    <div class="title">${tabsHtml("settings", alert)}<div class="actions"><button id="close">Close</button></div></div>
+    <div class="box">
+      <table id="fields">
+        <tr><td>Turn limit per prompt</td><td><input id="maxTurns" type="number" min="50" max="250" step="1"></td></tr>
+        <tr><td>Max context tokens</td><td><input id="contextWindowTokens" type="number" min="100000" max="1000000" step="1000"></td></tr>
+        <tr><td>Max budget per prompt in USD (0 = no limit)</td><td><input id="maxBudgetUsd" type="number" min="0" step="0.01"></td></tr>
+        <tr><td>Permission mode</td><td><select id="permissionMode">${modes}</select></td></tr>
+        <tr><td>Quota pane timezone (IANA)</td><td><input id="timezone" type="text"></td></tr>
+      </table>
+      <div class="save-row"><button id="save">Save</button><span id="note"></span></div>
+    </div>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${tabsScript()}
+${zoomScript(z)}
+    const pending = new Map();
+    const numbers = ['maxTurns', 'contextWindowTokens', 'maxBudgetUsd'];
+    const fields = numbers.concat(['permissionMode', 'timezone']);
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'reply' && pending.has(message.requestId)) {
+        pending.get(message.requestId)(message);
+        pending.delete(message.requestId);
+      }
+    });
+    document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
+    document.getElementById('save').addEventListener('click', () => void save());
+    for (const id of fields) document.getElementById(id).addEventListener('input', () => note('Not saved'));
+    void load();
+
+    function request(type, payload) {
+      const requestId = String(Date.now()) + Math.random();
+      return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, payload)); });
+    }
+
+    async function load() {
+      const reply = await request('loadSettings', {});
+      if (!reply.ok) {
+        note('Could not load the settings: ' + (reply.error || 'unknown error'));
+        return;
+      }
+      for (const id of fields) document.getElementById(id).value = String(reply.payload[id]);
+      note('');
+    }
+
+    async function save() {
+      const settings = {};
+      for (const id of fields) {
+        const value = document.getElementById(id).value;
+        settings[id] = numbers.includes(id) ? Number(value) : value;
+      }
+      const reply = await request('saveSettings', { settings });
+      note(reply.ok ? 'Saved. Other windows use it after they reload.' : 'Save failed: ' + (reply.error || 'unknown error'));
     }
 
     function note(text) {

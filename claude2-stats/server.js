@@ -14,6 +14,8 @@
 //   POST /quota/claim                    -> { poll } : the right to call the usage endpoint
 //   GET  /models                         -> { machines: { <host>: { updatedAt, hours } } }
 //   POST /models/<host>  body: { hours } -> merge { <model>: { <hour since epoch>: messages } }
+//   GET  /settings                       -> the Settings pane's values ({} until first saved)
+//   POST /settings  body: settings       -> replace them (the extension validates)
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -49,10 +51,10 @@ const quotaFreshMs = 4.5 * 60 * 1000;
 const quotaClaimMs = 30 * 1000;
 const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
 
-let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {} };
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {} };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {} };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {} };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -218,6 +220,18 @@ async function handle(request, response) {
     mergeQuota(body);
     save();
     return json(200, { ok: true, rows: data.quota.rows.length });
+  }
+  if (request.method === "GET" && url.pathname === "/settings") {
+    return json(200, data.settings);
+  }
+  if (request.method === "POST" && url.pathname === "/settings") {
+    const body = JSON.parse((await readBody(request)) || "{}");
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return json(400, { error: "expected a JSON object" });
+    }
+    data.settings = body;
+    save();
+    return json(200, { ok: true });
   }
   if (request.method === "GET" && url.pathname === "/models") {
     return json(200, { machines: data.models });
