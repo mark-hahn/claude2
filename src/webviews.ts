@@ -1729,8 +1729,8 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     table { border-collapse: collapse; margin-bottom: 8px; }
     #models td, #models th { padding: 3px 20px 3px 0; text-align: left; vertical-align: top; }
     #models th { font-weight: 600; }
-    /* The value headers and the Descr row below them never wrap; the columns grow to fit them. */
-    #models tr:first-child th, #models tr:nth-child(2) td { white-space: nowrap; }
+    /* The model and Descr columns never wrap; they grow to fit. */
+    #models td:nth-child(-n+2) { white-space: nowrap; }
     #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
     #models input[type=text] { font: inherit; color: var(--ink); width: 9em; padding: 2px 6px; }
     #models select { min-width: 6em; }
@@ -1872,40 +1872,24 @@ ${zoomScript(z)}
       return (prefs[model] = prefs[model] || { on: true, alias: '', effort: '' });
     }
 
-    // One column per model the CLI offers, headed by the value sent with --model. Down each
-    // column: the CLI's name for it, whether it shows up in the footer's picker at all, whether it is a preset, the
-    // display name to use instead of the id, and the effort its preset runs at. A hidden model
-    // cannot be a preset.
+    // One row per model the CLI offers, led by the value sent with --model. Across each row:
+    // the CLI's name for it, whether it shows up in the footer's picker at all, whether it is a
+    // preset, the display name to use instead of the id, and the effort its preset runs at. A
+    // hidden model cannot be a preset.
     function renderModels() {
       const table = document.getElementById('models');
       table.replaceChildren();
-      const ids = Object.keys(models);
-      const head = table.insertRow();
-      head.appendChild(document.createElement('th'));
-      for (const model of ids) {
-        const th = document.createElement('th');
-        th.textContent = model;
-        head.appendChild(th);
-      }
-      const row = (label, cell) => {
-        const tr = table.insertRow();
-        const th = document.createElement('th');
-        th.textContent = label;
-        tr.appendChild(th);
-        for (const model of ids) {
-          const td = tr.insertCell();
-          const content = cell(model, models[model]);
-          if (typeof content === 'string') td.textContent = content; else td.appendChild(content);
-        }
-      };
+      const columns = [];
+      const column = (label, cell) => columns.push({ label, cell });
+      column('Model', (model) => model);
       // The CLI's name for what the value runs on now: its description up to " · ".
-      row('Descr', (model) => names[model] || '');
-      row('Show', (model) => {
+      column('Descr', (model) => names[model] || '');
+      column('Show', (model) => {
         const check = checkbox(pref(model).on !== false);
         check.addEventListener('change', () => { pref(model).on = check.checked; renderModels(); unsaved(); });
         return check;
       });
-      row('Preset', (model) => {
+      column('Preset', (model) => {
         const check = checkbox(presetModels.has(model) && pref(model).on !== false);
         check.disabled = pref(model).on === false;
         check.addEventListener('change', () => {
@@ -1915,7 +1899,7 @@ ${zoomScript(z)}
         });
         return check;
       });
-      row('Alias', (model) => {
+      column('Alias', (model) => {
         const alias = document.createElement('input');
         alias.type = 'text';
         alias.value = pref(model).alias || '';
@@ -1923,7 +1907,7 @@ ${zoomScript(z)}
         alias.addEventListener('input', () => { pref(model).alias = alias.value; renderDefault(); unsaved(); });
         return alias;
       });
-      row('Effort', (model, efforts) => {
+      column('Effort', (model, efforts) => {
         const effort = document.createElement('select');
         effort.disabled = efforts.length === 0;
         pref(model).effort = efforts.includes(pref(model).effort) ? pref(model).effort : efforts[0] || '';
@@ -1937,6 +1921,20 @@ ${zoomScript(z)}
         effort.addEventListener('change', () => { pref(model).effort = effort.value; renderDefault(); unsaved(); });
         return effort;
       });
+      const head = table.insertRow();
+      for (const { label } of columns) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        head.appendChild(th);
+      }
+      for (const [model, efforts] of Object.entries(models).sort(([a], [b]) => a.localeCompare(b))) {
+        const tr = table.insertRow();
+        for (const { cell } of columns) {
+          const content = cell(model, efforts);
+          const td = tr.insertCell();
+          if (typeof content === 'string') td.textContent = content; else td.appendChild(content);
+        }
+      }
       renderDefault();
     }
 
