@@ -1405,7 +1405,7 @@ ${tooltipScript()}
     function flagCompaction() {
       document.getElementById('context').classList.add('compacted');
       if (compactTimer !== null) window.clearTimeout(compactTimer);
-      compactTimer = window.setTimeout(clearCompaction, 15000);
+      compactTimer = window.setTimeout(clearCompaction, 60000);
     }
 
     function clearCompaction() {
@@ -1436,7 +1436,7 @@ ${tooltipScript()}
       const contextBox = document.getElementById('context');
       contextBox.textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
       // Latched locally the moment a new compaction is reported: the run's status stops being
-      // posted once the turn ends, so the flag can't hang off it for its whole 15 seconds.
+      // posted once the turn ends, so the flag can't hang off it for its whole minute.
       if (active && status.compactedAt && status.compactedAt !== compactSeen) {
         compactSeen = status.compactedAt;
         flagCompaction();
