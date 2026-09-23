@@ -472,7 +472,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
-    textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; min-height: var(--edh); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
+    textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; field-sizing: content; min-height: var(--edh); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
     .stats { display: flex; gap: 12px; align-items: center; margin-right: 2px; }
@@ -598,6 +598,10 @@ ${tooltipScript()}
     let pendingTurnCount = 0;
     let programmaticScroll = false;
     let resizeTimer = 0;
+    // frozenPane: a wheel over the pane (not over a scrolling box) suspends every auto-scrolling
+    // rule so the pane scrolls freely and keeps its position through renders. Any mouse press
+    // anywhere in the webview thaws it; the press still does its normal job.
+    let frozenPane = false;
     let draftSent = '';
     // U+1F5BC U+FE0F, one per picture attached to this prompt. The run of them leads the prompt
     // box's text and every prompt bar built from a turn that carried pictures.
@@ -737,22 +741,60 @@ ${tooltipScript()}
     // auto-scrolling rules allow (bordering bars and selected bar visible), so the scroll
     // position is clamped rather than the selection moved.
     historyBox.addEventListener('scroll', () => {
+      if (frozenPane) return;
       if (programmaticScroll || !session.turns.length) return;
       const bounds = scrollBounds();
       if (!bounds) return;
       const clamped = Math.min(bounds.max, Math.max(bounds.min, historyBox.scrollTop));
       if (clamped !== historyBox.scrollTop) historyBox.scrollTop = clamped;
     });
+    // A wheel over a box that can scroll stays the box's; anywhere else in the pane it freezes it.
+    // An unfocused webview never freezes: nothing short of a click here could thaw it.
+    historyBox.addEventListener('wheel', (event) => {
+      if (!document.hasFocus()) return;
+      for (let el = event.target; el && el !== historyBox; el = el.parentElement) {
+        const overflowY = getComputedStyle(el).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) return;
+      }
+      frozenPane = true;
+    }, { passive: true });
+    // Capture phase, so the thaw lands before the press's own handlers run. The rules are
+    // re-applied only after the release, so nothing moves under the pointer mid-click.
+    let thawing = false;
+    window.addEventListener('pointerdown', () => {
+      if (!frozenPane) return;
+      frozenPane = false;
+      thawing = true;
+    }, true);
+    window.addEventListener('pointerup', () => {
+      if (!thawing) return;
+      thawing = false;
+      requestAnimationFrame(resyncSelectedBlock);
+    }, true);
+    function thawPane() {
+      if (!frozenPane) return;
+      frozenPane = false;
+      requestAnimationFrame(resyncSelectedBlock);
+    }
+    // A press elsewhere in VS Code, or switching away from it, never reaches this webview;
+    // losing focus stands in for both.
+    window.addEventListener('blur', thawPane);
+    // Any footer action thaws, keyboard included (mouse presses are already covered above).
+    const dockControls = document.querySelector('.dock-controls');
+    for (const type of ['keydown', 'click', 'change']) dockControls.addEventListener(type, thawPane, true);
     // The open box's clamp is sized from the pane height, so a pane resize has to
     // re-derive it or the old clamp sticks.
     window.addEventListener('resize', () => {
       window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(() => {
-        const response = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
-        const atBottom = response ? response.scrollHeight - response.scrollTop - response.clientHeight < 18 : false;
-        syncSelectedBlock(atBottom ? 'bottom' : response ? response.scrollTop : 0);
-      }, 80);
+      resizeTimer = window.setTimeout(resyncSelectedBlock, 80);
     });
+
+    // Re-applies the rules to the selected block, keeping its box where it currently sits.
+    function resyncSelectedBlock() {
+      const response = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
+      const atBottom = response ? response.scrollHeight - response.scrollTop - response.clientHeight < 18 : false;
+      syncSelectedBlock(atBottom ? 'bottom' : response ? response.scrollTop : 0);
+    }
 
     function fillSelect(select, values, selected, label) {
       select.replaceChildren();
@@ -924,6 +966,8 @@ ${tooltipScript()}
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
+      // A keyboard submit is the one selection change with no mouse press to thaw the pane.
+      frozenPane = false;
     }
 
     function loadSelectedPrompt() {
@@ -1220,6 +1264,7 @@ ${tooltipScript()}
       const selectedResponse = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');
       const selectedResponseTop = selectedResponse ? selectedResponse.scrollTop : 0;
       const selectedResponseAtBottom = selectedResponse ? selectedResponse.scrollHeight - selectedResponse.scrollTop - selectedResponse.clientHeight < 18 : false;
+      const paneTop = historyBox.scrollTop;
       historyBox.replaceChildren();
       if (!turns.length) {
         const empty = document.createElement('div');
@@ -1335,6 +1380,8 @@ ${tooltipScript()}
           historyBox.appendChild(wrapper);
         });
       }
+      // A frozen pane keeps its spot through the rebuild instead of following the selection.
+      if (frozenPane) historyBox.scrollTop = paneTop;
       // A selection that moved for any other reason (a fork shrank the list) still lands
       // its box on its remembered position, the same as every other fresh open.
       if (boxScrollNext === null && anchorIndex !== wasAnchor) boxScrollNext = 'restore';
@@ -1586,7 +1633,7 @@ ${tooltipScript()}
           response.style.overflowY = 'auto';
         }
       }
-      const bounds = scrollBounds();
+      const bounds = frozenPane ? null : scrollBounds();
       if (bounds) {
         const target = Math.min(bounds.max, Math.max(bounds.min, historyBox.scrollTop));
         if (target !== historyBox.scrollTop) {

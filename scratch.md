@@ -1,7 +1,5 @@
 
-allow the prompt editor box to expand up to 6 lines tall when there are 6 or more lines in the box.
 
-when a srollwheel tries to move the conversation ane, and is not over a currently scrolling box, then enter a special frozenPane mode -- this is called frozen because all relative positions of items in the pane will stay fixed  -- all rules are overriden until there is a mouse action anywhere in the ui -- the mouse action would still be passed on -- an example is scrolling up and then clicking on a bar -- that bar would be opened -- another example is clicking outside the pane 
 
 ???????
 too many bars above block
@@ -9,6 +7,22 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+allow the prompt editor box to expand up to 6 lines tall when there are 6 or more lines in the box.
+
+# scrolling the conversation pane
+- i want to be able to scroll the pane no matter what state it is in
+  - currently that isn't possible because of all the rules
+- when a srollwheel tries to move the conversation pane and is not over a currently scrolling box:
+  - then enter a special frozenPane mode 
+    - this is called frozen because all relative positions of items in the pane will stay fixed  
+  - all rules are overriden until there is a mouse action anywhere in the ui 
+    - the mouse action would still be passed on 
+    - an example is scrolling up and then clicking on a bar, that bar would be opened
+    - another example is clicking outside the pane 
+- this will need to be tested by me to see if it feels natural and doesn't cause any problems
+  - git is up-to-date so we can easily revert this
+- do you see any problem with this idea other than breaking rules?
 
 what conversation/block/box display rules would be broken if we allowed scrolling the entire conversation pane 
 
