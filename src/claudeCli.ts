@@ -521,6 +521,14 @@ export class ClaudeCliRunner {
     await collectProcess("claude", ["update"], workspacePath, 180000, null);
   }
 
+  // The CLI re-downloads the account's settings -- which decide the model list it reports --
+  // only when it actually talks to the API, so a one-word prompt on the cheapest model is what
+  // brings a stale list up to date. Its answer is thrown away.
+  public async refreshAccountSettings(model: string, workspacePath: string): Promise<void> {
+    const args = ["-p", "--output-format", "json", "--model", sanitizeModel(model), "--max-turns", "1", "--max-budget-usd", String(titleBudgetUsd), "--tools", "", "--setting-sources", "", "--no-session-persistence"];
+    await collectProcess("claude", args, workspacePath, 60000, "ok");
+  }
+
   // Asks the CLI which models this account can use and each one's effort levels: the same
   // initialize handshake the Agent SDK sends, answered without starting a turn.
   // Each model's Anthropic name: its description up to a " · " when it has one (only there
@@ -834,7 +842,12 @@ function collectProcess(command: string, args: string[], workspacePath: string, 
       if (exitCode === 0) {
         resolve(stdoutText.trim());
       } else {
-        reject(new Error(stderrText.trim() || `Claude exited with code ${exitCode ?? "unknown"}.`));
+        // -p --output-format json reports its errors in stdout's result, leaving stderr empty.
+        let result = "";
+        try {
+          result = stringOf((JSON.parse(stdoutText) as Record<string, unknown>).result);
+        } catch {}
+        reject(new Error(stderrText.trim() || result.trim() || `Claude exited with code ${exitCode ?? "unknown"}.`));
       }
     });
   });

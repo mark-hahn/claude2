@@ -325,12 +325,24 @@ class Claude2Controller implements vscode.Disposable {
     await this.openConversation(session.id, true);
   }
 
-  // Once per load: bring the CLI up to date, then record its model list for this host. A list
+  // Once per load: bring the CLI and its account settings up to date, then record its model list for this host. A list
   // that differs from the stored one is stamped with a new date, which raises the update
   // notification until the Models pane is opened. Silent unless the CLI fails.
   private async refreshModels(): Promise<void> {
     const warn = (what: string, error: unknown): void => void vscode.window.showWarningMessage(`Claude2: ${what} failed: ${errorMessage(error)}`);
-    await withUpdateLock(() => this.runner.updateCli(this.workspacePath())).catch((error) => warn("claude update", error));
+    // One window per host does both; the rest wait on the lock, then read the list it refreshed.
+    await withUpdateLock(async () => {
+      await this.runner.updateCli(this.workspacePath()).catch((error) => warn("claude update", error));
+      try {
+        await this.runner.refreshAccountSettings(cheapestModel(readModelInfo(this.context.globalState).models), this.workspacePath());
+      } catch (error) {
+        if (/failed to authenticate|oauth session expired/i.test(errorMessage(error))) {
+          this.noteAuthFailure();
+        } else {
+          warn("account settings refresh", error);
+        }
+      }
+    }).catch((error) => warn("claude update", error));
     try {
       const { models, names } = await this.runner.listModels(this.workspacePath());
       const info = readModelInfo(this.context.globalState);
