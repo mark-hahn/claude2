@@ -1,7 +1,4 @@
 
-i want max turns and max context to be set by model
-move them from settings pane to rows in the model table
-
 models update details
 
 periods for stats pane
@@ -10,6 +7,8 @@ periods for stats pane
 too many bars above block
 show path to folder this is running in
 show time since last response output
+i want max turns and max context to be set by model
+move them from settings pane to rows in the model table
 
 ======================
 
