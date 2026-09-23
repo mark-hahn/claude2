@@ -44,7 +44,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
-    #sessionCounts { margin-left: 8px; align-self: center; font-size: 15.12px; color: var(--ink); }
+    #sessionCounts { margin-left: 8px; margin-right: 2px; align-self: center; font-size: 15.12px; color: var(--ink); }
     .search-row { display: flex; gap: 7px; }
     #searchBox { flex: 1; min-width: 0; box-sizing: border-box; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
     #searchBox::placeholder { color: var(--ink); }

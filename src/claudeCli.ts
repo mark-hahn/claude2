@@ -797,12 +797,23 @@ function collectProcess(command: string, args: string[], workspacePath: string, 
   });
 }
 
+// The model sometimes answers with a title line followed by a markdown body, so only the first
+// non-blank line counts, and markdown markup is stripped from it.
 function cleanTitle(rawTitle: string, prompt: string): string {
-  const title = rawTitle.replace(/["'`]/g, "").replace(/[.!?:;]+$/g, "").trim().split(/\s+/).slice(0, 8).join(" ");
+  const title = plainLine(rawTitle).replace(/[.!?:;]+$/g, "").split(" ").slice(0, 6).join(" ");
   if (title) {
-    return title.slice(0, 80);
+    return title.slice(0, 60);
   }
-  return prompt.replace(/\s+/g, " ").trim().slice(0, 56) || "New session";
+  return plainLine(prompt).slice(0, 56) || "New session";
+}
+
+function plainLine(text: string): string {
+  const line = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line
+    .replace(/^(#+|>|[-*+]|\d+[.)])\s+/, "")
+    .replace(/[*_`~"'#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {

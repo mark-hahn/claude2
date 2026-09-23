@@ -1,6 +1,7 @@
 
+allow the prompt editor box to expand up to 6 lines tall when there are 6 or more lines in the box.
 
-
+when a srollwheel tries to move the conversation ane, and is not over a currently scrolling box, then enter a special frozenPane mode -- this is called frozen because all relative positions of items in the pane will stay fixed  -- all rules are overriden until there is a mouse action anywhere in the ui -- the mouse action would still be passed on -- an example is scrolling up and then clicking on a bar -- that bar would be opened -- another example is clicking outside the pane 
 
 ???????
 too many bars above block
@@ -8,6 +9,8 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+what conversation/block/box display rules would be broken if we allowed scrolling the entire conversation pane 
 
 # set the turns limit from models pane
 - i want to be able to set the turns limit from the ui
