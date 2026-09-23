@@ -471,7 +471,7 @@ export class ClaudeCliRunner {
             const subtype = stringOf(message.subtype);
             // An auth failure arrives as is_error under subtype "success", with the real story in
             // the result text; only a true error_ subtype has a readable form of its own.
-            resultError = subtype.startsWith("error_") ? readableResultError(subtype, options.limits.maxTurns) : resultText || readableResultError(subtype, options.limits.maxTurns);
+            resultError = subtype.startsWith("error_") ? readableResultError(subtype, options.limits) : resultText || readableResultError(subtype, options.limits);
           }
           // The run is over but the CLI is still reading stdin; closing it is what ends the
           // process, whether the result came from a finished turn or from a Stop interrupt.
@@ -595,9 +595,14 @@ function childEnv(autoCompactWindow: number | null = null, graftEnabled = true):
 
 // A run that hit a limit comes back as a bare subtype like "error_max_turns". Both panes show this
 // string as it stands, so it becomes a sentence here rather than being decoded in each of them.
-function readableResultError(subtype: string, maxTurns: number): string {
+// The two Settings-pane limits stop a run the same way, so they read the same way.
+function readableResultError(subtype: string, limits: RunLimits): string {
+  const hitLimit = (limit: string): string => `Stopped at the ${limit}. The response above is unfinished — send another prompt to carry on, or raise the limit in the Settings pane.`;
   if (subtype === "error_max_turns") {
-    return `Stopped at the turn limit of ${maxTurns}. The response above is unfinished — send another prompt to carry on, or raise the turn limit in the Models pane.`;
+    return hitLimit(`turn limit of ${limits.maxTurns}`);
+  }
+  if (subtype === "error_max_budget_usd") {
+    return hitLimit(`budget limit of $${limits.maxBudgetUsd.toFixed(2)}`);
   }
   if (subtype === "error_during_execution") {
     return "The Claude CLI stopped part way through this response.";
