@@ -1,4 +1,8 @@
 
+the models table now has 6 columns:	`opus	claude-fable-5-1	sonnet	haiku	claude-opus-5	claude-fable-5`.
+i thought the cli only gave us 4
+
+models update details
 
 periods for stats pane
 
