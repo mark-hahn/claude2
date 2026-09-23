@@ -1,7 +1,4 @@
 
-add all 4 names to claude2's saved turn. if nothing else they might be useful for debugging. i like to hoarde data.
-
- in the tooltip show the alias we selected and the model that answered or the 
 
 periods for stats pane
 
@@ -11,6 +8,8 @@ show path to folder this is running in
 show time since last response output
 
 ======================
+
+add all 4 names to claude2's saved turn. if nothing else they might be useful for debugging. i like to hoarde data.
 
 allow the prompt editor box to expand up to 6 lines tall when there are 6 or more lines in the box.
 

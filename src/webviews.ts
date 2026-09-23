@@ -32,7 +32,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     /* The same grey-out the footer's dock controls use: label and border fade together, so the
        two never disagree about whether the button does anything. */
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
-    #new { width: 21px; }
+    #new { width: 42px; }
     #mngmnt { width: 66px; }
     #mngmnt.alert { background: #fbd9d9; border-color: #e4a7a7; }
     #login { width: 64px; display: none; }
