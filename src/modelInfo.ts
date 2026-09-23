@@ -31,12 +31,23 @@ export interface ModelInfo {
   // Model value -> its Anthropic name from the CLI's list (the description up to " · "), e.g.
   // "Sonnet 5"; the Models pane's Descr row.
   names: Record<string, string>;
+  // Model value -> the model id it resolves to, e.g. "opus" -> "claude-opus-5-5".
+  ids: Record<string, string>;
+  // The list as it stood before the last change, shown under the Models box until dismissed.
+  previous: PreviousModels | null;
   presets: Preset[];
   prefs: ModelPrefs;
   // Index into `presets` of the one new sessions start on; see defaultPresetOf.
   defaultPreset: number;
   date: number;
   seenDate: number;
+}
+
+export interface PreviousModels {
+  models: ModelMap;
+  names: Record<string, string>;
+  ids: Record<string, string>;
+  date: number;
 }
 
 // Every window on a host shares one record, and each host type -- windows, wsl, ssh server --
@@ -51,6 +62,8 @@ const seedDate = Date.parse("2026-09-22T00:00:00Z");
 const seed: ModelInfo = {
   models: { "opus[1m]": allEfforts, "claude-fable-5-1[1m]": allEfforts, sonnet: allEfforts, haiku: [] },
   names: { "opus[1m]": "Opus 5.5 with 1M context", "claude-fable-5-1[1m]": "Fable 5.1", sonnet: "Sonnet 5", haiku: "Haiku 4.5" },
+  ids: {},
+  previous: null,
   presets: [
     { enabled: true, model: "claude-opus-5", effort: "high" },
     { enabled: true, model: "claude-fable-5", effort: "xhigh" },
@@ -66,7 +79,7 @@ const seed: ModelInfo = {
 export function readModelInfo(state: vscode.Memento): ModelInfo {
   const info = state.get<ModelInfo>(infoKey) ?? seed;
   // Records written before the Models pane had these fields carry none.
-  return { ...info, names: info.names ?? {}, prefs: info.prefs ?? {}, defaultPreset: info.defaultPreset ?? 0 };
+  return { ...info, names: info.names ?? {}, ids: info.ids ?? {}, previous: info.previous ?? null, prefs: info.prefs ?? {}, defaultPreset: info.defaultPreset ?? 0 };
 }
 
 export async function writeModelInfo(state: vscode.Memento, info: ModelInfo): Promise<void> {
@@ -151,9 +164,10 @@ export async function withUpdateLock(run: () => Promise<void>): Promise<void> {
       return;
     }
     if (Date.now() - stat.mtimeMs > staleMs) {
+      // A dead holder did none of the work, so this window takes the lock and does it.
       // ponytail: stale-lock removal can race a window that just took a fresh lock; worst case two updates overlap once
       await fs.rm(lockFile, { force: true });
-      return;
+      return withUpdateLock(run);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }

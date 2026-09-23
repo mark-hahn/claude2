@@ -1,5 +1,4 @@
 
-models update details
 
 periods for stats pane
 
@@ -11,6 +10,11 @@ i want max turns and max context to be set by model
 move them from settings pane to rows in the model table
 
 ======================
+
+# show model change details
+- when models info changes then show a list of old model values, descriptions, and ids under the models box so i can see what changed. 
+show an X close button to remove the notice until next change.
+- this should be for each host type.
 
 # settings pane
 - add a new settings pane to management pane 

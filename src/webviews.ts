@@ -1739,6 +1739,11 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     #models input[type=checkbox] { width: 18px; height: 18px; margin: 0; }
     #models input[type=text] { font: inherit; color: var(--ink); width: 9em; padding: 2px 6px; }
     #models select { min-width: 6em; }
+    #old td, #old th { padding: 3px 20px 3px 0; text-align: left; white-space: nowrap; }
+    #old th { font-weight: 600; }
+    .change-head { display: flex; align-items: center; margin-bottom: 8px; }
+    .change-head h2 { margin: 0; }
+    #dismiss { margin-left: auto; min-height: 0; padding: 2px 10px; }
     #usage td, #usage th { padding: 3px 0 3px 24px; text-align: right; }
     #usage td:first-child, #usage th:first-child { padding-left: 0; text-align: left; }
     #usage th { font-weight: 600; }
@@ -1753,6 +1758,7 @@ ${tabsStyle()}  </style>
   <div class="pane">
     <div class="title">${tabsHtml("models", alert)}<div class="actions"><button id="close">Close</button></div></div>
     <div class="box"><h2>Models By Value</h2><table id="models"></table><div id="changed"></div><div class="save-row">New sessions start on <select id="default"></select></div><div class="save-row"><button id="save">Save</button><span id="note"></span></div></div>
+    <div class="box" id="change" hidden><div class="change-head"><h2 id="changeTitle"></h2><button id="dismiss" title="Hide until the list changes again" aria-label="Dismiss">✕</button></div><table id="old"></table></div>
     <div class="box"><div class="usage-head"><h2>Messages Per Model ID</h2><select id="usageMode"><option>Past</option><option>Days</option></select></div><table id="usage"><tr><td>Counting…</td></tr></table><div id="machines"></div></div>
   </div>
   <script nonce="${nonce}">
@@ -1776,6 +1782,10 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
+    document.getElementById('dismiss').addEventListener('click', () => {
+      document.getElementById('change').hidden = true;
+      void request('dismissModelChange', {});
+    });
     document.getElementById('default').addEventListener('change', (event) => { defaultModel = event.target.value; unsaved(); });
     void load();
     void loadUsage();
@@ -1805,8 +1815,37 @@ ${zoomScript(z)}
       const chosen = (info.presets || [])[info.defaultPreset || 0];
       defaultModel = chosen && chosen.enabled ? chosen.model : '';
       renderModels();
+      renderChange(info);
       document.getElementById('changed').textContent = 'Last changed ' + new Date(info.date).toLocaleString();
       note('');
+    }
+
+    // The list from before the last change, one row per model in either list, each marked with
+    // what happened to it: gone, added, or changed (an old name or id differs). Old values shown.
+    function renderChange(info) {
+      const previous = info.previous;
+      document.getElementById('change').hidden = !previous;
+      if (!previous) return;
+      document.getElementById('changeTitle').textContent = 'Models before the change on ' + new Date(info.date).toLocaleString();
+      const table = document.getElementById('old');
+      table.replaceChildren();
+      const head = table.insertRow();
+      for (const text of ['Change', 'Model', 'Descr', 'ID']) {
+        const th = document.createElement('th');
+        th.textContent = text;
+        head.appendChild(th);
+      }
+      const all = [...new Set(Object.keys(previous.models).concat(Object.keys(info.models)))].sort((a, b) => a.localeCompare(b));
+      for (const model of all) {
+        const old = model in previous.models;
+        const now = model in info.models;
+        const changed = old && now && ((previous.names[model] || '') !== (info.names[model] || '') || (previous.ids[model] && previous.ids[model] !== info.ids[model]));
+        const source = old ? previous : info;
+        const row = table.insertRow();
+        for (const text of [!now ? 'gone' : !old ? 'added' : changed ? 'changed' : '', model, source.names[model] || '', (source.ids || {})[model] || '']) {
+          row.insertCell().textContent = text;
+        }
+      }
     }
 
     // Every model any machine's transcripts used, busiest of all time first.

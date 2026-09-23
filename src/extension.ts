@@ -332,7 +332,11 @@ class Claude2Controller implements vscode.Disposable {
   // that differs from the stored one is stamped with a new date, which raises the update
   // notification until the Models pane is opened. Silent unless the CLI fails.
   private async refreshModels(): Promise<void> {
-    const warn = (what: string, error: unknown): void => void vscode.window.showWarningMessage(`Claude2: ${what} failed: ${errorMessage(error)}`);
+    const warn = (what: string, error: unknown): void => {
+      // The pop-up fades; the output log keeps the reason.
+      this.channel.appendLine(`${what} failed: ${errorMessage(error)}`);
+      void vscode.window.showWarningMessage(`Claude2: ${what} failed: ${errorMessage(error)}`);
+    };
     // One window per host does both; the rest wait on the lock, then read the list it refreshed.
     await withUpdateLock(async () => {
       await this.runner.updateCli(this.workspacePath()).catch((error) => warn("claude update", error));
@@ -347,12 +351,18 @@ class Claude2Controller implements vscode.Disposable {
       }
     }).catch((error) => warn("claude update", error));
     try {
-      const { models, names } = await this.runner.listModels(this.workspacePath());
+      const { models, names, ids } = await this.runner.listModels(this.workspacePath());
       const info = readModelInfo(this.context.globalState);
-      // A renamed model (an alias now resolving to a new version) is news too.
-      if (!sameModels(info.models, models) || JSON.stringify(info.names) !== JSON.stringify(names)) {
+      this.channel.appendLine(`model check: the CLI lists ${Object.keys(models).length} models, ${sameModels(info.models, models) ? "same as" : "changed from"} the ${Object.keys(info.models).length} stored.`);
+      const sameIds = JSON.stringify(info.ids) === JSON.stringify(ids);
+      // A renamed model or an alias now resolving to a new version is news too. A record from
+      // before ids were kept gains them quietly.
+      if (!sameModels(info.models, models) || JSON.stringify(info.names) !== JSON.stringify(names) || (Object.keys(info.ids).length > 0 && !sameIds)) {
+        const previous = { models: info.models, names: info.names, ids: info.ids, date: info.date };
         // A model that just left the list takes any preset naming it off with it.
-        await writeModelInfo(this.context.globalState, { ...info, models, names, presets: prunePresets(info.presets, info.prefs, models), date: Date.now() });
+        await writeModelInfo(this.context.globalState, { ...info, models, names, ids, previous, presets: prunePresets(info.presets, info.prefs, models), date: Date.now() });
+      } else if (!sameIds) {
+        await writeModelInfo(this.context.globalState, { ...info, ids });
       }
     } catch (error) {
       warn("model check", error);
@@ -1676,6 +1686,10 @@ class Claude2Controller implements vscode.Disposable {
       await writeModelInfo(this.context.globalState, { ...info, seenDate: info.date });
       this.postModelInfo();
       await this.reply(requestId, async () => info);
+    } else if (type === "dismissModelChange") {
+      await this.reply(requestId, async () => {
+        await writeModelInfo(this.context.globalState, { ...readModelInfo(this.context.globalState), previous: null });
+      });
     } else if (type === "loadModelUsage") {
       await this.reply(requestId, () => modelUsage((line) => this.channel.appendLine(line)));
     } else if (type === "savePresets") {

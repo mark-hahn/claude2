@@ -533,23 +533,25 @@ export class ClaudeCliRunner {
   // initialize handshake the Agent SDK sends, answered without starting a turn.
   // Each model's Anthropic name: its description up to a " · " when it has one (only there
   // does "opus[1m]" say "Opus 5.5 with 1M context"), else its display name, e.g. "Sonnet 5".
-  public async listModels(workspacePath: string): Promise<{ models: ModelMap; names: Record<string, string> }> {
+  public async listModels(workspacePath: string): Promise<{ models: ModelMap; names: Record<string, string>; ids: Record<string, string> }> {
     const request = JSON.stringify({ type: "control_request", request_id: "models", request: { subtype: "initialize" } });
     const output = await collectProcess("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], workspacePath, 30000, request + "\n");
     for (const line of output.split("\n")) {
-      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown; supportedEffortLevels?: unknown; description?: unknown; displayName?: unknown }[] } } }) : undefined;
+      const parsed = line.includes('"control_response"') ? (JSON.parse(line) as { response?: { response?: { models?: { value?: unknown; resolvedModel?: unknown; supportedEffortLevels?: unknown; description?: unknown; displayName?: unknown }[] } } }) : undefined;
       const models: ModelMap = {};
       const names: Record<string, string> = {};
+      const ids: Record<string, string> = {};
       for (const model of parsed?.response?.response?.models ?? []) {
         const value = stringOf(model.value);
         if (value && value !== "default") {
           models[value] = Array.isArray(model.supportedEffortLevels) ? model.supportedEffortLevels.map(stringOf).filter(Boolean) : [];
           const description = stringOf(model.description);
           names[value] = (description.includes(" · ") ? description.split(" · ")[0] : stringOf(model.displayName)).trim();
+          ids[value] = stringOf(model.resolvedModel);
         }
       }
       if (Object.keys(models).length > 0) {
-        return { models, names };
+        return { models, names, ids };
       }
     }
     throw new Error("the CLI returned no model list.");
