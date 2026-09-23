@@ -1,4 +1,5 @@
 
+footer rows should stay at bottom of pane even when prompt box is tall
 
 periods for stats pane
 

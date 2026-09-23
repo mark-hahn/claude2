@@ -437,7 +437,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* Prompt editor and every control sit on one bottom dock, so the editor's bottom edge is the
        window's bottom edge; the controls stack to its right instead of below it. */
     .dock { display: flex; align-items: stretch; gap: 10px; border-top: 1px solid var(--border); background: var(--page); padding: 8px 12px; }
-    .dock-controls { display: flex; flex-direction: column; justify-content: space-between; align-items: stretch; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
+    .dock-controls { display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 4px; flex: 0 1 auto; min-width: 0; margin-left: auto; min-height: var(--edh); font-size: max(14px, calc(14px * var(--z) * 0.85)); }
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
