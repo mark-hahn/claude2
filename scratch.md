@@ -1,5 +1,5 @@
 
-icon
+up arrow to load 
 
 ???????
 periods for stats pane
@@ -8,8 +8,13 @@ show path to folder this is running in
 show time since last response output
 i want max turns and max context to be set by model
 move them from settings pane to rows in the model table
+timestamp
 
 ======================
+
+closed bar indicator
+
+icon
 
 in the tv project i opened a new session and typed a few words.  while in that state clicking the session card with title `Batch chksrt for many episodes` does nothing.  some other cards work. clicking the card `resolution map logic` switches the conversation pane to the correct session but it's session card doesn't highlight. the new session card stays hightlighted.  i haven't reloaded so it will stay in this broken state
 

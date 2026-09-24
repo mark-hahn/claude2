@@ -473,6 +473,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
+    .run-arrow { font-weight: 700; margin-right: 6px; animation: run-blink 0.6s steps(1) infinite; }
+    @keyframes run-blink { 50% { visibility: hidden; } }
     textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; field-sizing: content; min-height: var(--edh); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
@@ -1296,6 +1298,15 @@ ${tooltipScript()}
           // pictures themselves are part of the record now, so a ctrl-click only shows them too.
           const images = Array.isArray(turn.images) ? turn.images : [];
           bar.textContent = '';
+          // A running turn whose box is closed says so with a blinking arrow; the delay is set from
+          // the clock so the rebuild on every streamed chunk doesn't restart the blink.
+          if (active && status.turnId === turn.id && !(index === anchorIndex && boxOpen)) {
+            const arrow = document.createElement('span');
+            arrow.className = 'run-arrow';
+            arrow.textContent = '\u2193';
+            arrow.style.animationDelay = -(Date.now() % 600) + 'ms';
+            bar.appendChild(arrow);
+          }
           images.forEach((image, imageIndex) => {
             const char = document.createElement('span');
             char.className = 'img-char';
