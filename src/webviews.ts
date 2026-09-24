@@ -707,6 +707,8 @@ ${tooltipScript()}
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       event.preventDefault();
+      // A frozen pane thaws first, so the step below lands under the normal rules.
+      const reapply = frozenPane ? thaw() : null;
       const before = anchorIndex;
       selectBlock(anchorIndex + (event.key === 'ArrowUp' ? -1 : 1));
       // At either end the selection stays put; the box still opens.
@@ -716,6 +718,7 @@ ${tooltipScript()}
         toolsBox = false;
         render();
       }
+      if (reapply) requestAnimationFrame(reapply);
     }, true);
     // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
     // webview, and a debounce here is a window in which typing exists nowhere else. The message
@@ -764,6 +767,12 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
+    // Ctrl-L is the Load button, from the pane or the prompt box.
+    window.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'l') return;
+      event.preventDefault();
+      if (!loadButton.disabled) loadButton.click();
+    });
     document.getElementById('cap').addEventListener('click', (event) => {
       // Every click takes another picture and adds it to the ones already waiting. The button
       // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
@@ -821,11 +830,24 @@ ${tooltipScript()}
     }
     window.addEventListener('keydown', (event) => {
       if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
-      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'Enter') return;
       if (event.target.closest && event.target.closest('textarea, input, select, .dock-controls')) return;
       event.preventDefault();
-      arrowScroll(event.key === 'ArrowUp');
+      if (event.key === 'Enter') selectBottomBlock(); else arrowScroll(event.key === 'ArrowUp');
     });
+    // Enter lands on the last block (thawing the pane first if it was frozen), with its bar as
+    // high as the rules allow (the bar above it at the top of the pane) rather than at the
+    // nearest edge of the allowed window.
+    function selectBottomBlock() {
+      if (frozenPane) thaw();
+      if (session.turns.length - 1 !== anchorIndex) selectBlock(session.turns.length - 1);
+      else render();
+      // After the render's own sync has set the clamps, so the bounds see the final layout.
+      requestAnimationFrame(() => {
+        const bounds = scrollBounds();
+        if (bounds) historyBox.scrollTop = bounds.max;
+      });
+    }
     function arrowScroll(up) {
       if (!allOpen) {
         // Opening every box reflows the pane; the selected bar is held where it sits on screen.
