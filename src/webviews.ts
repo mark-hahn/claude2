@@ -684,6 +684,22 @@ ${tooltipScript()}
         submitPrompt();
       }
     });
+    // Ctrl-up/down step the selected bar and open its box. A webview only sees keys while its
+    // tab has focus, so this is live only in the focused claude2 tab.
+    window.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      event.preventDefault();
+      const before = anchorIndex;
+      selectBlock(anchorIndex + (event.key === 'ArrowUp' ? -1 : 1));
+      // At either end the selection stays put; the box still opens.
+      if (anchorIndex === before && !boxOpen) {
+        boxOpen = true;
+        boxScrollNext = 'restore';
+        toolsBox = false;
+        render();
+      }
+    }, true);
     // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
     // webview, and a debounce here is a window in which typing exists nowhere else. The message
     // is small and the receiving end only writes a map entry; the disk write is coalesced there.

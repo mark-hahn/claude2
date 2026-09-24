@@ -353,7 +353,8 @@ class Claude2Controller implements vscode.Disposable {
     try {
       const { models, names, ids } = await this.runner.listModels(this.workspacePath());
       const info = readModelInfo(this.context.globalState);
-      this.channel.appendLine(`model check: the CLI lists ${Object.keys(models).length} models, ${sameModels(info.models, models) ? "same as" : "changed from"} the ${Object.keys(info.models).length} stored.`);
+      const version = await this.runner.cliVersion(this.workspacePath()).catch(() => "unknown version");
+      this.channel.appendLine(`model check: the CLI (${version}) lists ${Object.keys(models).length} models, ${sameModels(info.models, models) ? "same as" : "changed from"} the ${Object.keys(info.models).length} stored.`);
       const sameIds = JSON.stringify(info.ids) === JSON.stringify(ids);
       // A renamed model or an alias now resolving to a new version is news too. A record from
       // before ids were kept gains them quietly.

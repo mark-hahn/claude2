@@ -521,6 +521,10 @@ export class ClaudeCliRunner {
     await collectProcess("claude", ["update"], workspacePath, 180000, null);
   }
 
+  public async cliVersion(workspacePath: string): Promise<string> {
+    return (await collectProcess("claude", ["--version"], workspacePath, 30000, null)).trim();
+  }
+
   // The CLI re-downloads the account's settings -- which decide the model list it reports --
   // only when it actually talks to the API, so a one-word prompt on the cheapest model is what
   // brings a stale list up to date. Its answer is thrown away.
