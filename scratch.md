@@ -1,11 +1,4 @@
 
-- i undid your last change because i didn't like how it worked.  
-- put that feature back in but this time don't use the mouse -- use up and down arrow keys instead.
-- when panel is focused and prompt edit box isn't focused then the arrow keys should open all boxes like before and scroll up and down
-
-arrows to scroll through boxes
-
-up arrow to load 
 
 ???????
 periods for stats pane
