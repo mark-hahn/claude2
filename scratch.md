@@ -1,9 +1,8 @@
 
-footer rows should stay at bottom of pane even when prompt box is tall
-
-periods for stats pane
+icon
 
 ???????
+periods for stats pane
 too many bars above block
 show path to folder this is running in
 show time since last response output
@@ -11,6 +10,10 @@ i want max turns and max context to be set by model
 move them from settings pane to rows in the model table
 
 ======================
+
+in the tv project i opened a new session and typed a few words.  while in that state clicking the session card with title `Batch chksrt for many episodes` does nothing.  some other cards work. clicking the card `resolution map logic` switches the conversation pane to the correct session but it's session card doesn't highlight. the new session card stays hightlighted.  i haven't reloaded so it will stay in this broken state
+
+footer rows should stay at bottom of pane even when prompt box is tall
 
 # show model change details
 - when models info changes then show a list of old model values, descriptions, and ids under the models box so i can see what changed. 

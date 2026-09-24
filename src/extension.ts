@@ -374,6 +374,12 @@ class Claude2Controller implements vscode.Disposable {
   // Test aid: drops the last stored model, then runs the load's refresh, which finds the CLI's
   // list differs, writes it back with a new date, and raises the alert. Self-restoring: only
   // the "Last changed" date is left moved.
+  // Tab icons render as <img>, so currentColor doesn't work; use themed copies.
+  private tabIcon(): { light: vscode.Uri; dark: vscode.Uri } {
+    const icon = (name: string) => vscode.Uri.joinPath(this.context.extensionUri, "resources", name);
+    return { light: icon("claude2-light.svg"), dark: icon("claude2-dark.svg") };
+  }
+
   private async simulateModelChange(): Promise<void> {
     const info = readModelInfo(this.context.globalState);
     const models = Object.fromEntries(Object.entries(info.models).slice(0, -1));
@@ -523,6 +529,7 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
+      panel.iconPath = this.tabIcon();
       const info = readModelInfo(this.context.globalState);
       panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
@@ -1429,6 +1436,7 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
+      this.managementPanel.iconPath = this.tabIcon();
       this.managementPanel.webview.onDidReceiveMessage((message) => void this.handleManagementMessage(message));
       this.managementPanel.onDidDispose(() => {
         this.managementPanel = null;
