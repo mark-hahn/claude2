@@ -592,7 +592,8 @@ ${tooltipScript()}
     let boxScrollTimer = 0;
     let shownActiveTurn = null;
     let anchorIndex = 0;
-    // At most one box is ever open: the selected block's, and only while this is true.
+    // At most one box is ever open: the selected block's, and only while this is true. allOpen
+    // (below) is the exception.
     let boxOpen = true;
     // Where the box contents land on the next render: 'bottom' after an open, 'top' after
     // hiding tool groups, null to keep the current position.
@@ -605,6 +606,10 @@ ${tooltipScript()}
     // rule so the pane scrolls freely and keeps its position through renders. Any mouse press
     // anywhere in the webview thaws it; the press still does its normal job.
     let frozenPane = false;
+    // allOpen: plain up/down arrows, with the pane focused and no text field or footer control
+    // holding focus, freeze the pane with every box open and scroll it. The thaw closes every
+    // box but the selected one, which is left open.
+    let allOpen = false;
     let draftSent = '';
     // U+1F5BC U+FE0F, one per picture attached to this prompt. The run of them leads the prompt
     // box's text and every prompt bar built from a turn that carried pictures.
@@ -682,6 +687,18 @@ ${tooltipScript()}
       if (event.key === 'Enter' && event.ctrlKey) {
         event.preventDefault();
         submitPrompt();
+      }
+      // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
+      // newline to count, so the top line is the one where the caret's own Up didn't move it.
+      if (event.key === 'ArrowUp' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
+          && !promptBox.value.slice(0, promptBox.selectionStart).includes('\\n')) {
+        const start = promptBox.selectionStart;
+        const end = promptBox.selectionEnd;
+        window.setTimeout(() => {
+          if (document.activeElement !== promptBox || promptBox.selectionStart !== start || promptBox.selectionEnd !== end) return;
+          promptBox.blur();
+          arrowScroll(true);
+        });
       }
     });
     // Ctrl-up/down step the selected bar and open its box. A webview only sees keys while its
@@ -779,21 +796,48 @@ ${tooltipScript()}
     }, { passive: true });
     // Capture phase, so the thaw lands before the press's own handlers run. The rules are
     // re-applied only after the release, so nothing moves under the pointer mid-click.
-    let thawing = false;
+    let thawing = null;
     window.addEventListener('pointerdown', () => {
       if (!frozenPane) return;
-      frozenPane = false;
-      thawing = true;
+      thawing = thaw();
     }, true);
     window.addEventListener('pointerup', () => {
       if (!thawing) return;
-      thawing = false;
-      requestAnimationFrame(resyncSelectedBlock);
+      requestAnimationFrame(thawing);
+      thawing = null;
     }, true);
     function thawPane() {
       if (!frozenPane) return;
+      requestAnimationFrame(thaw());
+    }
+    // Ends a freeze and returns what re-applies the rules: a rebuild when every box was open, so
+    // the others close; otherwise just the resync, which keeps a text selection in the box.
+    function thaw() {
       frozenPane = false;
-      requestAnimationFrame(resyncSelectedBlock);
+      if (!allOpen) return resyncSelectedBlock;
+      allOpen = false;
+      boxOpen = true;
+      return render;
+    }
+    window.addEventListener('keydown', (event) => {
+      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      if (event.target.closest && event.target.closest('textarea, input, select, .dock-controls')) return;
+      event.preventDefault();
+      arrowScroll(event.key === 'ArrowUp');
+    });
+    function arrowScroll(up) {
+      if (!allOpen) {
+        // Opening every box reflows the pane; the selected bar is held where it sits on screen.
+        const before = historyBox.querySelector('[data-index="' + anchorIndex + '"]');
+        const offset = before ? before.offsetTop - historyBox.scrollTop : 0;
+        frozenPane = true;
+        allOpen = true;
+        render();
+        const after = historyBox.querySelector('[data-index="' + anchorIndex + '"]');
+        if (after) historyBox.scrollTop = after.offsetTop - offset;
+      }
+      historyBox.scrollTop += up ? -40 : 40;
     }
     // A press elsewhere in VS Code, or switching away from it, never reaches this webview;
     // losing focus stands in for both.
@@ -986,7 +1030,7 @@ ${tooltipScript()}
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
       // A keyboard submit is the one selection change with no mouse press to thaw the pane.
-      frozenPane = false;
+      if (frozenPane) thaw();
     }
 
     function loadSelectedPrompt() {
@@ -1316,7 +1360,8 @@ ${tooltipScript()}
           bar.textContent = '';
           // A running turn whose box is closed says so with a blinking arrow; the delay is set from
           // the clock so the rebuild on every streamed chunk doesn't restart the blink.
-          if (active && status.turnId === turn.id && !(index === anchorIndex && boxOpen)) {
+          const boxShown = allOpen || (index === anchorIndex && boxOpen);
+          if (active && status.turnId === turn.id && !boxShown) {
             const arrow = document.createElement('span');
             arrow.className = 'run-arrow';
             arrow.textContent = '\u2193';
@@ -1363,13 +1408,14 @@ ${tooltipScript()}
           });
           wrapper.appendChild(bar);
           const isActiveTurn = active && status.turnId === turn.id;
-          // Only the selected block's box exists, and only while open. A streaming turn is no
-          // exception: moved away from or closed, its text keeps arriving invisibly.
-          if (index === anchorIndex && boxOpen) {
+          // Only the selected block's box exists, and only while open (allOpen shows them all).
+          // A streaming turn is no exception: moved away from or closed, its text keeps
+          // arriving invisibly.
+          if (boxShown) {
             // The streaming and wasStreaming boxes keep their tool groups up — they are the
             // run's progress display — and do not answer clicks.
             const locked = isActiveTurn || turn.id === wasStreaming;
-            const tools = locked || toolsBox;
+            const tools = locked || (index === anchorIndex && toolsBox);
             const response = document.createElement('div');
             response.className = 'response markdown' + (turn.error ? ' error' : '');
             // A run that failed part way still wrote everything up to that point, so the text stays
@@ -1390,7 +1436,8 @@ ${tooltipScript()}
                 return;
               }
               // A plain click is left to text selection; only a ctrl-click toggles.
-              if (locked || !event.ctrlKey) return;
+              // toolsBox is the selected box's view, so a box shown only by allOpen has no toggle.
+              if (locked || !event.ctrlKey || index !== anchorIndex) return;
               // A click on a rendered link is the link, not the toggle; a drag that selected
               // text is a selection.
               if (event.target.closest && event.target.closest('a')) return;
@@ -1648,13 +1695,15 @@ ${tooltipScript()}
         const end = below || node;
         return end.offsetTop + end.offsetHeight - (above || node).offsetTop;
       };
+      // With every box open the neighbours' boxes fill the span, which would squeeze this one
+      // to a line; the pane scrolls over them all at their natural heights instead.
       // A ctrl-expanded prompt gives way first, down to three lines, before the box does.
-      if (bar && bar.classList.contains('prompt-expanded') && spanHeight() > paneHeight) {
+      if (!allOpen && bar && bar.classList.contains('prompt-expanded') && spanHeight() > paneHeight) {
         const lineHeight = parseFloat(getComputedStyle(bar).lineHeight) || 20;
         bar.style.maxHeight = Math.ceil(lineHeight * 3 + 4) + 'px';
         bar.style.overflowY = 'auto';
       }
-      if (response) {
+      if (response && !allOpen) {
         const excess = spanHeight() - paneHeight;
         if (excess > 0) {
           const lineHeight = parseFloat(getComputedStyle(response).lineHeight) || 20;
