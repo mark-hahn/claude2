@@ -1,5 +1,13 @@
 
+# prompt editor features
+- in prompt editor add many features like vscode editing has
+  - ctrl-j should join the current line and the next
+    - the line is text ending with an eol, not wrapped line
+    - the next line should be appended to the first
+    - white space between should be collapsed to one space and the cursor should be place at the left side of that space
+  
 
+sfvfb
 ???????
 periods for stats pane
 too many bars above block

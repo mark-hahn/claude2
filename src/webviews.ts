@@ -1757,7 +1757,17 @@ ${tooltipScript()}
 
 // Every management pane but Image opens under the same row of tabs; `alert` turns the Models
 // tab light red until a changed model list has been looked at.
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1, alert = false): string {
+// `location` (host:path of the workspace folder) rides above the tabs' title row.
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1, alert = false, location = ""): string {
+  const html = managementPaneHtml(webview, pane, timezone, zoom, alert);
+  if (pane === "cap") {
+    return html;
+  }
+  const text = location.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return html.replace('<div class="title">', () => `<div class="location">${text}</div><div class="title">`);
+}
+
+function managementPaneHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom: number, alert: boolean): string {
   if (pane === "plugins") {
     return pluginsHtml(webview, zoom, alert);
   }
@@ -1792,6 +1802,7 @@ function tabsStyle(): string {
   return `    .tabs { display: flex; gap: 6px; flex: none; }
     .tabs .tab.selected { background: #e2e2e2; }
     .tabs .tab.alert { background: #fbd9d9; border-color: #e4a7a7; }
+    .location { flex: none; color: #000; font-size: max(14px, min(18px, calc(14px * var(--z)))); overflow-wrap: anywhere; }
 `;
 }
 
@@ -2436,6 +2447,7 @@ function pluginsHtml(webview: vscode.Webview, zoom: number, alert: boolean): str
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
     .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 24px; }
     .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 8px; }
+    .location { margin-bottom: 16px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
     #note { font-size: calc(14px * var(--z)); }
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
@@ -2594,6 +2606,7 @@ function instructionsHtml(webview: vscode.Webview, zoom: number, alert: boolean)
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16.8px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
     .pane { display: flex; flex-direction: column; height: 100vh; padding: 28px 32px; max-width: 900px; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; margin-bottom: 16px; }
+    .location { margin-bottom: 16px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; letter-spacing: 0; margin: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
     .hint { color: var(--muted); font-size: calc(14.4px * var(--z)); }
