@@ -539,7 +539,7 @@ ${tooltipStyle()}  </style>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
           <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
-          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
+          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since the last message was received"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
     </div>
@@ -1707,6 +1707,10 @@ ${tooltipScript()}
       document.getElementById('projected-sep').style.display = projected === null ? 'none' : '';
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
+      // Only runs while a response is streaming; hidden once it ends.
+      document.getElementById('quiet').textContent = active ? shortTime(liveQuiet()) : '';
+      document.getElementById('quiet').style.display = active ? '' : 'none';
+      document.getElementById('quiet-sep').style.display = active ? '' : 'none';
       // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,
       // F or S once the turn lands, R when idle.
       const label = active
@@ -1733,6 +1737,11 @@ ${tooltipScript()}
     // while a long tool call keeps the stream quiet.
     function liveElapsed() {
       return (status.elapsedMs || 0) + Math.max(0, Date.now() - statusAt);
+    }
+
+    // Time since the CLI last sent anything, run forward the same way.
+    function liveQuiet() {
+      return (status.sinceEventMs || 0) + Math.max(0, Date.now() - statusAt);
     }
 
     // Nothing arrives from the extension between API calls, so the clock ticks on its own.

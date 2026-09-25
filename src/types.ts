@@ -134,6 +134,10 @@ export interface RunningStatus {
   compactedAt: number | null;
   elapsedMs: number;
   startedAt: number;
+  // When the CLI last wrote a stream line, and how long ago that was as of the snapshot, so the
+  // footer can show how long the response has been quiet.
+  lastEventAt: number;
+  sinceEventMs: number;
   // The model id the API answered the main conversation with; empty until the first reply starts.
   modelId: string;
 }

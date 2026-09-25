@@ -1,15 +1,14 @@
 
+while a response is being received show a live elapsed time since the last message was recieved
+-- when reponse ends stop the timer -- show timer in footer to the left of the total timer
+
 sometimes the session cards quit responding to clicks -- the clicked card will show hig
 
 ???????
 periods for stats pane
-too many bars above block
-show path to folder this is running in
 show time since last response output
 i want max turns and max context to be set by model
-move them from settings pane to rows in the model table
-timestamp
-
+  move them from settings pane to rows in the model table
 ======================
 
 ctrl-' should place the # to the beginning of first line and ignore any selection

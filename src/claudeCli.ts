@@ -144,6 +144,8 @@ export class ClaudeCliRunner {
       compactedAt: null,
       elapsedMs: 0,
       startedAt: Date.now(),
+      lastEventAt: Date.now(),
+      sinceEventMs: 0,
       modelId: "",
     };
 
@@ -269,6 +271,7 @@ export class ClaudeCliRunner {
           const line = stdoutBuffer.slice(0, newlineIndex).trim();
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
           if (line) {
+            status.lastEventAt = Date.now();
             handleClaudeLine(line);
           }
           newlineIndex = stdoutBuffer.indexOf("\n");
@@ -562,7 +565,8 @@ export class ClaudeCliRunner {
   }
 
   private snapshot(status: RunningStatus): RunningStatus {
-    return { ...status, elapsedMs: Date.now() - status.startedAt };
+    const now = Date.now();
+    return { ...status, elapsedMs: now - status.startedAt, sinceEventMs: now - status.lastEventAt };
   }
 }
 
