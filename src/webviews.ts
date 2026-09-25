@@ -1891,17 +1891,7 @@ ${tooltipScript()}
 
 // Every management pane but Image opens under the same row of tabs; `alert` turns the Models
 // tab light red until a changed model list has been looked at.
-// `location` (host:path of the workspace folder) rides above the tabs' title row.
-export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1, alert = false, location = ""): string {
-  const html = managementPaneHtml(webview, pane, timezone, zoom, alert);
-  if (pane === "cap") {
-    return html;
-  }
-  const text = location.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return html.replace('<div class="title">', () => `<div class="location">${text}</div><div class="title">`);
-}
-
-function managementPaneHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom: number, alert: boolean): string {
+export function managementHtml(webview: vscode.Webview, pane: ManagementPane, timezone: string, zoom = 1, alert = false): string {
   if (pane === "plugins") {
     return pluginsHtml(webview, zoom, alert);
   }
@@ -1936,7 +1926,6 @@ function tabsStyle(): string {
   return `    .tabs { display: flex; gap: 6px; flex: none; }
     .tabs .tab.selected { background: #e2e2e2; }
     .tabs .tab.alert { background: #fbd9d9; border-color: #e4a7a7; }
-    .location { flex: none; color: #000; font-size: max(14px, min(18px, calc(14px * var(--z)))); overflow-wrap: anywhere; }
 `;
 }
 
@@ -1967,7 +1956,7 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
-    .pane { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+    .pane { display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
     .title { display: flex; align-items: center; gap: 12px; }
     .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
@@ -2292,7 +2281,7 @@ function settingsHtml(webview: vscode.Webview, zoom: number, alert: boolean): st
     :root { color-scheme: light; --ink: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
-    .pane { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px; }
+    .pane { display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
     .title { display: flex; align-items: center; gap: 12px; }
     .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
@@ -2579,9 +2568,8 @@ function pluginsHtml(webview: vscode.Webview, zoom: number, alert: boolean): str
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --wash: rgba(0,0,0,0.08); --z: 1; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
-    .pane { display: flex; flex-direction: column; height: 100vh; padding: 20px 24px; }
+    .pane { display: flex; flex-direction: column; height: 100vh; padding: 4px 24px 20px; }
     .title { display: flex; align-items: baseline; gap: 12px; flex: none; margin-bottom: 8px; }
-    .location { margin-bottom: 16px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
     #note { font-size: calc(14px * var(--z)); }
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
@@ -2738,9 +2726,8 @@ function instructionsHtml(webview: vscode.Webview, zoom: number, alert: boolean)
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --error: #fdecec; --wash: rgba(0,0,0,0.08); --z: 1; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16.8px * var(--z))/1.45 Aptos, "Segoe UI", sans-serif; }
-    .pane { display: flex; flex-direction: column; height: 100vh; padding: 28px 32px; max-width: 900px; }
+    .pane { display: flex; flex-direction: column; height: 100vh; padding: 4px 32px 28px; max-width: 900px; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; margin-bottom: 16px; }
-    .location { margin-bottom: 16px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; letter-spacing: 0; margin: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
     .hint { color: var(--muted); font-size: calc(14.4px * var(--z)); }
@@ -2928,7 +2915,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d8d8d2; --grid: rgba(0,0,0,0.15); --wash: rgba(0,0,0,0.08); --blue: #2457d6; --red: #c62828; --z: 1; }
     * { box-sizing: border-box; }
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.4 Aptos, "Segoe UI", sans-serif; }
-    .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 28px 32px; }
+    .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 4px 32px 28px; }
     .pane.expanded { max-width: none; }
     .title { display: flex; align-items: center; gap: 12px; flex: none; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }

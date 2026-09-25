@@ -1428,13 +1428,6 @@ class Claude2Controller implements vscode.Disposable {
     return session.name === "New session" || this.draftNames.has(session.id);
   }
 
-  // `<host>:<path>` of the workspace folder, shown atop the management pane.
-  private location(): string {
-    const remote = vscode.env.remoteName;
-    const host = remote === "wsl" ? "wsl" : remote === "ssh-remote" ? "server" : remote ?? "windows";
-    return `${host}:${vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? ""}`;
-  }
-
   private async openManagement(pane: ManagementPane): Promise<void> {
     if (!(await this.mayLeaveManagement())) {
       return;
@@ -1459,7 +1452,7 @@ class Claude2Controller implements vscode.Disposable {
     }
     this.managementPane = pane;
     this.managementPanel.title = pane === "cap" ? "Claude2 Image" : "Claude2 Management";
-    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"), this.modelsAlert(), this.location());
+    this.managementPanel.webview.html = managementHtml(this.managementPanel.webview, pane, this.timezone(), this.zoomOf("management"), this.modelsAlert());
     this.managementPanel.reveal(vscode.ViewColumn.One);
     this.refreshSidebar();
   }
