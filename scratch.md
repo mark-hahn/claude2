@@ -1,6 +1,18 @@
 
-ctrl-' should place the # to the beginning of first line and ignore any selection
+sometimes the session cards quit responding to clicks -- the clicked card will show hig
 
+???????
+periods for stats pane
+too many bars above block
+show path to folder this is running in
+show time since last response output
+i want max turns and max context to be set by model
+move them from settings pane to rows in the model table
+timestamp
+
+======================
+
+ctrl-' should place the # to the beginning of first line and ignore any selection
 
 # prompt editor features
 - what i mean by a line is text ending with an eol, not end in middle of a wrapped line
@@ -18,22 +30,7 @@ ctrl-' should place the # to the beginning of first line and ignore any selectio
   - when there is no selection ctrl-c should copy the current line
   - ctrl-d should delete the current line
 
-sometimes the session cards quit responding to clicks -- the clicked card will show hig
-
-???????
-periods for stats pane
-too many bars above block
-show path to folder this is running in
-show time since last response output
-i want max turns and max context to be set by model
-move them from settings pane to rows in the model table
-timestamp
-
-======================
-
 closed bar indicator
-
-icon
 
 in the tv project i opened a new session and typed a few words.  while in that state clicking the session card with title `Batch chksrt for many episodes` does nothing.  some other cards work. clicking the card `resolution map logic` switches the conversation pane to the correct session but it's session card doesn't highlight. the new session card stays hightlighted.  i haven't reloaded so it will stay in this broken state
 

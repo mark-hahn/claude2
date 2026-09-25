@@ -963,7 +963,7 @@ ${tooltipScript()}
     // the 'input' event carries them to the draft. A key whose function returns false is left alone.
     const LINE_KEYS = {
       j: joinLine,
-      "'": () => mapLines((line, i) => i ? line : line.replace(/^[ \\t]*/, '# ')),
+      "'": headingFirstLine,
       '/': () => mapLines((line) => line.replace(/^[ \\t]*/, '- ')),
       // Indent steps land on even counts: 1 or 2 spaces, whichever gets there.
       '.': () => mapLines((line) => ' '.repeat(2 - leadingSpaces(line) % 2) + line),
@@ -1009,6 +1009,14 @@ ${tooltipScript()}
       const { selectionStart: s, selectionEnd: e } = promptBox;
       if (s === e) editBox(a, b, next, Math.max(a, s + next.length - old.length));
       else editBox(a, b, next, a, a + next.length);
+    }
+
+    // Always the box's first line, wherever the selection is; the selection just moves with the text.
+    function headingFirstLine() {
+      const a = lineStartAt(0);
+      const ws = promptBox.value.slice(a).match(/^[ \\t]*/)[0].length;
+      const shift = (pos) => pos < a ? pos : Math.max(a + 2, pos + 2 - ws);
+      editBox(a, a + ws, '# ', shift(promptBox.selectionStart), shift(promptBox.selectionEnd));
     }
 
     // The next line is appended to the caret's, the whitespace between becoming one space with
