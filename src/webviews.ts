@@ -450,6 +450,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar.prompt-expanded { height: auto; min-height: 1.65em; overflow: visible; text-overflow: clip; white-space: pre-wrap; }
     .response { margin: 4px 0 8px; border-left: 3px solid var(--border); padding: 8px 10px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: var(--surface); overflow-wrap: anywhere; overflow-x: hidden; }
     .response.error { border-left-color: #c62828; }
+    .end-mark { white-space: pre; color: #000; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-bottom: 8px; }
     /* The markdown box: the same block, prose-rendered. Sizes stay inside the pane's 14-18px band. */
     .response.markdown { font: calc(14px * var(--z))/1.5 Aptos, "Segoe UI", sans-serif; white-space: normal; }
     .response.markdown > :first-child { margin-top: 0; }
@@ -584,6 +585,10 @@ ${tooltipScript()}
     // becomes a standard box.
     let streamingTurn = null;
     let wasStreaming = null;
+    // The end mark: the turn whose run just finished in the open bottom box, and the pane shape
+    // it was placed on. It lives only in this webview; any change to that shape takes it away.
+    let endMark = null;
+    let endMarkShape = '';
     // Each box's scroll position by turn id: a pixel offset, or 'bottom' to pin to the end.
     // Mirrored to the extension so the memory outlives this webview; a box with no remembered
     // position is on its first open and starts at the top (the streaming box at the bottom).
@@ -1154,10 +1159,12 @@ ${tooltipScript()}
       if (!turn) return;
       // The pictures are not loaded with it: they belong to the prompt that was sent.
       const typed = typedText(turn);
-      const body = stripImagePrefix(promptBox.value);
-      promptBox.value = IMG.repeat(imageCount) + typed + (body ? '\\n\\n' + body : '');
-      sendDraft('draftChanged');
+      const start = promptBox.value.length - stripImagePrefix(promptBox.value).length;
+      const insert = typed + (promptBox.value.length > start ? '\\n\\n' : '');
+      // An edit rather than a value swap, so ctrl-z takes the load back out.
       promptBox.focus();
+      editBox(start, start, insert, promptBox.value.length + insert.length);
+      sendDraft('draftChanged');
     }
 
     // Fills a box with the response as markdown. With tools, each run of tool lines sits
@@ -1429,8 +1436,16 @@ ${tooltipScript()}
       // A run that ended (or gave way to a new one) leaves its box as the wasStreaming box. That
       // box closing, for any reason, makes it standard, and its next open is a first open.
       if (streamingTurn && (!active || status.turnId !== streamingTurn)) wasStreaming = streamingTurn;
+      const endedTurn = streamingTurn && !active ? streamingTurn : null;
       streamingTurn = active ? status.turnId : null;
       const openTurn = boxOpen && turns[anchorIndex] ? turns[anchorIndex].id : null;
+      if (endMark && paneShape() !== endMarkShape) endMark = null;
+      const lastIndex = turns.length - 1;
+      const placedEndMark = !!endedTurn && lastIndex >= 0 && turns[lastIndex].id === endedTurn && (allOpen || (boxOpen && anchorIndex === lastIndex));
+      if (placedEndMark) {
+        endMark = endedTurn;
+        endMarkShape = paneShape();
+      }
       if (wasStreaming && wasStreaming !== openTurn) {
         delete boxScrolls[wasStreaming];
         saveBoxScrolls();
@@ -1567,6 +1582,13 @@ ${tooltipScript()}
             // the memory, so wherever the box is left is where it comes back.
             response.addEventListener('scroll', () => noteBoxScroll(turn.id, response));
             wrapper.appendChild(response);
+            // Inside the block but outside the box, so the block rules size and scroll around it.
+            if (turn.id === endMark) {
+              const mark = document.createElement('div');
+              mark.className = 'end-mark';
+              mark.textContent = '=======';
+              wrapper.appendChild(mark);
+            }
           }
           historyBox.appendChild(wrapper);
         });
@@ -1584,7 +1606,26 @@ ${tooltipScript()}
       }
       boxScrollNext = null;
       requestAnimationFrame(() => syncSelectedBlock(boxScroll));
+      // The sync already brings it in unless the pane is frozen; this covers that case too.
+      if (placedEndMark) requestAnimationFrame(revealEndMark);
       renderStatus();
+    }
+
+    // Everything but response text that decides what the pane shows. The end mark is dropped
+    // the first time this differs from what it was placed on.
+    function paneShape() {
+      const turns = Array.isArray(session.turns) ? session.turns : [];
+      return JSON.stringify([turns.map((turn) => turn.id), anchorIndex, boxOpen, allOpen, toolsBox, [...expandedPrompts], searchText]);
+    }
+
+    function revealEndMark() {
+      const mark = historyBox.querySelector('.end-mark');
+      if (!mark) return;
+      const bottom = mark.getBoundingClientRect().bottom - historyBox.getBoundingClientRect().bottom;
+      if (bottom <= 0) return;
+      programmaticScroll = true;
+      historyBox.scrollTop += Math.ceil(bottom);
+      window.setTimeout(() => { programmaticScroll = false; }, 80);
     }
 
     // Which compaction the gauge has already flagged, and the timer that takes the flag back off.
