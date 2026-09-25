@@ -183,6 +183,10 @@ export class PluginStats {
   private async save(record: InstallStats): Promise<void> {
     record.updatedAt = Date.now();
     await this.context.workspaceState.update(statsKey, record);
+    // a window with no folder has no project; its cwd fallback path would become a bogus column
+    if (!vscode.workspace.workspaceFolders?.length) {
+      return;
+    }
     void httpJson("POST", `/install/${this.installKey()}`, record, 5000, this.log);
   }
 
