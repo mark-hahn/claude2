@@ -688,6 +688,11 @@ ${tooltipScript()}
         event.preventDefault();
         submitPrompt();
       }
+      if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && LINE_KEYS[event.key] && LINE_KEYS[event.key]() !== false) {
+        event.preventDefault();
+        // Kept from VS Code, which would act on some of these too (ctrl-j toggles the panel).
+        event.stopPropagation();
+      }
       // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
       // newline to count, so the top line is the one where the caret's own Up didn't move it.
       if (event.key === 'ArrowUp' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
@@ -951,6 +956,86 @@ ${tooltipScript()}
       // Never inside the prefix: the caret belongs in the typed text, which starts after it.
       const at = Math.max(imageCount * IMG.length, Math.min(next.length, caret));
       promptBox.setSelectionRange(at, at);
+    }
+
+    // VS Code-style line keys for the prompt box. A line runs to a newline, not to a wrap, and the
+    // first one starts after the 🖼️ prefix. Edits go through execCommand, so undo still works and
+    // the 'input' event carries them to the draft. A key whose function returns false is left alone.
+    const LINE_KEYS = {
+      j: joinLine,
+      "'": () => mapLines((line, i) => i ? line : line.replace(/^[ \\t]*/, '# ')),
+      '/': () => mapLines((line) => line.replace(/^[ \\t]*/, '- ')),
+      // Indent steps land on even counts: 1 or 2 spaces, whichever gets there.
+      '.': () => mapLines((line) => ' '.repeat(2 - leadingSpaces(line) % 2) + line),
+      ',': () => mapLines((line) => line.slice(Math.min(leadingSpaces(line), 2 - leadingSpaces(line) % 2))),
+      c: copyLine,
+      d: deleteLines,
+    };
+
+    function leadingSpaces(line) {
+      return line.match(/^ */)[0].length;
+    }
+
+    function lineStartAt(pos) {
+      const text = promptBox.value;
+      return Math.max(text.slice(0, pos).lastIndexOf('\\n') + 1, text.length - stripImagePrefix(text).length);
+    }
+
+    function lineEndAt(pos) {
+      const end = promptBox.value.indexOf('\\n', pos);
+      return end < 0 ? promptBox.value.length : end;
+    }
+
+    // Start and end of the lines the selection touches; a bare caret touches its own line, and a
+    // selection ending just past a newline stops at the line before it.
+    function selectedLines() {
+      const { selectionStart: s, selectionEnd: e } = promptBox;
+      return [lineStartAt(s), lineEndAt(e > s && promptBox.value[e - 1] === '\\n' ? e - 1 : e)];
+    }
+
+    function editBox(start, end, text, selStart, selEnd = selStart) {
+      promptBox.setSelectionRange(start, end);
+      if (start !== end || text) document.execCommand(text ? 'insertText' : 'delete', false, text);
+      promptBox.setSelectionRange(selStart, selEnd);
+    }
+
+    // Rewrites each selected line. A caret moves with its line's text; a selection grows to cover
+    // the whole rewritten lines.
+    function mapLines(fn) {
+      const [a, b] = selectedLines();
+      const old = promptBox.value.slice(a, b);
+      const next = old.split('\\n').map(fn).join('\\n');
+      if (next === old) return;
+      const { selectionStart: s, selectionEnd: e } = promptBox;
+      if (s === e) editBox(a, b, next, Math.max(a, s + next.length - old.length));
+      else editBox(a, b, next, a, a + next.length);
+    }
+
+    // The next line is appended to the caret's, the whitespace between becoming one space with
+    // the caret on its left.
+    function joinLine() {
+      const text = promptBox.value;
+      const end = lineEndAt(promptBox.selectionStart);
+      if (end === text.length) return;
+      const from = end - text.slice(0, end).match(/[ \\t]*$/)[0].length;
+      const to = end + 1 + text.slice(end + 1).match(/^[ \\t]*/)[0].length;
+      editBox(from, to, ' ', from);
+    }
+
+    // Only a bare caret copies its line; a selection copies the normal way.
+    function copyLine() {
+      const { selectionStart: s, selectionEnd: e } = promptBox;
+      if (s !== e) return false;
+      void navigator.clipboard.writeText(promptBox.value.slice(lineStartAt(s), lineEndAt(s)));
+    }
+
+    // The newline after goes with the lines; the last line takes the one before it instead.
+    function deleteLines() {
+      const [a, b] = selectedLines();
+      const text = promptBox.value;
+      if (b < text.length) editBox(a, b + 1, '', a);
+      else if (text[a - 1] === '\\n') editBox(a - 1, b, '', lineStartAt(a - 1));
+      else editBox(a, b, '', a);
     }
 
     // An attached file rides in the text as a <name> tag rather than in a prefix of its own: the

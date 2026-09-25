@@ -1,13 +1,25 @@
 
+ctrl-' should place the # to the beginning of first line and ignore any selection
+
+
 # prompt editor features
-- in prompt editor add many features like vscode editing has
+- what i mean by a line is text ending with an eol, not end in middle of a wrapped line
+- in a focused prompt editor add many features like vscode editing has
   - ctrl-j should join the current line and the next
-    - the line is text ending with an eol, not wrapped line
     - the next line should be appended to the first
     - white space between should be collapsed to one space and the cursor should be place at the left side of that space
-  
+  - ctrl-' should replace all white space at the beginning of the first line with `# `
+  - ctrl-/ should replace all white space at the beginning of all lines with a selection with `- `
+  - ctrl-. should add spaces to the beginning of the current line
+    - it should add 1 or 2 so there are an even number of leading spaces
+  - ctrl-, should subtract spaces from the leading white space in the current line
+    - it should subtract 1 or 2 so there are an even number of spaces
+    - a line with a selection includes a line with just a cursor
+  - when there is no selection ctrl-c should copy the current line
+  - ctrl-d should delete the current line
 
-sfvfb
+sometimes the session cards quit responding to clicks -- the clicked card will show hig
+
 ???????
 periods for stats pane
 too many bars above block
