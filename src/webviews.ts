@@ -2409,10 +2409,10 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
     .hint { flex: none; font-size: calc(14px * var(--z)); }
     /* position: relative so the crop rectangle can be laid over the picture; the image stays a
        direct grid item, which is what lets its max-height resolve against the frame. */
-    .frame { position: relative; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; }
-    img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; user-select: none; -webkit-user-drag: none; touch-action: none; }
+    .frame { position: relative; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); display: grid; place-items: center; overflow: auto; padding: 8px; cursor: crosshair; user-select: none; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; touch-action: none; }
     /* A sent prompt's picture: shown, not worked on, so it drops the crop cursor too. */
-    img.readonly { cursor: default; }
+    .frame.readonly { cursor: default; }
     .sel { position: absolute; border: 2px solid #1a6fd4; background: rgba(26,111,212,0.16); pointer-events: none; }
 ${tooltipStyle()}  </style>
 </head>
@@ -2465,7 +2465,7 @@ ${tooltipScript()}
       const payload = reply.ok ? reply.payload : null;
       depth = payload && typeof payload.depth === 'number' ? payload.depth : 0;
       editable = !!(payload && payload.editable);
-      img.classList.toggle('readonly', !editable);
+      frame.classList.toggle('readonly', !editable);
       if (payload && payload.dataUri) {
         img.src = payload.dataUri;
         img.hidden = false;
@@ -2513,15 +2513,16 @@ ${tooltipScript()}
     // Pointer events with capture, not mouse events: this pane is an iframe, and a drag that
     // leaves it stops delivering mousemove/mouseup here -- the rectangle freezes at the edge it
     // was clamped to and the release is never seen. Capture keeps every move and the release
-    // coming to the image no matter where the pointer ends up.
-    img.addEventListener('pointerdown', (event) => {
+    // coming to the frame no matter where the pointer ends up. The frame, not the image, so a
+    // drag can also start off the picture; dragRect clamps both ends onto it.
+    frame.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || !editable || !img.getAttribute('src')) return;
       event.preventDefault();
-      img.setPointerCapture(event.pointerId);
+      frame.setPointerCapture(event.pointerId);
       drag = { x: event.clientX, y: event.clientY, moved: false };
       sel.hidden = true;
     });
-    img.addEventListener('pointermove', (event) => {
+    frame.addEventListener('pointermove', (event) => {
       if (!drag) return;
       // The button is already up: a release went somewhere that swallowed it, so end the drag
       // on this move rather than leaving it stuck armed.
@@ -2540,8 +2541,8 @@ ${tooltipScript()}
       sel.style.height = (rect.h * rect.g.scale) + 'px';
       sel.hidden = false;
     });
-    img.addEventListener('pointerup', (event) => void finish(event));
-    img.addEventListener('pointercancel', () => {
+    frame.addEventListener('pointerup', (event) => void finish(event));
+    frame.addEventListener('pointercancel', () => {
       drag = null;
       sel.hidden = true;
     });

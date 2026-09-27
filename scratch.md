@@ -1,4 +1,6 @@
 
+allow cap image copping with cursor starting or ending on the outside of the image
+
 ???????
 sometimes the session cards quit responding to clicks -- the clicked card will show hig
 enter key didn't work
