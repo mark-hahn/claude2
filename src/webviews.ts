@@ -582,8 +582,8 @@ ${tooltipScript()}
     // toggles them. The streaming box always shows them and ignores clicks.
     let toolsBox = false;
     // The turn streaming at the last render, and the one whose run ended while its box was
-    // open: that box keeps its tool groups and ignores clicks until it is closed, and then
-    // becomes a standard box.
+    // open: that box loses its tool groups when the run ends, and its scroll memory is
+    // dropped when it closes, so its next open is a first open.
     let streamingTurn = null;
     let wasStreaming = null;
     // The end mark: the turn whose run just finished in the open bottom box, and the pane shape
@@ -1436,7 +1436,11 @@ ${tooltipScript()}
       }
       // A run that ended (or gave way to a new one) leaves its box as the wasStreaming box. That
       // box closing, for any reason, makes it standard, and its next open is a first open.
-      if (streamingTurn && (!active || status.turnId !== streamingTurn)) wasStreaming = streamingTurn;
+      if (streamingTurn && (!active || status.turnId !== streamingTurn)) {
+        wasStreaming = streamingTurn;
+        // A finished run's box drops its tool groups, the same as a fresh open.
+        if (turns[anchorIndex] && turns[anchorIndex].id === streamingTurn) toolsBox = false;
+      }
       const endedTurn = streamingTurn && !active ? streamingTurn : null;
       streamingTurn = active ? status.turnId : null;
       const openTurn = boxOpen && turns[anchorIndex] ? turns[anchorIndex].id : null;
@@ -1543,9 +1547,9 @@ ${tooltipScript()}
           // A streaming turn is no exception: moved away from or closed, its text keeps
           // arriving invisibly.
           if (boxShown) {
-            // The streaming and wasStreaming boxes keep their tool groups up — they are the
-            // run's progress display — and do not answer clicks.
-            const locked = isActiveTurn || turn.id === wasStreaming;
+            // The streaming box keeps its tool groups up — they are the run's progress
+            // display — and does not answer clicks.
+            const locked = isActiveTurn;
             const tools = locked || (index === anchorIndex && toolsBox);
             const response = document.createElement('div');
             response.className = 'response markdown' + (turn.error ? ' error' : '');
