@@ -627,7 +627,7 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "deleteImage") {
       await this.deleteImage(sessionId, numberOf(record?.index));
     } else if (type === "submitPrompt") {
-      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort));
+      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), record?.keepDraft === true);
     } else if (type === "picksChanged") {
       await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "draftChanged") {
@@ -1069,19 +1069,26 @@ class Claude2Controller implements vscode.Disposable {
   // Sending mid-run means "drop that answer and take this prompt instead": the running turn is
   // cut short exactly as Stop does, and the new prompt waits for its bookkeeping to land so the
   // stopped turn is fully recorded before this one is appended.
-  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
+  // keepDraft: the prompt came from somewhere other than the box (the gauge's /compact), so the
+  // box's draft and attachments are left where they are and this prompt never becomes the draft.
+  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
     if (!prompt.trim()) {
       return;
     }
+    const putBack = (): void => {
+      if (!keepDraft) {
+        this.noteDraft(sessionId, prompt);
+      }
+    };
     // The box emptied itself the moment Send was pressed, so every way out of this method short
     // of running the prompt has to put the text back somewhere it can be recovered from.
     if (!this.store.get(sessionId)) {
-      this.noteDraft(sessionId, prompt);
+      putBack();
       return;
     }
     // The saved draft goes now, not when the turn starts: stopping a run below makes that run
     // repost session state, and a draft still stored at that moment lands back in the empty box.
-    if (this.drafts.delete(sessionId)) {
+    if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
     const pending = this.runs.get(sessionId);
@@ -1094,7 +1101,7 @@ class Claude2Controller implements vscode.Disposable {
     }
     if (this.runner.isRunning(sessionId)) {
       void vscode.window.showWarningMessage("Claude is already responding in this session.");
-      this.noteDraft(sessionId, prompt);
+      putBack();
       this.postConversationState(sessionId);
       return;
     }
@@ -1104,11 +1111,11 @@ class Claude2Controller implements vscode.Disposable {
       effortArgs(effort);
     } catch (error) {
       void vscode.window.showErrorMessage(`Prompt not sent: ${errorMessage(error)}`);
-      this.noteDraft(sessionId, prompt);
+      putBack();
       this.postConversationState(sessionId);
       return;
     }
-    const run = this.runTurn(sessionId, prompt, model, effort).catch((error) => {
+    const run = this.runTurn(sessionId, prompt, model, effort, keepDraft).catch((error) => {
       this.channel.appendLine(`Claude turn failed: ${errorMessage(error)}`);
     });
     this.runs.set(sessionId, run);
@@ -1118,7 +1125,7 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private async runTurn(sessionId: string, prompt: string, model: string, effort: string): Promise<void> {
+  private async runTurn(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
     const session = this.store.get(sessionId);
     if (!session) {
       return;
@@ -1127,7 +1134,7 @@ class Claude2Controller implements vscode.Disposable {
     // Every waiting picture rides with this prompt and the session starts empty again. Each one
     // adds the sentence that gets the CLI to read it; the 🖼️ chars the prompt bar shows are built
     // from `images`, so the sentences are the only trace of them in the text itself.
-    const pending = this.pendingImages.get(sessionId) ?? [];
+    const pending = keepDraft ? [] : this.pendingImages.get(sessionId) ?? [];
     let images: PromptImage[] = [];
     if (pending.length) {
       this.pendingImages.delete(sessionId);
@@ -1143,7 +1150,7 @@ class Claude2Controller implements vscode.Disposable {
     // Attached files leave with this prompt too, but only the ones whose tag is still in the text:
     // taking a tag back off the box is the whole of how a file is unattached, so a tag that is
     // gone means the file is not coming. The tags themselves stay in, and read in the prompt bar.
-    const attached = this.pendingFiles.get(sessionId) ?? [];
+    const attached = keepDraft ? [] : this.pendingFiles.get(sessionId) ?? [];
     if (attached.length) {
       this.pendingFiles.delete(sessionId);
       const sent = attached.filter((file) => prompt.includes(`<${file.name}>`));
@@ -1165,7 +1172,7 @@ class Claude2Controller implements vscode.Disposable {
     const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || level, 0);
     // The text is on its way to the CLI, so the saved draft goes now: what is stored has to
     // match what the box shows, and the box cleared itself when Send was pressed.
-    if (this.drafts.delete(sessionId)) {
+    if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
     const modelInfo = readModelInfo(this.context.globalState);
@@ -1303,7 +1310,9 @@ class Claude2Controller implements vscode.Disposable {
         // conversation reads as if it was never sent. The Re-Auth flow owns the messaging,
         // and the finally below reposts the restored state, draft included.
         await this.store.removeTurn(sessionId, turn.id);
-        this.noteDraft(sessionId, prompt);
+        if (!keepDraft) {
+          this.noteDraft(sessionId, prompt);
+        }
         this.noteAuthFailure();
       } else {
         this.store.patchTurn(sessionId, turn.id, {

@@ -221,12 +221,21 @@ export class ClaudeCliRunner {
       // Tool calls are announced once each; the CLI can repeat an assistant message, so key off the block id.
       const seenToolUses = new Set<string>();
 
+      // Everything the pane shows goes through here. Only a chunk with something visible in it
+      // restarts the footer's quiet timer: a bare separator newline shows nothing.
+      const show = (text: string): void => {
+        if (text.trim()) {
+          status.lastEventAt = Date.now();
+        }
+        options.onText(text);
+      };
+
       // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
       const appendToolLine = (text: string): void => {
         const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
         const chunk = `${gap}${text}\n`;
         responseText += chunk;
-        options.onText(chunk);
+        show(chunk);
         toolBatchOpen = true;
       };
 
@@ -237,7 +246,7 @@ export class ClaudeCliRunner {
         }
         toolBatchOpen = false;
         responseText += "\n";
-        options.onText("\n");
+        show("\n");
       };
 
       const emitStatus = (): void => {
@@ -271,7 +280,6 @@ export class ClaudeCliRunner {
           const line = stdoutBuffer.slice(0, newlineIndex).trim();
           stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
           if (line) {
-            status.lastEventAt = Date.now();
             handleClaudeLine(line);
           }
           newlineIndex = stdoutBuffer.indexOf("\n");
@@ -281,7 +289,7 @@ export class ClaudeCliRunner {
       child.stderr.on("data", (chunk: string) => {
         stderrText += chunk;
         if (DUMP_RAW_MESSAGES) {
-          options.onText("[stderr] " + chunk + "\n\n");
+          show("[stderr] " + chunk + "\n\n");
         }
       });
 
@@ -336,7 +344,7 @@ export class ClaudeCliRunner {
 
       const handleClaudeLine = (line: string): void => {
         if (DUMP_RAW_MESSAGES) {
-          options.onText(line + "\n\n");
+          show(line + "\n\n");
         }
         let message: unknown;
         try {
@@ -376,7 +384,7 @@ export class ClaudeCliRunner {
               status.phase = phaseForBlock(stringOf(block?.type));
               if (responseText && !responseText.endsWith("\n")) {
                 responseText += "\n";
-                options.onText(DUMP_RAW_MESSAGES ? "\n\n" : "\n");
+                show(DUMP_RAW_MESSAGES ? "\n\n" : "\n");
               }
             } else if (eventType === "content_block_stop") {
               status.phase = "working";
@@ -391,7 +399,7 @@ export class ClaudeCliRunner {
                 sawTextDelta = true;
                 responseText += textDelta;
                 status.codeLines = countCodeLines(responseText);
-                options.onText(DUMP_RAW_MESSAGES ? textDelta + "\n\n" : textDelta);
+                show(DUMP_RAW_MESSAGES ? textDelta + "\n\n" : textDelta);
               }
             }
             emitStatus();
@@ -459,7 +467,7 @@ export class ClaudeCliRunner {
           if (!sawTextDelta && resultText && !isError) {
             closeToolBatch();
             responseText += resultText;
-            options.onText(resultText);
+            show(resultText);
           }
           costUsd = numberOf(message.total_cost_usd);
           durationMs = numberOf(message.duration_ms) ?? 0;

@@ -505,6 +505,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
+    #context { cursor: pointer; }
     #context.compacted { background: var(--yellow); border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
     /* A plan window has crossed 95% since this was last acknowledged. Stays red until clicked. */
     #cost.quota-alert { background: #fbd9d9; border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
@@ -539,7 +540,7 @@ ${tooltipStyle()}  </style>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
           <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
-          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since the last message was received"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
+          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
     </div>
@@ -1646,7 +1647,13 @@ ${tooltipScript()}
       document.getElementById('context').classList.remove('compacted');
     }
 
-    document.getElementById('context').addEventListener('click', clearCompaction);
+    // A flagged gauge takes the click as "seen"; an unflagged one as "compact now". Never while a
+    // run is going: a send then would stop that run, and a click on a number shouldn't do that.
+    document.getElementById('context').addEventListener('click', (event) => {
+      if (event.currentTarget.classList.contains('compacted')) return clearCompaction();
+      if ((status && status.active) || !session.turns.length) return;
+      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/compact', model: modelSelect.value, effort: effortSelect.value, keepDraft: true });
+    });
 
     // Acknowledging the quota warning is durable: the extension clears the stored flag and
     // pushes the cleared footer back, so every pane and every reload agrees it is gone.

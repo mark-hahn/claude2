@@ -1,16 +1,20 @@
 
-force compaction
+when a response finishes remove the tool groups from the latest box
 
-enter key didn't work
-
-sometimes the session cards quit responding to clicks -- the clicked card will show hig
+if a session waiting for a new prompt has the tab panel closed and then the model is changed and then the session card opens the tab again the next prompt should use the changed model
 
 ???????
+sometimes the session cards quit responding to clicks -- the clicked card will show hig
+enter key didn't work
 periods for stats pane
 show time since last response output
 i want max turns and max context to be set by model
   move them from settings pane to rows in the model table
 ======================
+
+the turn timer to the left of the session elapsed timer should only reset when something is displayed in the pane
+
+when the context size display in the footer is not hilited and it is clicked then force a compaction
 
 while a response is being received show a live elapsed time since the last message was recieved
 -- when reponse ends stop the timer -- show timer in footer to the left of the total timer
