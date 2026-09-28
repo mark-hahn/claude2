@@ -1,5 +1,4 @@
 
-allow cap image copping with cursor starting or ending on the outside of the image
 
 ???????
 sometimes the session cards quit responding to clicks -- the clicked card will show hig
@@ -9,6 +8,8 @@ show time since last response output
 i want max turns and max context to be set by model
   move them from settings pane to rows in the model table
 ======================
+
+allow cap image copping with cursor starting or ending on the outside of the image
 
 when a response finishes remove the tool groups from the latest box
 
