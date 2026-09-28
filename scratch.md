@@ -1,13 +1,10 @@
 
 
 ???????
-sometimes the session cards quit responding to clicks -- the clicked card will show hig
-enter key didn't work
 periods for stats pane
-show time since last response output
-i want max turns and max context to be set by model
-  move them from settings pane to rows in the model table
 ======================
+
+show time since last response output
 
 allow cap image copping with cursor starting or ending on the outside of the image
 
