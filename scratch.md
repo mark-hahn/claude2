@@ -1,7 +1,7 @@
 
-
 ???????
 periods for stats pane
+short timestamp on all lines of response
 ======================
 
 show time since last response output
