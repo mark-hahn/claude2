@@ -44,6 +44,11 @@ interface RunningProcess {
   // Armed when Stop sends an interrupt, cleared when the run settles: the SIGTERM fallback for a
   // CLI that never answers the interrupt.
   killTimer: ReturnType<typeof setTimeout> | null;
+  // What the process was started with; a follow-up prompt has to match, since neither can change mid-process.
+  model: string;
+  effort: string;
+  // Hands the live process to a new prompt's block while it waits on a background task.
+  followUp: ((next: RunPromptOptions) => Promise<ClaudeRunResult>) | null;
 }
 
 // How long a graceful interrupt gets before the process is killed outright.
@@ -71,6 +76,13 @@ export class ClaudeCliRunner {
     }
     running.stopped = true;
     if (running.killTimer) {
+      return true;
+    }
+    // Waiting on a background task there is no turn to interrupt; closing stdin makes the CLI
+    // kill the task and exit.
+    if (running.status.phase === "background") {
+      running.child.stdin?.end();
+      running.killTimer = setTimeout(() => running.child.kill("SIGTERM"), INTERRUPT_GRACE_MS);
       return true;
     }
     // A control request stops the CLI at its own turn boundary, the way Escape does in the
@@ -106,8 +118,19 @@ export class ClaudeCliRunner {
     this.running.clear();
   }
 
+  // True while the pill shows B and this prompt could go into the waiting process, which keeps
+  // the background task alive, rather than stopping it.
+  public canFollowUp(sessionId: string, model: string, effort: string): boolean {
+    const running = this.running.get(sessionId);
+    return !!running?.followUp && !running.stopped && running.status.phase === "background" && running.model === model && running.effort === effort;
+  }
+
   public async runPrompt(options: RunPromptOptions): Promise<ClaudeRunResult> {
-    if (this.running.has(options.sessionId)) {
+    const live = this.running.get(options.sessionId);
+    if (live?.followUp && this.canFollowUp(options.sessionId, options.model, options.effort)) {
+      return await live.followUp(options);
+    }
+    if (live) {
       throw new Error("A Claude response is already running for this session.");
     }
     // The CLI refuses --session-id for a session it already stores and refuses --resume for one it
@@ -189,18 +212,19 @@ export class ClaudeCliRunner {
       env: childEnv(options.contextWindow, options.plugins.graft),
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const running: RunningProcess = { child, status, stopped: false, killTimer: null };
+    const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, followUp: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
     // Left open on purpose: under stream-json input the CLI reads stdin for the whole run, and
     // closing it is what lets the process exit, so that waits until the result line lands.
-    child.stdin.write(JSON.stringify({
-      type: "user",
-      message: { role: "user", content: [{ type: "text", text: options.prompt }] },
-      parent_tool_use_id: null,
-    }) + "\n");
+    child.stdin.write(userMessage(options.prompt));
 
     return await new Promise<ClaudeRunResult>((resolve, reject) => {
+      // A follow-up prompt swaps in its own block: its promise, its callbacks, fresh counters.
+      let resolveBlock = resolve;
+      let rejectBlock = reject;
+      // total_cost_usd counts from the start of the process; a follow-up block reports only its share.
+      let costBase = 0;
       let stdoutBuffer = "";
       let stderrText = "";
       let responseText = "";
@@ -214,10 +238,14 @@ export class ClaudeCliRunner {
       // What the CLI itself counted. --max-turns is enforced against this, not against the
       // message_start tally the gauge runs on live, and the two do not agree.
       let reportedTurns = 0;
+      // Background shells and agents still running. When one finishes the CLI starts another
+      // turn on its own, but only while stdin is still open.
+      let backgroundTasks = 0;
       let resultError: string | null = null;
       let settled = false;
       let sawTextDelta = false;
       let toolBatchOpen = false;
+      let turnEnded = false;
       // Tool calls are announced once each; the CLI can repeat an assistant message, so key off the block id.
       const seenToolUses = new Set<string>();
 
@@ -294,23 +322,13 @@ export class ClaudeCliRunner {
       });
 
       child.on("error", (error) => {
-        settle(() => reject(new Error(`Could not start Claude CLI: ${error.message}`)));
+        settle(() => rejectBlock(new Error(`Could not start Claude CLI: ${error.message}`)));
       });
 
-      child.on("close", (exitCode) => {
-        if (stdoutBuffer.trim()) {
-          handleClaudeLine(stdoutBuffer.trim());
-        }
-        status.active = false;
-        status.phase = null;
-        status.costUsd = costUsd;
-        status.contextTokens = contextTokens;
+      const blockResult = (): ClaudeRunResult => {
         // The result text can land without ever streaming a delta, so the final parse runs here.
         ponySkips = ponySkipsIn(responseText);
-        status.ponySkips = ponySkips;
-        emitStatus();
-
-        const finalResult: ClaudeRunResult = {
+        return {
           stopped: running.stopped,
           text: responseText,
           tokensIn,
@@ -323,21 +341,57 @@ export class ClaudeCliRunner {
           durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
           ponySkips,
         };
+      };
+
+      child.on("close", (exitCode) => {
+        if (stdoutBuffer.trim()) {
+          handleClaudeLine(stdoutBuffer.trim());
+        }
+        const finalResult = blockResult();
+        status.active = false;
+        status.phase = null;
+        status.costUsd = costUsd;
+        status.contextTokens = contextTokens;
+        status.ponySkips = ponySkips;
+        emitStatus();
 
         if (running.stopped) {
-          settle(() => resolve(finalResult));
+          settle(() => resolveBlock(finalResult));
           return;
         }
         if (resultError) {
           const errorText = resultError;
-          settle(() => reject(new Error(errorText)));
+          settle(() => rejectBlock(new Error(errorText)));
           return;
         }
         if (exitCode !== 0) {
-          settle(() => reject(new Error(stderrText.trim() || `Claude CLI exited with code ${exitCode ?? "unknown"}.`)));
+          settle(() => rejectBlock(new Error(stderrText.trim() || `Claude CLI exited with code ${exitCode ?? "unknown"}.`)));
           return;
         }
-        settle(() => resolve(finalResult));
+        settle(() => resolveBlock(finalResult));
+      });
+
+      // The waiting block is finished as it stands and the new prompt's block takes over the
+      // process. When the task ends, the CLI's turn about it lands in whichever block is current.
+      running.followUp = (next) => new Promise<ClaudeRunResult>((nextResolve, nextReject) => {
+        resolveBlock(blockResult());
+        resolveBlock = nextResolve;
+        rejectBlock = nextReject;
+        options = next;
+        costBase += costUsd ?? 0;
+        responseText = "";
+        tokensIn = 0;
+        tokensOut = 0;
+        costUsd = null;
+        stopReason = null;
+        durationMs = 0;
+        ponySkips = [];
+        reportedTurns = 0;
+        sawTextDelta = false;
+        toolBatchOpen = false;
+        Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "thinking", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
+        emitStatus();
+        child.stdin.write(userMessage(next.prompt));
       });
 
       emitStatus();
@@ -382,9 +436,13 @@ export class ClaudeCliRunner {
             } else if (eventType === "content_block_start") {
               const block = recordOf(event.content_block);
               status.phase = phaseForBlock(stringOf(block?.type));
-              if (responseText && !responseText.endsWith("\n")) {
-                responseText += "\n";
-                show(DUMP_RAW_MESSAGES ? "\n\n" : "\n");
+              // A turn the CLI started on its own, when a background task finished, opens a new paragraph.
+              const gap = turnEnded ? "\n\n" : "\n";
+              turnEnded = false;
+              if (responseText && !responseText.endsWith(gap)) {
+                const chunk = responseText.endsWith("\n") ? "\n" : gap;
+                responseText += chunk;
+                show(DUMP_RAW_MESSAGES ? "\n\n" : chunk);
               }
             } else if (eventType === "content_block_stop") {
               status.phase = "working";
@@ -446,17 +504,25 @@ export class ClaudeCliRunner {
             }
             appendToolLine(`**compacted** conversation summarised${before ? ` from ${before.toLocaleString()} tokens` : ""}`);
             emitStatus();
+          } else if (subtype === "background_tasks_changed") {
+            backgroundTasks = Array.isArray(message.tasks) ? message.tasks.length : 0;
+            // A task finishing during the wait is what starts the next turn.
+            if (status.phase === "background") {
+              status.phase = "working";
+              emitStatus();
+            }
           }
         } else if (messageType === "rate_limit_event") {
           status.phase = "working";
           emitStatus();
         } else if (messageType === "result") {
-          // The result usage is the whole run's total, which is what the in/out counters report.
+          // Each result covers only its own turn (a background task can bring a second one), so
+          // usage, duration and turns add up; total_cost_usd alone is already the process total.
           const usage = recordOf(message.usage);
           if (usage) {
             const totals = usageTotals(usage);
-            tokensIn = Math.max(tokensIn, totals.prompt);
-            tokensOut = Math.max(tokensOut, totals.output);
+            tokensIn += totals.prompt;
+            tokensOut += totals.output;
             // No context reading here: the result usage sums cache reads over every API call in the
             // run, so it runs far past the window. Only a stream_event carries a real context level.
           }
@@ -469,9 +535,10 @@ export class ClaudeCliRunner {
             responseText += resultText;
             show(resultText);
           }
-          costUsd = numberOf(message.total_cost_usd);
-          durationMs = numberOf(message.duration_ms) ?? 0;
-          reportedTurns = numberOf(message.num_turns) ?? 0;
+          const totalCost = numberOf(message.total_cost_usd);
+          costUsd = totalCost === null ? null : totalCost - costBase;
+          durationMs += numberOf(message.duration_ms) ?? 0;
+          reportedTurns += numberOf(message.num_turns) ?? 0;
           if (reportedTurns > 0) {
             // Snap the live tally to the real count now that the run has one to give.
             status.turns = reportedTurns;
@@ -486,7 +553,15 @@ export class ClaudeCliRunner {
           }
           // The run is over but the CLI is still reading stdin; closing it is what ends the
           // process, whether the result came from a finished turn or from a Stop interrupt.
-          child.stdin.end();
+          // With a background task still running it stays open so the CLI can carry on when the
+          // task finishes. ponytail: a task that never ends (a dev server) holds the run open until Stop.
+          turnEnded = true;
+          if (isError || running.stopped || backgroundTasks === 0) {
+            child.stdin.end();
+          } else {
+            status.phase = "background";
+            emitStatus();
+          }
         }
       };
     });
@@ -747,6 +822,10 @@ export function truncateSessionTranscript(workspacePath: string, sessionId: stri
   } catch {
     return false;
   }
+}
+
+function userMessage(text: string): string {
+  return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] }, parent_tool_use_id: null }) + "\n";
 }
 
 function errorText(error: unknown): string {

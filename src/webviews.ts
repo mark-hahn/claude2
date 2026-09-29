@@ -60,6 +60,9 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-trash { display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
     .card-trash:hover { background: #fbd9d9; }
+    .card-clock { display: flex; }
+    .card-clock.running { color: #1a8f2e; }
+    .card-clock.background { color: #d11a1a; }
     .card-restore { display: none; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
     .card:hover .card-restore { display: block; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
@@ -96,6 +99,8 @@ ${tooltipStyle()}  </style>
 ${tooltipScript()}
     let sessions = [];
     let selectedId = '';
+    // Session id -> 'running' (only sent for a session with its pane closed) or 'background'.
+    let busy = {};
     let scrolledId = '';
     let showTrash = false;
     // An inline rename owns its card until it commits, so a background refresh waits
@@ -167,6 +172,7 @@ ${tooltipScript()}
       if (message.type === 'sessions') {
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
+        busy = message.busy || {};
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
         // Close has nothing to close with no Claude2 pane up.
         document.getElementById('close').disabled = message.panesOpen !== true;
@@ -240,6 +246,14 @@ ${tooltipScript()}
 
         const actions = document.createElement('div');
         actions.className = 'card-actions';
+
+        if (busy[session.id]) {
+          const clock = document.createElement('span');
+          clock.className = 'card-clock ' + busy[session.id];
+          clock.title = busy[session.id] === 'background' ? 'Waiting on a background task (Stop ends it)' : 'Responding';
+          clock.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+          actions.appendChild(clock);
+        }
 
         const trash = document.createElement('button');
         trash.className = 'card-trash';
@@ -1130,7 +1144,8 @@ ${tooltipScript()}
     let stoppingTurn = null;
 
     function markStopping() {
-      if (!status || !status.active) return;
+      // A prompt sent during a background wait usually joins the run rather than stopping it.
+      if (!status || !status.active || status.phase === 'background') return;
       stoppingTurn = status.turnId;
       stopButton.classList.add('stopping');
     }
@@ -1722,7 +1737,7 @@ ${tooltipScript()}
       document.getElementById('quiet').textContent = active ? shortTime(liveQuiet()) : '';
       document.getElementById('quiet').style.display = active ? '' : 'none';
       document.getElementById('quiet-sep').style.display = active ? '' : 'none';
-      // One uppercase letter, with the full word on hover: T/W/Q/W/C while streaming,
+      // One uppercase letter, with the full word on hover: T/W/Q/W/C/B while streaming,
       // F or S once the turn lands, R when idle.
       const label = active
         ? (status.phase || 'working')

@@ -62,7 +62,7 @@ export interface InstallStats {
   updatedAt: number;
 }
 
-export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | "compacting" | null;
+export type ClaudePhase = "thinking" | "writing" | "querying" | "working" | "compacting" | "background" | null;
 
 // One picture riding with a prompt. `kind` picks the sentence appended for it, and is what the
 // Image pane names it by. `path` is a temp file while the image is still pending, and a copy under

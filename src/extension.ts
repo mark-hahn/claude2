@@ -242,6 +242,21 @@ class Claude2Controller implements vscode.Disposable {
     return this.store.all();
   }
 
+  // What the sidebar clocks show: red for a run held open on a background task, green for any
+  // other run whose pane is closed (an open pane shows its own run state).
+  public busySessions(): Record<string, "running" | "background"> {
+    const busy: Record<string, "running" | "background"> = {};
+    for (const session of this.store.all()) {
+      const status = this.runner.status(session.id);
+      if (status?.phase === "background") {
+        busy[session.id] = "background";
+      } else if (status?.active && !this.conversationPanels.has(session.id)) {
+        busy[session.id] = "running";
+      }
+    }
+    return busy;
+  }
+
   // The session whose editor is up front; the sidebar tints that card. Visibility decides
   // it rather than `lastConversationId`, which stays put once another editor takes over
   // the column and would leave a card tinted with no session showing.
@@ -1092,14 +1107,17 @@ class Claude2Controller implements vscode.Disposable {
       this.saveDrafts();
     }
     const pending = this.runs.get(sessionId);
-    if (pending || this.runner.isRunning(sessionId)) {
+    // While the CLI waits on a background task (the B pill) the prompt joins that process
+    // instead, so the task keeps running and its result still comes back.
+    const followUp = this.runner.canFollowUp(sessionId, model, effort);
+    if (!followUp && (pending || this.runner.isRunning(sessionId))) {
       // Ctrl-Enter during a run means "drop that answer, take this one instead".
       this.runner.stop(sessionId);
       if (pending) {
         await pending;
       }
     }
-    if (this.runner.isRunning(sessionId)) {
+    if (!followUp && this.runner.isRunning(sessionId)) {
       void vscode.window.showWarningMessage("Claude is already responding in this session.");
       putBack();
       this.postConversationState(sessionId);
@@ -1224,6 +1242,9 @@ class Claude2Controller implements vscode.Disposable {
     let lastModelId = "";
     let lastPonySkips: PonySkip[] = [];
     let lastTurns = 0;
+    // The sidebar only redraws when this run's clock would change: at the start, and on the
+    // way into and out of a background wait.
+    let lastBackground: boolean | null = null;
     const flushStream = (): void => {
       flushTimer = null;
       if (!streamDirty) {
@@ -1266,6 +1287,10 @@ class Claude2Controller implements vscode.Disposable {
           lastModelId = status.modelId || lastModelId;
           lastPonySkips = status.ponySkips.length ? status.ponySkips : lastPonySkips;
           lastTurns = status.turns || lastTurns;
+          if (lastBackground !== (status.phase === "background")) {
+            lastBackground = status.phase === "background";
+            this.refreshSidebar();
+          }
           queueStream();
         },
       });
@@ -1955,6 +1980,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       type: "sessions",
       sessions: this.controller.sessions(),
       selectedId: this.controller.selectedSessionId(),
+      busy: this.controller.busySessions(),
       authNeeded: this.controller.isAuthNeeded(),
       panesOpen: this.controller.hasOpenPanes(),
       modelsAlert: this.controller.modelsAlert(),
