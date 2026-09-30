@@ -1,12 +1,11 @@
 
-show busy indicator in session card
-
-does resume work
 
 ???????
 periods for stats pane
 short timestamp on all lines of response
 ======================
+
+show busy indicator in session card
 
 show time since last response output
 
