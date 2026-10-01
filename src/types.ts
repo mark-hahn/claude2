@@ -11,6 +11,10 @@ export const DEFAULT_EFFORT = "high";
 // **bold** runs too. Zero width, so it shows as nothing wherever a response is read as plain text.
 export const TOOL_LINE_MARK = "⁣";
 
+// A line of just this, put in when the run ends, is where the closing answer starts; the
+// conversation view draws a rule there. Zero width like the tool mark, and a different character.
+export const ANSWER_MARK = "⁤";
+
 // Graft (since removed) had the model close a response with a savings tally line opening with
 // this sprout. Responses stored before the removal still carry those lines, so every view of a
 // response keeps dropping lines starting with it.
@@ -153,6 +157,8 @@ export interface ClaudeRunResult {
   turns: number;
   durationMs: number;
   ponySkips: PonySkip[];
+  // The text of the last message, the one that ended the run: what the CLI's result repeats.
+  answer: string;
 }
 
 export interface QuotaReadingRow {

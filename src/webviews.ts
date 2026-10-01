@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { ModelInfo } from "./modelInfo";
 import { permissionModes } from "./settings";
-import { CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
+import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "settings" | "cap";
 
@@ -436,6 +436,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
+  const answerMark = `'\\u${ANSWER_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   const graftTallyMark = JSON.stringify(GRAFT_TALLY_MARK);
   return `<!doctype html>
 <html lang="en" style="--z: ${z}">
@@ -476,6 +477,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .response.markdown li > ul, .response.markdown li > ol { margin: 2px 0 0; }
     .response.markdown blockquote { margin: 0 0 8px; border-left: 3px solid var(--border); padding: 2px 10px; }
     .response.markdown hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+    /* Above the closing answer: heavier than a markdown rule so the two never get confused. */
+    .response.markdown hr.answer-rule { border-top: 2px solid #000; }
     .response.markdown a { color: #0b4f9c; }
     .response.markdown code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: calc(14px * var(--z)); background: rgba(0,0,0,0.05); border-radius: 4px; padding: 1px 4px; }
     .response.markdown pre { background: #f2f1ec; border: 1px solid var(--border); border-radius: 8px; margin: 0 0 10px; padding: 8px 10px; overflow: auto; }
@@ -580,6 +583,7 @@ ${tooltipScript()}
     const compactAt = Math.max(1000, contextWindow - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
+    const ANSWER_MARK = ${answerMark};
     const GRAFT_TALLY_MARK = ${graftTallyMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
@@ -1183,15 +1187,31 @@ ${tooltipScript()}
       sendDraft('draftChanged');
     }
 
-    // Fills a box with the response as markdown. With tools, each run of tool lines sits
+    // Fills a box with the response. Where the run marked the start of its closing answer, the
+    // answer sits under a rule of its own.
+    function fillBox(box, text, tools) {
+      box.replaceChildren();
+      const parts = text.split('\\n' + ANSWER_MARK + '\\n');
+      appendResponse(box, parts[0], tools);
+      if (parts.length > 1) {
+        // With tools hidden, a run whose work was all tool calls leaves nothing above the rule.
+        if (box.textContent.trim()) {
+          const rule = document.createElement('hr');
+          rule.className = 'answer-rule';
+          box.appendChild(rule);
+        }
+        appendResponse(box, parts.slice(1).join('\\n'), tools);
+      }
+    }
+
+    // Adds response text to a box as markdown. With tools, each run of tool lines sits
     // between the prose around it as a monospace group; tool lines are plain text except
     // for a leading **bold** tool name. Blank lines do not end a group.
-    function fillBox(box, text, tools) {
+    function appendResponse(box, text, tools) {
       if (!tools) {
-        box.innerHTML = renderMarkdown(strippedText(text));
+        box.insertAdjacentHTML('beforeend', renderMarkdown(strippedText(text)));
         return;
       }
-      box.replaceChildren();
       let prose = [];
       let group = null;
       const flushProse = () => {

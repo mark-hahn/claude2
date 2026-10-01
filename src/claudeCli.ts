@@ -233,6 +233,7 @@ export class ClaudeCliRunner {
       let contextTokens = Math.max(0, options.priorContextTokens);
       let costUsd: number | null = null;
       let stopReason: string | null = null;
+      let answer = "";
       let durationMs = 0;
       let ponySkips: PonySkip[] = [];
       // What the CLI itself counted. --max-turns is enforced against this, not against the
@@ -340,6 +341,7 @@ export class ClaudeCliRunner {
           // A run killed by Stop never reports its own duration, so fall back to the wall clock.
           durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
           ponySkips,
+          answer,
         };
       };
 
@@ -384,6 +386,7 @@ export class ClaudeCliRunner {
         tokensOut = 0;
         costUsd = null;
         stopReason = null;
+        answer = "";
         durationMs = 0;
         ponySkips = [];
         reportedTurns = 0;
@@ -528,6 +531,9 @@ export class ClaudeCliRunner {
           }
           const resultText = stringOf(message.result);
           const isError = message.is_error === true;
+          if (!isError) {
+            answer = resultText;
+          }
           // Tool lines alone do not count as a response, so the result text still has to land after
           // them. An error result's text is the error itself and is reported there instead.
           if (!sawTextDelta && resultText && !isError) {

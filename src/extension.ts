@@ -12,7 +12,7 @@ import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { ANSWER_MARK, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -1295,7 +1295,7 @@ class Claude2Controller implements vscode.Disposable {
         },
       });
       this.store.patchTurn(sessionId, turn.id, {
-        response: streamedResponse || result.text,
+        response: markAnswer(streamedResponse || result.text, result.stopped ? "" : result.answer),
         completedAt: Date.now(),
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
@@ -2002,6 +2002,18 @@ function stringOf(value: unknown): string {
 
 function numberOf(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : -1;
+}
+
+// Puts the answer mark on its own line where the closing answer starts. The result repeats the
+// final message's text, so the last place that text shows up in the stream is the start. With
+// nothing above it (no tools ran) there is nothing to set it apart from, so no mark.
+function markAnswer(text: string, answer: string): string {
+  const head = answer.trim().slice(0, 200);
+  const at = head ? text.lastIndexOf(head) : -1;
+  if (at <= 0 || !text.slice(0, at).trim()) {
+    return text;
+  }
+  return `${text.slice(0, at).trimEnd()}\n\n${ANSWER_MARK}\n\n${text.slice(at)}`;
 }
 
 // The sentence appended for one attached picture. It is the whole of how the picture reaches the
