@@ -1757,15 +1757,15 @@ ${tooltipScript()}
       document.getElementById('quiet').textContent = active ? shortTime(liveQuiet()) : '';
       document.getElementById('quiet').style.display = active ? '' : 'none';
       document.getElementById('quiet-sep').style.display = active ? '' : 'none';
-      // One uppercase letter, with the full word on hover: T/W/Q/W/C/B while streaming,
-      // F or S once the turn lands, R when idle.
+      // One letter, with the full word on hover: T/W/Q/w/C/B while streaming (working, the wait
+      // between blocks, is lower-case so it reads apart from writing), F or S once the turn lands, R when idle.
       const label = active
         ? (status.phase || 'working')
         : latest && latest.finished
           ? (latest.stopped ? 'stopped' : 'finished')
           : 'ready';
       finish.className = 'indicator' + (active ? ' active' : latest && latest.finished ? ' done' : '');
-      finish.textContent = label.charAt(0).toUpperCase();
+      finish.textContent = label === 'working' ? 'w' : label.charAt(0).toUpperCase();
       finish.dataset.status = label.charAt(0).toUpperCase() + label.slice(1);
     }
 

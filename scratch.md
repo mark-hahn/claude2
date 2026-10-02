@@ -1,4 +1,11 @@
 
+change status letter in footer for waiting to lower-case `w`
+
+put everything in .claude2
+
+export session
+
+selective delete session cards
 
 ???????
 periods for stats pane
