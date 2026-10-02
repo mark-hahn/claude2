@@ -65,4 +65,25 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   console.log('ok: file tags come back out of the prompt box');
 }
 
+// The export has to drop tool lines and the graft tally the way the box does, and keep the
+// answer rule only where the box would draw it.
+{
+  const lift = (name) => {
+    const source = pages.conversation.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n {4}\\}'));
+    assert.ok(source, 'conversation pane lost ' + name);
+    return source[0];
+  };
+  const body = ['exportMarkdown', 'typedText', 'strippedText', 'isToolLine'].map(lift).join('\n');
+  const T = '⁣';
+  const A = '⁤';
+  const session = { name: 'Demo', turns: [
+    { prompt: 'first\nsecond', response: 'work\n' + T + '**Read** x\n\n\nmore\n' + A + '\nthe answer\n🌱 graft saved' },
+    { prompt: 'only tools', response: T + '**Bash** ls\n' + A + '\ndone', images: [{}], error: 'boom' },
+  ] };
+  const exportMarkdown = new Function('session', 'IMG', 'ANSWER_MARK', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK', body + '\nreturn exportMarkdown;')(session, '🖼️', A, T, '🌱');
+  assert.strictEqual(exportMarkdown(),
+    '# Demo\n\n> first\n> second\n\nwork\n\nmore\n\n***\n\nthe answer\n\n---\n\n> 🖼️only tools\n\ndone\n\n**Error:** boom\n');
+  console.log('ok: session export matches the open boxes');
+}
+
 console.log('ok: every webview script parses');

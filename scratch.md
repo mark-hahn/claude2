@@ -1,16 +1,26 @@
 
 
-
-put everything in .claude2
-
-export session
-
 selective delete session cards
 
 ???????
 periods for stats pane
 short timestamp on all lines of response
 ======================
+
+- remove fork button from sessions header
+- move + button to the left of the close button in sessions header
+- add two icons to left of block bar text and right of flashing down-arrow
+  - one is a fork icon, a line that splits into two arrows pointing down
+    - clicking on it should do the same operation that fork button did
+  - one should be a right-arrow
+    - it should do the new operation of exporting the current session to a file
+      - the file contents should be markdown that matches what it visible in results pane
+      - the file should not have any tool calls
+      - it should have all blocks open
+      - the filename should be `claude2-session(N).md` 
+        - N is one greater than the max N of existing export files
+      - the file should be in the root of the project
+      - a vscode tab should open showing that file with markdown formatting
 
 change status letter in footer for working to lower-case `w`
 

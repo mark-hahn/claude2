@@ -324,9 +324,8 @@ class Claude2Controller implements vscode.Disposable {
         return;
       }
       await this.deleteSession(sessionId);
-    } else if (type === "forkActive") {
-      // The pane holds the selection, so it decides which block the fork cuts at.
-      void this.conversationPanels.get(requestedSessionId)?.webview.postMessage({ type: "forkSelected" });
+    } else if (type === "exportActive") {
+      void this.conversationPanels.get(requestedSessionId)?.webview.postMessage({ type: "exportSelected" });
     } else if (type === "searchChanged") {
       this.setSearch(stringOf(record?.text));
     } else if (type === "login") {
@@ -661,6 +660,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.copyToClipboard(stringOf(record?.text));
     } else if (type === "forkTurn") {
       await this.forkTurn(sessionId, stringOf(record?.turnId));
+    } else if (type === "exportSession") {
+      await this.exportSession(stringOf(record?.markdown));
     } else if (type === "boxScrollsChanged") {
       const scrolls = recordOf(record?.boxScrolls);
       if (scrolls) {
@@ -716,6 +717,20 @@ class Claude2Controller implements vscode.Disposable {
     }
     this.postConversationState(sessionId);
     this.refreshSidebar();
+  }
+
+  // The sidebar's → button: the markdown the pane built is written to the project root as
+  // claude2-session(N).md, N one past the highest already there, and opened as a preview.
+  private async exportSession(markdown: string): Promise<void> {
+    try {
+      const root = this.workspacePath();
+      const taken = (await fs.readdir(root)).map((name) => Number(/^claude2-session\((\d+)\)\.md$/.exec(name)?.[1] ?? 0));
+      const file = path.join(root, `claude2-session(${Math.max(0, ...taken) + 1}).md`);
+      await fs.writeFile(file, markdown, { flag: "wx" });
+      await vscode.commands.executeCommand("markdown.showPreview", vscode.Uri.file(file));
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Session export failed: ${errorMessage(error)}`);
+    }
   }
 
   private async copyToClipboard(text: string): Promise<void> {

@@ -34,13 +34,16 @@ export function sidebarHtml(webview: vscode.Webview): string {
        two never disagree about whether the button does anything. */
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new { width: 42px; }
-    #mngmnt { width: 66px; }
+    /* Drawn rather than typed: font glyphs stay thin even bold, and the + sits low. currentColor keeps the grey-out. */
+    #new svg, #export svg { display: block; margin: 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    /* Icon buttons hug their glyph. */
+    #mngmnt, #export { padding: 0 6px; }
+    #mngmnt { font-size: 16px; }
     #mngmnt.alert { background: #fbd9d9; border-color: #e4a7a7; }
     #login { width: 64px; display: none; }
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
     #close { width: 56px; }
-    #fork { width: 47px; }
     #clean { width: 52px; }
     #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
@@ -76,13 +79,13 @@ ${tooltipStyle()}  </style>
   <div class="shell">
     <div class="top">
       <div class="row">
-        <button id="mngmnt" title="Quotas, instructions, stats, and models">Mngmnt</button>
-        <button id="fork" title="Fork here: copy the session, then drop every block below the selected one" disabled>Fork</button>
+        <button id="mngmnt" title="Quotas, instructions, stats, and models">&#x2699;&#xFE0E;</button>
+        <button id="new" title="New Claude2 session"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
+        <button id="export" title="Export the session up front to a markdown file in the project root" disabled><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button>
         <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
       <div class="row sessions-row">
-        <button id="new" title="New Claude2 session">+</button>
         <button id="clean" title="Move every session to the trash">Clean</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
         <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
@@ -121,9 +124,8 @@ ${tooltipScript()}
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
     document.getElementById('clean').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'discardEmpty' }); vscode.postMessage({ type: 'trashAllSessions' }); });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
-    // Forks the pane that is up front; the fork itself is decided over there, where the
-    // selected block lives, so this only has to name the session.
-    document.getElementById('fork').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'forkActive', sessionId: selectedId }); });
+    // The pane up front builds the markdown, since it is what knows how its boxes read.
+    document.getElementById('export').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'exportActive', sessionId: selectedId }); });
     trashButton.addEventListener('click', (event) => {
       // Ctrl-click is the bulk action for whichever list is showing: on the active list
       // everything goes to the trash at once, on the trash list everything in it is
@@ -178,9 +180,9 @@ ${tooltipScript()}
         document.getElementById('close').disabled = message.panesOpen !== true;
         // The CLI's model list changed since the Models tab was last opened.
         document.getElementById('mngmnt').classList.toggle('alert', message.modelsAlert === true);
-        // Nothing to fork without a pane up front showing a session with runs in it.
+        // Nothing to export without a pane up front showing a session with runs in it.
         const selected = sessions.find((session) => session.id === selectedId);
-        document.getElementById('fork').disabled = !selected || !(selected.turns || []).length;
+        document.getElementById('export').disabled = !selected || !(selected.turns || []).length;
         if (editingId) {
           pendingRender = true;
           return;
@@ -493,6 +495,10 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
     .run-arrow { font-weight: 700; margin-right: 6px; animation: run-blink 0.6s steps(1) infinite; }
     @keyframes run-blink { 50% { visibility: hidden; } }
+    /* The fork mark leading every bar. A span, since a bar is a button and can't hold buttons. */
+    .bar-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; margin-right: 6px; border-radius: 3px; cursor: pointer; }
+    .bar-icon:hover { background: var(--wash); }
+    .bar-icon svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; field-sizing: content; min-height: var(--edh); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
@@ -699,8 +705,8 @@ ${tooltipScript()}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
-      } else if (message.type === 'forkSelected') {
-        forkSelectedBlock();
+      } else if (message.type === 'exportSelected') {
+        vscode.postMessage({ type: 'exportSession', sessionId, markdown: exportMarkdown() });
       } else if (message.type === 'imagesState') {
         imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
@@ -1431,12 +1437,25 @@ ${tooltipScript()}
       return out.join('');
     }
 
-    // Forks at the selected block: every block below it is dropped. On the last block nothing is
-    // below it, so the fork is just the copy. The extension asks for confirmation either way.
-    function forkSelectedBlock() {
-      const turn = session.turns[anchorIndex];
-      if (!turn) return;
-      vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
+    // The session as the pane shows it with every box open and tool groups hidden: each prompt
+    // as a quote, then its box the way fillBox splits it, answer rule included. Blocks are
+    // separated by a rule of their own.
+    function exportMarkdown() {
+      const turns = Array.isArray(session.turns) ? session.turns : [];
+      const blocks = turns.map((turn) => {
+        const images = Array.isArray(turn.images) ? turn.images : [];
+        const prompt = IMG.repeat(images.length) + (typedText(turn) || (images.length ? '' : '(empty prompt)'));
+        const out = [prompt.split('\\n').map((line) => '> ' + line).join('\\n')];
+        const [head, ...rest] = (turn.response || '').split('\\n' + ANSWER_MARK + '\\n');
+        const work = strippedText(head);
+        const answer = rest.length ? strippedText(rest.join('\\n')) : '';
+        if (work) out.push(work);
+        if (work && answer) out.push('***');
+        if (answer) out.push(answer);
+        if (turn.error) out.push('**Error:** ' + turn.error);
+        return out.join('\\n\\n');
+      });
+      return '# ' + (session.name || 'New session') + '\\n\\n' + blocks.join('\\n\\n---\\n\\n') + '\\n';
     }
 
     function render() {
@@ -1547,6 +1566,11 @@ ${tooltipScript()}
             arrow.style.animationDelay = -(Date.now() % 600) + 'ms';
             bar.appendChild(arrow);
           }
+          const forkIcon = document.createElement('span');
+          forkIcon.className = 'bar-icon';
+          forkIcon.title = 'Fork here: copy the session, then drop every block below this one';
+          forkIcon.innerHTML = '<svg viewBox="0 0 16 16"><path d="M8 1v5l-4 4v5M8 6l4 4v5M2 12.5 4 15l2-2.5M10 12.5 12 15l2-2.5"/></svg>';
+          bar.appendChild(forkIcon);
           images.forEach((image, imageIndex) => {
             const char = document.createElement('span');
             char.className = 'img-char';
@@ -1556,6 +1580,11 @@ ${tooltipScript()}
           });
           bar.appendChild(document.createTextNode(typed || (images.length ? '' : '(empty prompt)')));
           bar.addEventListener('click', (event) => {
+            if (event.target && event.target.closest && event.target.closest('.bar-icon')) {
+              // The extension asks before a fork, and refuses one while this session is running.
+              vscode.postMessage({ type: 'forkTurn', sessionId, turnId: turn.id });
+              return;
+            }
             const char = event.target && event.target.closest ? event.target.closest('.img-char') : null;
             if (char) {
               vscode.postMessage({ type: 'showImage', sessionId, turnId: turn.id, index: Number(char.dataset.image) });
