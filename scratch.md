@@ -1,5 +1,5 @@
 
-change status letter in footer for waiting to lower-case `w`
+
 
 put everything in .claude2
 
@@ -11,6 +11,8 @@ selective delete session cards
 periods for stats pane
 short timestamp on all lines of response
 ======================
+
+change status letter in footer for working to lower-case `w`
 
 show busy indicator in session card
 

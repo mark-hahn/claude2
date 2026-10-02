@@ -163,7 +163,7 @@ export class ClaudeCliRunner {
       contextTokens: Math.max(0, options.priorContextTokens),
       ponySkips: [],
       codeLines: 0,
-      phase: "thinking",
+      phase: "working",
       compactedAt: null,
       elapsedMs: 0,
       startedAt: Date.now(),
@@ -392,7 +392,7 @@ export class ClaudeCliRunner {
         reportedTurns = 0;
         sawTextDelta = false;
         toolBatchOpen = false;
-        Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "thinking", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
+        Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "working", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
         emitStatus();
         child.stdin.write(userMessage(next.prompt));
       });

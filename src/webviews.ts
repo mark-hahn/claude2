@@ -496,7 +496,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; field-sizing: content; min-height: var(--edh); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
-    .stats { display: flex; gap: 12px; align-items: center; margin-right: 2px; }
+    /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
+    .stats { display: flex; gap: 12px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
     /* Both rows stretch to the wider one, so M and F line up on the left and the stats on the
        right. Top-row slack widens the model and effort selects; bottom-row slack sits before the stats. */
     .bar .group { flex: 1 0 auto; }
@@ -519,7 +520,11 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     /* Stop asks the CLI to finish the message it is on rather than killing it, so the run keeps
        streaming for a moment after the click. Red says "heard you, still winding down". */
     #stop.stopping:not(:disabled), #stop.stopping:hover:not(:disabled) { background: #ffd4d4; }
-    .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+    /* Room for each stat's usual widest value, so gaining a digit (9 to 10 turns) does not widen the column and slide the pill. */
+    #quiet, #duration, #pony, #projected { min-width: 5ch; }
+    #turns, #cost { min-width: 6ch; }
+    #context { min-width: 8ch; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
     #context { cursor: pointer; }
@@ -533,10 +538,14 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     #finish, #cycle { width: calc(2ch + 16px); flex: none; text-align: center; overflow: visible; position: relative; font-size: max(16.8px, calc(14px * var(--z) * 0.85 * 1.2)); }
     /* Same pill, but the letter reads as a control rather than as state, so it stays at dock weight. */
     #cycle { font-size: inherit; font-weight: 400; }
+    /* Height pinned too, and the letter centred even when a wide one overflows, so no letter can move the pill's edges. */
+    #finish { display: flex; align-items: center; justify-content: center; height: calc(1.45em + 6px); }
     /* Hovering spells the letter out. Absolutely positioned so the pill itself never resizes. */
     #finish:hover::after { content: attr(data-status); position: absolute; right: 0; bottom: calc(100% + 6px); padding: 3px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: max(11.2px, calc(14px * var(--z) * 0.68)); font-weight: 400; white-space: nowrap; z-index: 5; }
     .indicator.done { background: #fff; }
-    .indicator.active { color: #7a1616; border-color: #e2a3a3; background: #fde0e0; }
+    .indicator.active { border-color: #e2a3a3; background: #fde0e0; }
+    /* Waiting between blocks: still running, but nothing is being produced, so it stays out of the red. */
+    .indicator.active.waiting { border-color: #a5d6a7; background: #e3f6e4; }
     .footer { display: flex; gap: 8px; align-items: center; }
     /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
        one is which is answered by clicking it, not by reading it. */
@@ -1764,7 +1773,7 @@ ${tooltipScript()}
         : latest && latest.finished
           ? (latest.stopped ? 'stopped' : 'finished')
           : 'ready';
-      finish.className = 'indicator' + (active ? ' active' : latest && latest.finished ? ' done' : '');
+      finish.className = 'indicator' + (active ? ' active' : latest && latest.finished ? ' done' : '') + (label === 'working' ? ' waiting' : '');
       finish.textContent = label === 'working' ? 'w' : label.charAt(0).toUpperCase();
       finish.dataset.status = label.charAt(0).toUpperCase() + label.slice(1);
     }
