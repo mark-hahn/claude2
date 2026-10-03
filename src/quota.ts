@@ -406,7 +406,9 @@ export class QuotaService {
       }
       this.readings = [...merged.values()].sort((left, right) => left.at - right.at);
     }
-    if (shared.state && shared.lastReadAt > this.lastReadAt) {
+    // Or no state yet: ensureLoaded dates lastReadAt from the history file, whose newest row is
+    // often this very reading, so a bare ">" would leave a fresh window blank until the next one.
+    if (shared.state && (shared.lastReadAt > this.lastReadAt || !this.state.windows.length)) {
       this.state = shared.state;
       this.lastReadAt = shared.lastReadAt;
     }

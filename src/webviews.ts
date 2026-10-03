@@ -503,7 +503,7 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
-    .stats { display: flex; gap: 12px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
+    .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
     /* Both rows stretch to the wider one, so M and F line up on the left and the stats on the
        right. Top-row slack widens the model and effort selects; bottom-row slack sits before the stats. */
     .bar .group { flex: 1 0 auto; }
@@ -528,7 +528,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     #stop.stopping:not(:disabled), #stop.stopping:hover:not(:disabled) { background: #ffd4d4; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
     /* Room for each stat's usual widest value, so gaining a digit (9 to 10 turns) does not widen the column and slide the pill. */
-    #quiet, #duration, #pony, #projected { min-width: 5ch; }
+    #quiet, #duration, #projected { min-width: 5ch; }
+    #pony { min-width: 6ch; }
     #turns, #cost { min-width: 6ch; }
     #context { min-width: 8ch; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
@@ -1783,18 +1784,12 @@ ${tooltipScript()}
         skips += (status.ponySkips || []).length;
       }
       document.getElementById('pony').textContent = skips + ':' + (footer.ceilings || 0);
-      document.getElementById('pony').style.display = footer.ponytail ? '' : 'none';
-      document.getElementById('pony-sep').style.display = footer.ponytail ? '' : 'none';
       const projected = typeof footer.quotaProjected === 'number' ? footer.quotaProjected : null;
-      document.getElementById('projected').textContent = projected === null ? '' : projected + '%';
-      document.getElementById('projected').style.display = projected === null ? 'none' : '';
-      document.getElementById('projected-sep').style.display = projected === null ? 'none' : '';
+      document.getElementById('projected').textContent = projected === null ? '--' : projected + '%';
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
-      // Only runs while a response is streaming; hidden once it ends.
-      document.getElementById('quiet').textContent = active ? shortTime(liveQuiet()) : '';
-      document.getElementById('quiet').style.display = active ? '' : 'none';
-      document.getElementById('quiet-sep').style.display = active ? '' : 'none';
+      // Time since the CLI last sent anything while streaming; zero when idle.
+      document.getElementById('quiet').textContent = shortTime(active ? liveQuiet() : 0);
       // One letter, with the full word on hover: T/W/Q/w/C/B while streaming (working, the wait
       // between blocks, is lower-case so it reads apart from writing), F or S once the turn lands, R when idle.
       const label = active
