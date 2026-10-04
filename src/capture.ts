@@ -113,3 +113,35 @@ function runPowershell(exe: string, target: string, hideWindow: boolean): Promis
     });
   });
 }
+
+// A Windows toast, raised through the same PowerShell the capture uses. It goes out under
+// PowerShell's own app id, since an unregistered one is silently dropped. A remote host has no
+// PowerShell on the client, so there it falls back to a VS Code notification.
+export async function notifyDesktop(title: string, body: string): Promise<void> {
+  const exe = process.platform === "win32" ? "powershell.exe" : isWsl() ? "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" : "";
+  if (!exe) {
+    void vscode.window.showInformationMessage(`${title}: ${body}`);
+    return;
+  }
+  // PowerShell reads the curly quotes as single quotes too, so they are doubled along with it.
+  const quote = (text: string): string => `'${text.replace(/['‘-‛]/g, "$&$&")}'`;
+  const script = [
+    "$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
+    "$x = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+    "$t = $x.GetElementsByTagName('text')",
+    `[void]$t.Item(0).AppendChild($x.CreateTextNode(${quote(title)}))`,
+    `[void]$t.Item(1).AppendChild($x.CreateTextNode(${quote(body)}))`,
+    "$m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))",
+  ].join("; ");
+  // Encoded, so a session name's quotes and non-ASCII survive the hop onto the Windows command line.
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  await new Promise<void>((resolve, reject) => {
+    execFile(exe, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { windowsHide: true }, (error, _stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr.trim() || error.message));
+      } else {
+        resolve();
+      }
+    });
+  });
+}

@@ -66,8 +66,10 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-clock { display: flex; }
     .card-clock.running { color: #1a8f2e; }
     .card-clock.background { color: #d11a1a; }
-    .card-restore { display: none; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; }
-    .card:hover .card-restore { display: block; }
+    .card-restore, .card-notify { display: none; min-height: 0; padding: 3px 8px; font-size: 14px; border-radius: 6px; background: rgba(252,252,251,0.5); }
+    .card .card-restore:hover, .card .card-notify:hover { background: linear-gradient(var(--wash), var(--wash)), rgba(252,252,251,0.5); }
+    .card:hover .card-restore, .card:hover .card-notify { display: block; }
+    .card-bell { border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
     .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
@@ -104,6 +106,8 @@ ${tooltipScript()}
     let selectedId = '';
     // Session id -> 'running' (only sent for a session with its pane closed) or 'background'.
     let busy = {};
+    // Ids of the sessions in notification mode (🔔 on the card).
+    let notify = [];
     let scrolledId = '';
     let showTrash = false;
     // An inline rename owns its card until it commits, so a background refresh waits
@@ -175,6 +179,7 @@ ${tooltipScript()}
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';
         busy = message.busy || {};
+        notify = Array.isArray(message.notify) ? message.notify : [];
         document.getElementById('login').classList.toggle('needed', message.authNeeded === true);
         // Close has nothing to close with no Claude2 pane up.
         document.getElementById('close').disabled = message.panesOpen !== true;
@@ -294,6 +299,20 @@ ${tooltipScript()}
             vscode.postMessage({ type: 'restoreSession', sessionId: session.id });
           });
           actions.appendChild(restore);
+        } else {
+          // Notify arms the mode and 🔔 shows it; clicking 🔔 disarms it. The extension drops it
+          // too, once the session finishes and the desktop notification has gone out.
+          const notifying = notify.includes(session.id);
+          const toggle = document.createElement('button');
+          toggle.className = notifying ? 'card-bell' : 'card-notify';
+          toggle.textContent = notifying ? '\u{1F514}' : 'Notify';
+          toggle.title = notifying ? 'Stop waiting to notify when this session finishes' : 'Show a desktop notification when this session finishes';
+          toggle.addEventListener('pointerdown', (event) => event.stopPropagation());
+          toggle.addEventListener('click', (event) => {
+            event.stopPropagation();
+            vscode.postMessage({ type: 'toggleNotify', sessionId: session.id });
+          });
+          actions.appendChild(toggle);
         }
         actions.appendChild(trash);
         card.appendChild(actions);

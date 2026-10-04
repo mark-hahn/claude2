@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
-import { captureScreen } from "./capture";
+import { captureScreen, notifyDesktop } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
@@ -77,6 +77,9 @@ class Claude2Controller implements vscode.Disposable {
   // The pending coalesced write of `drafts`, and the last one handed to workspaceState.
   private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private draftSave: Thenable<unknown> = Promise.resolve();
+  // Sessions whose card shows 🔔: the next time one finishes it raises a desktop notification and
+  // drops out. Not persisted, since a reload ends any run it was waiting on.
+  private readonly notifyIds = new Set<string>();
   // Sessions whose panel should put the caret in the prompt box once its webview loads.
   private readonly pendingPromptFocus = new Set<string>();
   // Index of the response box each conversation has selected; the md pane renders that one.
@@ -242,6 +245,10 @@ class Claude2Controller implements vscode.Disposable {
     return this.store.all();
   }
 
+  public notifySessions(): string[] {
+    return [...this.notifyIds];
+  }
+
   // What the sidebar clocks show: red for a run held open on a background task, green for any
   // other run whose pane is closed (an open pane shows its own run state).
   public busySessions(): Record<string, "running" | "background"> {
@@ -315,6 +322,11 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "deleteSessions") {
       const ids = Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf).filter((id) => id !== "") : [];
       await this.deleteTrashedSessions(ids, `Permanently delete the ${ids.length} older session${ids.length === 1 ? "" : "s"} below this one?`);
+    } else if (type === "toggleNotify") {
+      if (!this.notifyIds.delete(requestedSessionId)) {
+        this.notifyIds.add(requestedSessionId);
+      }
+      this.refreshSidebar();
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
@@ -1392,6 +1404,12 @@ class Claude2Controller implements vscode.Disposable {
       streamDirty = false;
       pendingDelta = "";
       this.postConversationState(sessionId);
+      // A run that handed its process to a follow-up prompt is not finished; that prompt's turn reports instead.
+      if (!this.runner.isRunning(sessionId) && this.notifyIds.delete(sessionId)) {
+        notifyDesktop("Claude2", `${this.store.get(sessionId)?.name || "New session"} finished`).catch((error) => {
+          this.channel.appendLine(`Desktop notification failed: ${errorMessage(error)}`);
+        });
+      }
       this.refreshSidebar();
       void this.quota.history(false);
     }
@@ -1996,6 +2014,7 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
       sessions: this.controller.sessions(),
       selectedId: this.controller.selectedSessionId(),
       busy: this.controller.busySessions(),
+      notify: this.controller.notifySessions(),
       authNeeded: this.controller.isAuthNeeded(),
       panesOpen: this.controller.hasOpenPanes(),
       modelsAlert: this.controller.modelsAlert(),
