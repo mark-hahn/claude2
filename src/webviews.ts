@@ -2374,6 +2374,7 @@ ${tabsStyle()}  </style>
         <tr><td>Max budget per prompt in USD (0 = no limit)</td><td><input id="maxBudgetUsd" type="number" min="0" step="0.01"></td></tr>
         <tr><td>Permission mode</td><td><select id="permissionMode">${modes}</select></td></tr>
         <tr><td>Quota pane timezone (IANA)</td><td><input id="timezone" type="text"></td></tr>
+        <tr><td>Long tool display</td><td><input id="longToolDisplay" type="checkbox"></td></tr>
       </table>
       <div class="save-row"><button id="save">Save</button><span id="note"></span></div>
     </div>
@@ -2395,7 +2396,7 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
-    for (const id of fields) document.getElementById(id).addEventListener('input', () => note('Not saved'));
+    for (const id of fields.concat(['longToolDisplay'])) document.getElementById(id).addEventListener('input', () => note('Not saved'));
     void load();
 
     function request(type, payload) {
@@ -2410,6 +2411,7 @@ ${zoomScript(z)}
         return;
       }
       for (const id of fields) document.getElementById(id).value = String(reply.payload[id]);
+      document.getElementById('longToolDisplay').checked = reply.payload.longToolDisplay === true;
       note('');
     }
 
@@ -2419,6 +2421,7 @@ ${zoomScript(z)}
         const value = document.getElementById(id).value;
         settings[id] = numbers.includes(id) ? Number(value) : value;
       }
+      settings.longToolDisplay = document.getElementById('longToolDisplay').checked;
       const reply = await request('saveSettings', { settings });
       note(reply.ok ? 'Saved. Other windows use it after they reload.' : 'Save failed: ' + (reply.error || 'unknown error'));
     }

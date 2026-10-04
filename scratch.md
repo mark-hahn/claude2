@@ -6,6 +6,7 @@ selective delete session cards
 periods for stats pane
 ======================
 
+add a checkbox `Long tool display` in the settings pane under "Quota pane timezone". when checked show everything in the tool line the claude extension does like in your last response.
 short timestamp on tool lines
 
 session cards that are not in the trash should show a button when hovered over called `Notify` in the same style as the restore button in session cards in the trash. 

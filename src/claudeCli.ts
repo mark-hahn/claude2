@@ -30,6 +30,8 @@ interface RunPromptOptions {
   // never drops to zero while the first API call of the run is still in flight.
   priorContextTokens: number;
   limits: RunLimits;
+  // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
+  longTools: boolean;
   plugins: PluginFlags;
   onText: (text: string) => void;
   onStatus: (status: RunningStatus) => void;
@@ -261,9 +263,10 @@ export class ClaudeCliRunner {
 
       // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
       // Each carries the mark and the local wall-clock time it arrived, "hh:mm:ss ", ahead of its text.
+      // A long tool line's continuation lines carry the mark too, so they stay in its tool group.
       const appendToolLine = (text: string): void => {
         const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
-        const chunk = `${gap}${TOOL_LINE_MARK}${new Date().toTimeString().slice(0, 8)} ${text}\n`;
+        const chunk = `${gap}${TOOL_LINE_MARK}${new Date().toTimeString().slice(0, 8)} ${text.replace(/\n/g, `\n${TOOL_LINE_MARK}`)}\n`;
         responseText += chunk;
         show(chunk);
         toolBatchOpen = true;
@@ -489,7 +492,7 @@ export class ClaudeCliRunner {
                 continue;
               }
               seenToolUses.add(blockId);
-              appendToolLine(toolUseLine(block));
+              appendToolLine(options.longTools ? longToolUseLine(block) : toolUseLine(block));
             }
           }
         } else if (messageType === "system") {
@@ -890,6 +893,60 @@ function toolUseLine(block: Record<string, unknown>): string {
     return `**${name}**`;
   }
   return `**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
+}
+
+// The Long tool display form: what the official Claude Code extension shows for the call -- its
+// header detail, and the input it lists under IN -- with that input indented on the lines below.
+// Tool results are not shown.
+function longToolUseLine(block: Record<string, unknown>): string {
+  const name = stringOf(block.name) || "tool";
+  const input = recordOf(block.input) ?? {};
+  const field = (key: string): string => stringOf(input[key]);
+  const head = (detail: string): string => (detail ? `**${name}:** ${detail}` : `**${name}**`);
+  const withBody = (detail: string, body: string): string => head(detail) + (body.trim() ? `\n${body.replace(/^/gm, "    ")}` : "");
+  const lines = (count: number): string => `${count} line${count === 1 ? "" : "s"}`;
+  switch (name) {
+    case "Bash":
+    case "PowerShell":
+      return withBody(field("description"), field("command"));
+    case "Agent":
+    case "Task":
+      return withBody(field("description"), field("prompt"));
+    case "Read": {
+      // The CLI's offset is the 1-based first line, so this is not the official +1.
+      const offset = numberOf(input.offset);
+      const limit = numberOf(input.limit);
+      const range = offset === null ? "" : limit === null ? ` (from line ${offset})` : ` (lines ${offset}-${offset + limit - 1})`;
+      return head(field("file_path") + range);
+    }
+    case "Edit": {
+      const before = field("old_string").split("\n").length;
+      const after = field("new_string").split("\n").length;
+      const added = Math.max(0, after - before);
+      const removed = Math.max(0, before - after);
+      const change = [added ? `added ${lines(added)}` : "", removed ? `removed ${lines(removed)}` : ""].filter(Boolean).join(", ");
+      return head(`${field("file_path")} (${change || "modified"})`);
+    }
+    case "Write":
+      return head(`${field("file_path")} (${lines(field("content").split("\n").length)})`);
+    case "Grep": {
+      const where = [field("path") && `in ${field("path")}`, field("glob") && `glob: ${field("glob")}`, field("type") && `type: ${field("type")}`].filter(Boolean);
+      return head(`"${field("pattern")}"${where.length ? ` (${where.join(", ")})` : ""}`);
+    }
+    case "Glob":
+      return head(`pattern: "${field("pattern")}"${field("path") ? ` (in ${field("path")})` : ""}`);
+    case "WebFetch":
+      return head(field("url"));
+    case "WebSearch": {
+      const list = (key: string): string => (Array.isArray(input[key]) ? (input[key] as unknown[]).map(String).join(", ") : "");
+      const domains = [list("allowed_domains") && `allowed: ${list("allowed_domains")}`, list("blocked_domains") && `blocked: ${list("blocked_domains")}`].filter(Boolean);
+      return head(field("query") + (domains.length ? ` (${domains.join(" · ")})` : ""));
+    }
+    case "Skill":
+      return head([field("skill").replace(/^\//, ""), field("args")].filter(Boolean).join(" "));
+    default:
+      return withBody("", Object.keys(input).length ? JSON.stringify(input, null, 2) : "");
+  }
 }
 
 // Ponytail closes a response with lines like "skipped: X, add when Y" — X is what it declined to

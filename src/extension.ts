@@ -1302,6 +1302,7 @@ class Claude2Controller implements vscode.Disposable {
         hasPriorTurns: !wasFirstPrompt,
         priorContextTokens: priorContext,
         limits: this.runLimits(),
+        longTools: this.settings.longToolDisplay,
         plugins,
         onText: (text) => {
           streamedResponse += text;

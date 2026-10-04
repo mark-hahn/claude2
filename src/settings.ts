@@ -12,10 +12,12 @@ export interface Settings {
   maxBudgetUsd: number;
   permissionMode: string;
   timezone: string;
+  // Tool lines in the official extension's fuller form: header detail plus the call's input.
+  longToolDisplay: boolean;
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles" };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -49,6 +51,7 @@ export function checkSettings(value: unknown): Settings {
     maxBudgetUsd,
     permissionMode,
     timezone,
+    longToolDisplay: record.longToolDisplay === true,
   };
 }
 
