@@ -1282,13 +1282,15 @@ ${tooltipScript()}
           target.className = 'search-line';
           box.appendChild(target);
         }
-        const bold = /^\\*\\*([^*]+)\\*\\*/.exec(line);
+        // Tool lines open with an "hh:mm:ss " timestamp ahead of the bold name; older saved ones don't.
+        const bold = /^(\\d\\d:\\d\\d:\\d\\d )?\\*\\*([^*]+)\\*\\*/.exec(line);
         if (!bold) {
           target.appendChild(document.createTextNode(line));
           return;
         }
+        if (bold[1]) target.appendChild(document.createTextNode(bold[1]));
         const name = document.createElement('b');
-        name.textContent = bold[1];
+        name.textContent = bold[2];
         target.appendChild(name);
         target.appendChild(document.createTextNode(line.slice(bold[0].length)));
     }

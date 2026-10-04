@@ -260,9 +260,10 @@ export class ClaudeCliRunner {
       };
 
       // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
+      // Each carries the mark and the local wall-clock time it arrived, "hh:mm:ss ", ahead of its text.
       const appendToolLine = (text: string): void => {
         const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
-        const chunk = `${gap}${text}\n`;
+        const chunk = `${gap}${TOOL_LINE_MARK}${new Date().toTimeString().slice(0, 8)} ${text}\n`;
         responseText += chunk;
         show(chunk);
         toolBatchOpen = true;
@@ -877,9 +878,9 @@ function toolUseLine(block: Record<string, unknown>): string {
   const detail = input ? detailKeys.map((key) => stringOf(input[key])).find((value) => value.trim()) ?? "" : "";
   const oneLine = detail.replace(/\s+/g, " ").trim();
   if (!oneLine) {
-    return `${TOOL_LINE_MARK}**${name}**`;
+    return `**${name}**`;
   }
-  return `${TOOL_LINE_MARK}**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
+  return `**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
 // Ponytail closes a response with lines like "skipped: X, add when Y" — X is what it declined to

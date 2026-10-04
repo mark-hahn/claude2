@@ -4,8 +4,9 @@
 ???????
 selective delete session cards
 periods for stats pane
-short timestamp on all lines of response
 ======================
+
+short timestamp on tool lines
 
 session cards that are not in the trash should show a button when hovered over called `Notify` in the same style as the restore button in session cards in the trash. 
 When the Notify button is clicked the card should turn on notification mode and show 🔔 in the card. 
