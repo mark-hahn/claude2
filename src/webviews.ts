@@ -291,7 +291,7 @@ ${tooltipScript()}
         if (trashed) {
           const restore = document.createElement('button');
           restore.className = 'card-restore';
-          restore.textContent = 'Restore';
+          restore.textContent = 'R';
           restore.title = 'Move this session out of the trash';
           restore.addEventListener('pointerdown', (event) => event.stopPropagation());
           restore.addEventListener('click', (event) => {
@@ -305,7 +305,7 @@ ${tooltipScript()}
           const notifying = notify.includes(session.id);
           const toggle = document.createElement('button');
           toggle.className = notifying ? 'card-bell' : 'card-notify';
-          toggle.textContent = notifying ? '\u{1F514}' : 'Notify';
+          toggle.textContent = notifying ? '\u{1F514}' : 'N';
           toggle.title = notifying ? 'Stop waiting to notify when this session finishes' : 'Show a desktop notification when this session finishes';
           toggle.addEventListener('pointerdown', (event) => event.stopPropagation());
           toggle.addEventListener('click', (event) => {
