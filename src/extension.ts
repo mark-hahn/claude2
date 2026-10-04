@@ -1405,7 +1405,9 @@ class Claude2Controller implements vscode.Disposable {
       pendingDelta = "";
       this.postConversationState(sessionId);
       // A run that handed its process to a follow-up prompt is not finished; that prompt's turn reports instead.
-      if (!this.runner.isRunning(sessionId) && this.notifyIds.delete(sessionId)) {
+      // A session already in front of the user (window focused, its tab active) drops out without one.
+      const watching = vscode.window.state.focused && this.conversationPanels.get(sessionId)?.active;
+      if (!this.runner.isRunning(sessionId) && this.notifyIds.delete(sessionId) && !watching) {
         notifyDesktop("Claude2", `${this.store.get(sessionId)?.name || "New session"} finished`).catch((error) => {
           this.channel.appendLine(`Desktop notification failed: ${errorMessage(error)}`);
         });
