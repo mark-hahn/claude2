@@ -350,6 +350,7 @@ export class ClaudeCliRunner {
         if (stdoutBuffer.trim()) {
           handleClaudeLine(stdoutBuffer.trim());
         }
+        appendToolLine(FINISHED_LINE);
         const finalResult = blockResult();
         status.active = false;
         status.phase = null;
@@ -377,6 +378,7 @@ export class ClaudeCliRunner {
       // The waiting block is finished as it stands and the new prompt's block takes over the
       // process. When the task ends, the CLI's turn about it lands in whichever block is current.
       running.followUp = (next) => new Promise<ClaudeRunResult>((nextResolve, nextReject) => {
+        appendToolLine(FINISHED_LINE);
         resolveBlock(blockResult());
         resolveBlock = nextResolve;
         rejectBlock = nextReject;
@@ -393,11 +395,14 @@ export class ClaudeCliRunner {
         reportedTurns = 0;
         sawTextDelta = false;
         toolBatchOpen = false;
+        turnEnded = false;
+        appendToolLine(STARTED_LINE);
         Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "working", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
         emitStatus();
         child.stdin.write(userMessage(next.prompt));
       });
 
+      appendToolLine(STARTED_LINE);
       emitStatus();
 
       const handleClaudeLine = (line: string): void => {
@@ -868,6 +873,10 @@ function phaseForBlock(blockType: string): ClaudePhase {
   }
   return "working";
 }
+
+// Every block's response opens and closes with these, stored with it like any tool line.
+const STARTED_LINE = "**Started:** =======";
+const FINISHED_LINE = "**Finished:** =======";
 
 // One tool call on one line: the tool name plus whichever input field best names what it was pointed at.
 // The name is wrapped in ** so the conversation view can bold it; nothing else in the line is markup.
