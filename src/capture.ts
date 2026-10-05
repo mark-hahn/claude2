@@ -118,10 +118,11 @@ function runPowershell(exe: string, target: string, hideWindow: boolean): Promis
 // PowerShell's own app id, since an unregistered one is silently dropped. A remote host has no
 // PowerShell on the client, so there it falls back to a VS Code notification. Clicking the toast
 // hands `launch` to Windows to open, which is how a vscode:// uri finds its way back to the extension.
-export async function notifyDesktop(title: string, body: string, launch: string): Promise<void> {
+// A VS Code notification only acts on its buttons, so there a Show button calls `open` instead.
+export async function notifyDesktop(title: string, body: string, launch: string, open: () => void): Promise<void> {
   const exe = process.platform === "win32" ? "powershell.exe" : isWsl() ? "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" : "";
   if (!exe) {
-    void vscode.window.showInformationMessage(`${title}: ${body}`);
+    void vscode.window.showInformationMessage(`${title}: ${body}`, "Show").then((choice) => choice && open());
     return;
   }
   // PowerShell reads the curly quotes as single quotes too, so they are doubled along with it.

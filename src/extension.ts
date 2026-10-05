@@ -1406,7 +1406,7 @@ class Claude2Controller implements vscode.Disposable {
         // asExternalUri tacks on this window's id, so the click comes back to this window and not another.
         const name = this.store.get(sessionId)?.name || "New session";
         Promise.resolve(vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://hahnca.claude2/open?session=${encodeURIComponent(sessionId)}`)))
-          .then((launch) => notifyDesktop("Claude2", `${name} finished`, launch.toString(true)))
+          .then((launch) => notifyDesktop("Claude2", `${name} finished`, launch.toString(true), () => void this.openConversation(sessionId)))
           .catch((error) => {
             this.channel.appendLine(`Desktop notification failed: ${errorMessage(error)}`);
           });
