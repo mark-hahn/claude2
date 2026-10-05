@@ -4,7 +4,7 @@ import { CLAUDE2_CONTEXT_WINDOW } from "./types";
 
 // Everything the Settings pane sets. One copy lives on the stats server (hahnca.com), so a save
 // from any window on any host type -- windows, wsl, ssh -- reaches every other window at its
-// next reload. The globalState copy only covers a window that opens while the server is down.
+// next prompt. The globalState copy only covers a window that opens while the server is down.
 
 export interface Settings {
   maxTurns: number;

@@ -1207,7 +1207,9 @@ class Claude2Controller implements vscode.Disposable {
         prompt = `${prompt}\n\n${sent.map((file) => fileNote(file)).join("\n\n")}`;
       }
     }
+    // Fresh from the server each prompt, so a save made in another window counts here too.
     await this.settingsReady;
+    this.settings = await fetchSettings(this.context.globalState, (line) => this.channel.appendLine(line));
     const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model;
     // An empty effort is a pick, not a gap: that model takes no effort levels.
