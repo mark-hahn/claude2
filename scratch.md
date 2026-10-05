@@ -1,13 +1,14 @@
 
-# notifications always on
-- remove the notify button and the notify icon
-- ever running session should be treated as if notification was on
-  - it still shouldn't show the notification if the session is on top
 
 ???????
 selective delete session cards
 periods for stats pane
 ======================
+
+# notifications always on
+- remove the notify button and the notify icon
+- ever running session should be treated as if notification was on
+  - it still shouldn't show the notification if the session is on top
 
 add a checkbox `Long tool display` in the settings pane under "Quota pane timezone". when checked show everything in the tool line the claude extension does like in your last response.
 short timestamp on tool lines
