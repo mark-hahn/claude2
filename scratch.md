@@ -1,5 +1,8 @@
 
-
+# notifications always on
+- remove the notify button and the notify icon
+- ever running session should be treated as if notification was on
+  - it still shouldn't show the notification if the session is on top
 
 ???????
 selective delete session cards

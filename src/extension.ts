@@ -214,6 +214,10 @@ class Claude2Controller implements vscode.Disposable {
       vscode.commands.registerCommand("claude2.openInstructions", () => void this.openManagement("instructions")),
       vscode.commands.registerCommand("claude2.openQuota", () => void this.openManagement("quota")),
       vscode.commands.registerCommand("claude2.simulateModelChange", () => void this.simulateModelChange()),
+      // A click on a finished-session toast lands here, naming the session to bring up.
+      vscode.window.registerUriHandler({
+        handleUri: (uri) => void this.openConversation(new URLSearchParams(uri.query).get("session") ?? ""),
+      }),
       // Another window on this host may have changed the model info (a new list, the alert
       // cleared, presets saved); coming back to this one picks that up.
       vscode.window.onDidChangeWindowState((state) => {
@@ -1409,9 +1413,13 @@ class Claude2Controller implements vscode.Disposable {
       // A session already in front of the user (window focused, its tab active) drops out without one.
       const watching = vscode.window.state.focused && this.conversationPanels.get(sessionId)?.active;
       if (!this.runner.isRunning(sessionId) && this.notifyIds.delete(sessionId) && !watching) {
-        notifyDesktop("Claude2", `${this.store.get(sessionId)?.name || "New session"} finished`).catch((error) => {
-          this.channel.appendLine(`Desktop notification failed: ${errorMessage(error)}`);
-        });
+        // asExternalUri tacks on this window's id, so the click comes back to this window and not another.
+        const name = this.store.get(sessionId)?.name || "New session";
+        Promise.resolve(vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://hahnca.claude2/open?session=${encodeURIComponent(sessionId)}`)))
+          .then((launch) => notifyDesktop("Claude2", `${name} finished`, launch.toString(true)))
+          .catch((error) => {
+            this.channel.appendLine(`Desktop notification failed: ${errorMessage(error)}`);
+          });
       }
       this.refreshSidebar();
       void this.quota.history(false);

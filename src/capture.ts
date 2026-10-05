@@ -116,8 +116,9 @@ function runPowershell(exe: string, target: string, hideWindow: boolean): Promis
 
 // A Windows toast, raised through the same PowerShell the capture uses. It goes out under
 // PowerShell's own app id, since an unregistered one is silently dropped. A remote host has no
-// PowerShell on the client, so there it falls back to a VS Code notification.
-export async function notifyDesktop(title: string, body: string): Promise<void> {
+// PowerShell on the client, so there it falls back to a VS Code notification. Clicking the toast
+// hands `launch` to Windows to open, which is how a vscode:// uri finds its way back to the extension.
+export async function notifyDesktop(title: string, body: string, launch: string): Promise<void> {
   const exe = process.platform === "win32" ? "powershell.exe" : isWsl() ? "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" : "";
   if (!exe) {
     void vscode.window.showInformationMessage(`${title}: ${body}`);
@@ -131,6 +132,8 @@ export async function notifyDesktop(title: string, body: string): Promise<void> 
     "$t = $x.GetElementsByTagName('text')",
     `[void]$t.Item(0).AppendChild($x.CreateTextNode(${quote(title)}))`,
     `[void]$t.Item(1).AppendChild($x.CreateTextNode(${quote(body)}))`,
+    "$x.DocumentElement.SetAttribute('activationType', 'protocol')",
+    `$x.DocumentElement.SetAttribute('launch', ${quote(launch)})`,
     "$m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))",
   ].join("; ");
   // Encoded, so a session name's quotes and non-ASCII survive the hop onto the Windows command line.
