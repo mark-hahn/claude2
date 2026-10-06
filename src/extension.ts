@@ -1105,6 +1105,19 @@ class Claude2Controller implements vscode.Disposable {
   // stopped turn is fully recorded before this one is appended.
   // keepDraft: the prompt came from somewhere other than the box (the gauge's /compact), so the
   // box's draft and attachments are left where they are and this prompt never becomes the draft.
+  // Asked before a send mid-run interrupts the run (Stop doesn't ask: the click is the intent).
+  // A no un-marks the Stop button, which the pane lit the moment it sent.
+  private async confirmInterrupt(sessionId: string): Promise<boolean> {
+    if (!this.runner.isRunning(sessionId)) {
+      return true;
+    }
+    const ok = await vscode.window.showWarningMessage("Interrupt Claude's unfinished response?", { modal: true }, "Interrupt") === "Interrupt";
+    if (!ok) {
+      void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "stopDeclined" });
+    }
+    return ok;
+  }
+
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
     if (!prompt.trim()) {
       return;
@@ -1131,6 +1144,11 @@ class Claude2Controller implements vscode.Disposable {
     const followUp = this.runner.canFollowUp(sessionId, model, effort);
     if (!followUp && (pending || this.runner.isRunning(sessionId))) {
       // Ctrl-Enter during a run means "drop that answer, take this one instead".
+      if (!await this.confirmInterrupt(sessionId)) {
+        putBack();
+        this.postConversationState(sessionId);
+        return;
+      }
       this.runner.stop(sessionId);
       if (pending) {
         await pending;
@@ -1274,7 +1292,7 @@ class Claude2Controller implements vscode.Disposable {
       streamDirty = false;
       const delta = pendingDelta;
       pendingDelta = "";
-      this.postTurnDelta(sessionId, turn.id, delta);
+      this.postTurnDelta(sessionId, turn.id, delta, streamedResponse.length - delta.length);
     };
     const queueStream = (): void => {
       streamDirty = true;
@@ -1942,8 +1960,10 @@ class Claude2Controller implements vscode.Disposable {
 
   // Streaming update: only the new text and the run status cross to the webview, and the
   // sidebar (whose cards show nothing live) is left alone until the run ends.
-  private postTurnDelta(sessionId: string, turnId: string, delta: string): void {
-    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "turnDelta", turnId, delta, status: this.runner.status(sessionId) });
+  // `at` is where the delta starts in the response. The store already holds the delta while it
+  // waits out the throttle, so a full sessionState posted in that window carries it too.
+  private postTurnDelta(sessionId: string, turnId: string, delta: string, at: number): void {
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "turnDelta", turnId, delta, at, status: this.runner.status(sessionId) });
   }
 
   private refreshSidebar(): void {
