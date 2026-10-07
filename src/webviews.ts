@@ -2981,7 +2981,8 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
     .credits { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
-    .credits .bar { display: block; width: min(340px, 40%); height: calc(12px * var(--z)); border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
+    .credits button { min-height: 26px; padding: 2px 8px; }
+    .credits .bar { display: block; width: min(170px, 20%); height: calc(12px * var(--z)); border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
     .credits .fill { display: block; height: 100%; background: var(--blue); }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 13px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
@@ -3020,6 +3021,8 @@ ${zoomScript(z)}
     const timeZone = ${safeTimezone};
     const pending = new Map();
     const backs = { five: 0, seven: 0 };
+    // Months back from the current one that the credits bar shows.
+    let creditMonth = 0;
     let payload = { readAt: null, rows: [], state: { error: null } };
     let expanded = null;
     let loading = true;
@@ -3035,6 +3038,12 @@ ${zoomScript(z)}
     });
 
     document.getElementById('update').addEventListener('click', () => void load(true));
+    document.getElementById('credits').addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      creditMonth += button.dataset.month === 'older' ? 1 : -1;
+      renderCredits();
+    });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -3124,16 +3133,22 @@ ${zoomScript(z)}
       age.textContent = minutes + ':' + String(seconds).padStart(2, '0');
     }
 
-    // Live reading first; if this reading had no credits block, fall back to the newest row that did.
+    // The current month takes the live reading first; otherwise, and for past months, the newest
+    // row in that month with a credits block. Months are UTC: credits reset at 00:00 UTC on the 1st.
     function renderCredits() {
       const node = document.getElementById('credits');
-      const live = payload.state && payload.state.credits;
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      const now = new Date();
+      const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - creditMonth, 1);
+      const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - creditMonth + 1, 1);
+      const label = new Date(start).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+      const nav = '<button data-month="older"' + (rows.length === 0 || rows[0].at >= start ? ' disabled' : '') + '>‹</button><span>' + label + '</span><button data-month="newer"' + (creditMonth === 0 ? ' disabled' : '') + '>›</button>';
+      const live = creditMonth === 0 && payload.state && payload.state.credits;
       let spent = live ? numeric(live.spentUsd) : null;
       let limit = live ? numeric(live.limitUsd) : null;
       if (spent === null || limit === null) {
-        const rows = Array.isArray(payload.rows) ? payload.rows : [];
         for (let index = rows.length - 1; index >= 0; index -= 1) {
-          if (numeric(rows[index].spent_usd) !== null && numeric(rows[index].limit_usd) !== null) {
+          if (rows[index].at >= start && rows[index].at < end && numeric(rows[index].spent_usd) !== null && numeric(rows[index].limit_usd) !== null) {
             spent = numeric(rows[index].spent_usd);
             limit = numeric(rows[index].limit_usd);
             break;
@@ -3141,12 +3156,12 @@ ${zoomScript(z)}
         }
       }
       if (spent === null || limit === null || limit <= 0) {
-        node.replaceChildren();
+        node.innerHTML = nav;
         return;
       }
       const pct = Math.max(0, Math.min(100, (spent / limit) * 100));
       const fill = pct <= 50 ? '#8f8' : (pct <= 75 ? '#ff8' : '#f88');
-      node.innerHTML = '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>';
+      node.innerHTML = nav + '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>';
     }
 
     function money(value) { return '$' + Number(value).toFixed(2); }
