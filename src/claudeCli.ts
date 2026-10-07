@@ -500,6 +500,9 @@ export class ClaudeCliRunner {
           // Without this the phase would sit on whatever it last showed for the whole pause.
           const subtype = stringOf(message.subtype);
           if (subtype === "status" && stringOf(message.status) === "compacting") {
+            if (status.phase !== "compacting") {
+              appendToolLine(COMPACTING_LINE);
+            }
             status.phase = "compacting";
             emitStatus();
           } else if (subtype === "compact_boundary") {
@@ -514,7 +517,7 @@ export class ClaudeCliRunner {
               contextTokens = after;
               status.contextTokens = after;
             }
-            appendToolLine(`**compacted** conversation summarised${before ? ` from ${before.toLocaleString()} tokens` : ""}`);
+            appendToolLine(`**Compacted:** conversation summarised${before ? ` from ${before.toLocaleString()} tokens` : ""}`);
             emitStatus();
           } else if (subtype === "background_tasks_changed") {
             backgroundTasks = Array.isArray(message.tasks) ? message.tasks.length : 0;
@@ -880,6 +883,7 @@ function phaseForBlock(blockType: string): ClaudePhase {
 // Every block's response opens and closes with these, stored with it like any tool line.
 const STARTED_LINE = "**Started:** =======";
 const FINISHED_LINE = "**Finished:** =======";
+const COMPACTING_LINE = "**Compacting:** =======";
 
 // One tool call on one line: the tool name plus whichever input field best names what it was pointed at.
 // The name is wrapped in ** so the conversation view can bold it; nothing else in the line is markup.
