@@ -1,4 +1,7 @@
 
+compacting should show the compacting line `23:08:39 Compacting: =======` when compacting starts
+
+set max turns to 50
 
 ???????
 selective delete session cards
