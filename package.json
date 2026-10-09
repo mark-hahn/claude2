@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.146",
+  "version": "0.0.148",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -42,6 +42,12 @@
     },
     "commands": [
       {
+        "command": "claude2.open",
+        "title": "Open",
+        "category": "Claude2",
+        "icon": "resources/claude2-orange.svg"
+      },
+      {
         "command": "claude2.newSession",
         "title": "New Session",
         "category": "Claude2"
@@ -61,7 +67,15 @@
         "title": "Open Quota",
         "category": "Claude2"
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "claude2.open",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

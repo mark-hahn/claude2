@@ -207,6 +207,7 @@ class Claude2Controller implements vscode.Disposable {
     this.sidebarProvider = new ClaudeSidebarProvider(this.context, this);
     this.context.subscriptions.push(
       vscode.window.registerWebviewViewProvider("claude2.sidebar", this.sidebarProvider),
+      vscode.commands.registerCommand("claude2.open", () => void this.openFromTitleBar()),
       vscode.commands.registerCommand("claude2.newSession", () => void this.newSession()),
       vscode.commands.registerCommand("claude2.openInstructions", () => void this.openManagement("instructions")),
       vscode.commands.registerCommand("claude2.openQuota", () => void this.openManagement("quota")),
@@ -339,6 +340,13 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
+  // The editor title-bar button: brings up the sidebar and a new session with the prompt box
+  // ready for typing. The sidebar goes first so the conversation pane ends up with focus.
+  private async openFromTitleBar(): Promise<void> {
+    await vscode.commands.executeCommand("workbench.view.extension.claude2");
+    await this.newSession();
+  }
+
   private async newSession(): Promise<void> {
     await this.discardEmptySessions();
     const session = await this.createSession();
@@ -393,10 +401,9 @@ class Claude2Controller implements vscode.Disposable {
   // Test aid: drops the last stored model, then runs the load's refresh, which finds the CLI's
   // list differs, writes it back with a new date, and raises the alert. Self-restoring: only
   // the "Last changed" date is left moved.
-  // Tab icons render as <img>, so currentColor doesn't work; use themed copies.
-  private tabIcon(): { light: vscode.Uri; dark: vscode.Uri } {
-    const icon = (name: string) => vscode.Uri.joinPath(this.context.extensionUri, "resources", name);
-    return { light: icon("claude2-light.svg"), dark: icon("claude2-dark.svg") };
+  // Tab icons render as <img>, so currentColor doesn't work; the orange copy suits every theme.
+  private tabIcon(): vscode.Uri {
+    return vscode.Uri.joinPath(this.context.extensionUri, "resources", "claude2-orange.svg");
   }
 
   private async simulateModelChange(): Promise<void> {

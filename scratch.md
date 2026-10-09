@@ -1,6 +1,4 @@
 
-
-
 ???????
 selective delete session cards
 periods for stats pane
