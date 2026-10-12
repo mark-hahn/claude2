@@ -1963,18 +1963,21 @@ export function managementHtml(webview: vscode.Webview, pane: ManagementPane, ti
   return pane === "instructions" ? instructionsHtml(webview, zoom, alert) : quotaHtml(webview, timezone, zoom, alert);
 }
 
-const managementTabs: [ManagementPane, string][] = [
+const gearIcon = '<svg viewBox="0 0 16 16"><path d="M6.74 2.54L6.83 0.59L9.17 0.59L9.26 2.54A5.6 5.6 0 0 1 10.97 3.25L12.41 1.93L14.07 3.59L12.75 5.03A5.6 5.6 0 0 1 13.46 6.74L15.41 6.83L15.41 9.17L13.46 9.26A5.6 5.6 0 0 1 12.75 10.97L14.07 12.41L12.41 14.07L10.97 12.75A5.6 5.6 0 0 1 9.26 13.46L9.17 15.41L6.83 15.41L6.74 13.46A5.6 5.6 0 0 1 5.03 12.75L3.59 14.07L1.93 12.41L3.25 10.97A5.6 5.6 0 0 1 2.54 9.26L0.59 9.17L0.59 6.83L2.54 6.74A5.6 5.6 0 0 1 3.25 5.03L1.93 3.59L3.59 1.93L5.03 3.25A5.6 5.6 0 0 1 6.74 2.54ZM10.3 8A2.3 2.3 0 1 0 5.7 8A2.3 2.3 0 1 0 10.3 8Z"/></svg>';
+
+// An icon tab carries its name as a tooltip instead.
+const managementTabs: [ManagementPane, string, string?][] = [
   ["quota", "Quotas"],
-  ["instructions", "Instructions"],
+  ["instructions", "Rules"],
   ["plugins", "Stats"],
   ["models", "Models"],
-  ["settings", "Settings"],
+  ["settings", gearIcon, "Settings"],
 ];
 
 // The tabs lead each pane's title row, where the pane's own heading used to be; they act as
 // radio buttons, the extension swapping the whole pane on a click.
 function tabsHtml(pane: ManagementPane, alert: boolean): string {
-  const tabs = managementTabs.map(([id, label]) => `<button class="tab${id === pane ? " selected" : ""}${id === "models" && alert ? " alert" : ""}" data-pane="${id}">${label}</button>`);
+  const tabs = managementTabs.map(([id, label, name]) => `<button class="tab${id === pane ? " selected" : ""}${id === "models" && alert ? " alert" : ""}" data-pane="${id}"${name ? ` title="${name}" aria-label="${name}"` : ""}>${label}</button>`);
   return `<div class="tabs">${tabs.join("")}</div>`;
 }
 
@@ -1982,6 +1985,8 @@ function tabsStyle(): string {
   return `    .tabs { display: flex; gap: 6px; flex: none; }
     .tabs .tab.selected { background: #e2e2e2; }
     .tabs .tab.alert { background: #fbd9d9; border-color: #e4a7a7; }
+    /* position: static undoes the Quotas pane's chart svg rule. */
+    .tabs svg { position: static; display: block; width: calc(16px * var(--z)); height: calc(16px * var(--z)); fill: currentColor; fill-rule: evenodd; }
 `;
 }
 
@@ -2015,7 +2020,7 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     .pane { display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
     .title { display: flex; align-items: center; gap: 12px; }
     .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .box { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px 16px; }
     h2 { font-size: calc(17px * var(--z)); font-weight: 600; margin: 0 0 8px; }
@@ -2031,7 +2036,7 @@ function modelsHtml(webview: vscode.Webview, zoom: number, alert: boolean): stri
     #old th { font-weight: 600; }
     .change-head { display: flex; align-items: center; margin-bottom: 8px; }
     .change-head h2 { margin: 0; }
-    #dismiss { margin-left: auto; min-height: 0; padding: 2px 10px; }
+    #dismiss { margin-left: auto; min-height: 0; padding: 2px 6px; }
     #usage td, #usage th { padding: 3px 0 3px 24px; text-align: right; }
     #usage td:first-child, #usage th:first-child { padding-left: 0; text-align: left; }
     #usage th { font-weight: 600; }
@@ -2340,7 +2345,7 @@ function settingsHtml(webview: vscode.Webview, zoom: number, alert: boolean): st
     .pane { display: flex; flex-direction: column; gap: 16px; padding: 4px 24px 20px; }
     .title { display: flex; align-items: center; gap: 12px; }
     .actions { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .box { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 12px 16px; }
     #fields td { padding: 4px 16px 4px 0; }
@@ -2443,7 +2448,7 @@ function capHtml(webview: vscode.Webview, zoom: number): string {
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; flex: none; }
     .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font: calc(14px * var(--z))/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .hint { flex: none; font-size: calc(14px * var(--z)); }
     /* position: relative so the crop rectangle can be laid over the picture; the image stays a
@@ -2633,7 +2638,7 @@ function pluginsHtml(webview: vscode.Webview, zoom: number, alert: boolean): str
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; }
     #note { font-size: calc(14px * var(--z)); }
     .actions { margin-left: auto; display: flex; gap: 12px; flex: none; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
     table { border-collapse: collapse; background: var(--surface); font-size: calc(14px * var(--z)); }
@@ -2737,19 +2742,40 @@ ${zoomScript(z)}
       for (const plugin of ['graft', 'ponytail']) {
         const row = document.createElement('tr');
         row.appendChild(cell('td', 'Enable ' + plugin));
+        // The All box reads checked while every project is on, and sets every project when clicked.
+        const all = document.createElement('input');
+        all.type = 'checkbox';
+        all.disabled = report.offline === true;
+        const boxes = [];
+        const syncAll = () => { all.checked = boxes.every(({ box }) => box.checked); };
         for (const project of projects) {
           const box = document.createElement('input');
           box.type = 'checkbox';
           box.checked = project[plugin] !== false;
           // a flag the server cannot hear about would silently not stick
           box.disabled = report.offline === true;
-          box.addEventListener('change', () => void toggle(box, project.project, plugin));
+          box.addEventListener('change', () => void toggle(box, project.project, plugin).then(syncAll));
+          boxes.push({ box, name: project.project });
           const holder = cell('td', '');
           holder.className = 'mid';
           holder.appendChild(box);
           row.appendChild(holder);
         }
-        row.appendChild(cell('td', ''));
+        syncAll();
+        all.addEventListener('change', async () => {
+          all.disabled = true;
+          const wanted = all.checked;
+          await Promise.all(boxes.filter(({ box }) => box.checked !== wanted).map(({ box, name }) => {
+            box.checked = wanted;
+            return toggle(box, name, plugin);
+          }));
+          syncAll();
+          all.disabled = false;
+        });
+        const allHolder = cell('td', '');
+        allHolder.className = 'mid';
+        allHolder.appendChild(all);
+        row.appendChild(allHolder);
         table.appendChild(row);
       }
     }
@@ -2795,7 +2821,7 @@ function instructionsHtml(webview: vscode.Webview, zoom: number, alert: boolean)
     .path { color: var(--muted); font-size: calc(14.4px * var(--z)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
     textarea { flex: 1; resize: none; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 9px 11px; font: calc(14px * var(--z))/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
     textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 14px; min-height: 35px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 35px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
     .error { background: var(--error); border: 1px solid var(--border); border-left: 3px solid #c62828; border-radius: 8px; margin: 16px 0 0; padding: 10px 14px; }
@@ -2981,10 +3007,10 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
     .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
     .credits { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
-    .credits button { min-height: 26px; padding: 2px 8px; }
+    .credits button { min-height: 26px; padding: 2px 5px; }
     .credits .bar { display: block; width: min(170px, 20%); height: calc(12px * var(--z)); border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
     .credits .fill { display: block; height: 100%; background: var(--blue); }
-    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 13px; min-height: 34px; font: inherit; cursor: pointer; }
+    button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
     .graphs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; min-height: 0; overflow: auto; }
@@ -2997,7 +3023,7 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     .swatch { width: 12px; height: 2px; display: inline-block; background: var(--ink); vertical-align: middle; }
     .swatch.blue { background: var(--blue); } .swatch.red { background: var(--red); }
     .period { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
-    .period button { min-height: 26px; padding: 2px 8px; }
+    .period button { min-height: 26px; padding: 2px 5px; }
     .plot { position: relative; width: 100%; aspect-ratio: 256 / 140; border: 1px solid var(--border); cursor: pointer; background: #fff; }
     .graphs.single .plot { flex: none; }
     svg { position: absolute; inset: 0; width: 100%; height: 100%; }
