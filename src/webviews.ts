@@ -903,11 +903,20 @@ ${tooltipScript()}
     });
     // Enter lands on the last block (thawing the pane first if it was frozen), with its bar as
     // high as the rules allow (the bar above it at the top of the pane) rather than at the
-    // nearest edge of the allowed window.
+    // nearest edge of the allowed window. Already there, unfrozen, it toggles that box, so a
+    // second Enter leaves every box closed and a third opens the last one again.
     function selectBottomBlock() {
+      const toggle = !frozenPane && session.turns.length - 1 === anchorIndex;
       if (frozenPane) thaw();
       if (session.turns.length - 1 !== anchorIndex) selectBlock(session.turns.length - 1);
-      else render();
+      else {
+        boxOpen = toggle ? !boxOpen : true;
+        if (boxOpen) {
+          boxScrollNext = 'restore';
+          toolsBox = false;
+        }
+        render();
+      }
       // After the render's own sync has set the clamps, so the bounds see the final layout.
       requestAnimationFrame(() => {
         const bounds = scrollBounds();
