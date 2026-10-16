@@ -121,6 +121,8 @@ export interface ClaudeSession {
   effort: string;
   // The conversation pane's big-prompt layout, so a reload comes back the way it was left.
   bigPrompt: boolean;
+  // The prompt box is showing the prompt just sent, read-only, rather than an editable draft.
+  sentPrompt: boolean;
   turns: ClaudeTurn[];
 }
 

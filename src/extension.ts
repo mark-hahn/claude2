@@ -659,7 +659,9 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "picksChanged") {
       await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "bigPromptChanged") {
-      await this.store.setBigPrompt(sessionId, record?.on === true);
+      await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
+    } else if (type === "sentPromptChanged") {
+      await this.store.setBoxFlag(sessionId, "sentPrompt", record?.on === true);
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
@@ -813,6 +815,8 @@ class Claude2Controller implements vscode.Disposable {
     if (!file) {
       return;
     }
+    // A pick, not the click, is what takes a sent prompt out of the box.
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "filePicked" });
     // A picture picked here is a picture, not a file reference: it goes the way a pasted one does,
     // so it gets a 🖼️ char, the Image pane, and a place in the turn's record. The tag route would
     // reach the model just the same, and leave none of that behind.
@@ -1136,17 +1140,17 @@ class Claude2Controller implements vscode.Disposable {
     }
     const putBack = (): void => {
       if (!keepDraft) {
-        this.noteDraft(sessionId, prompt);
+        this.returnPrompt(sessionId, prompt);
       }
     };
-    // The box emptied itself the moment Send was pressed, so every way out of this method short
-    // of running the prompt has to put the text back somewhere it can be recovered from.
+    // The box went read-only on the prompt the moment Send was pressed, so every way out of this
+    // method short of running the prompt has to hand the text back as a draft.
     if (!this.store.get(sessionId)) {
       putBack();
       return;
     }
     // The saved draft goes now, not when the turn starts: stopping a run below makes that run
-    // repost session state, and a draft still stored at that moment lands back in the empty box.
+    // repost session state, and a draft still stored at that moment would be offered back to the box.
     if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
@@ -1240,7 +1244,7 @@ class Claude2Controller implements vscode.Disposable {
     // level, so the newest turn that did is the one to carry forward.
     const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || level, 0);
     // The text is on its way to the CLI, so the saved draft goes now: what is stored has to
-    // match what the box shows, and the box cleared itself when Send was pressed.
+    // match the box, which holds no draft once Send is pressed (just the sent prompt, read-only).
     if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
@@ -1388,7 +1392,7 @@ class Claude2Controller implements vscode.Disposable {
         // and the finally below reposts the restored state, draft included.
         await this.store.removeTurn(sessionId, turn.id);
         if (!keepDraft) {
-          this.noteDraft(sessionId, prompt);
+          this.returnPrompt(sessionId, prompt);
         }
         this.noteAuthFailure();
       } else {
@@ -1459,6 +1463,13 @@ class Claude2Controller implements vscode.Disposable {
     } catch (error) {
       this.channel.appendLine(`Claude session naming failed: ${errorMessage(error)}`);
     }
+  }
+
+  // A prompt that never ran is a draft again, and a box still showing it read-only goes back to
+  // editing it.
+  private returnPrompt(sessionId: string, prompt: string): void {
+    this.noteDraft(sessionId, prompt);
+    void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "promptReturned", prompt });
   }
 
   // Stored verbatim — only whether it is blank is judged on the trimmed text — so a restored

@@ -523,11 +523,14 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
        the script) from three lines to six, and still stretches to the controls' height beside it. */
     #prompt { position: relative; flex: 1 1 260px; min-width: 180px; min-height: max(var(--edh), min(var(--content-h, 0px), calc(126px * var(--z) + 18px))); max-height: calc(126px * var(--z) + 18px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
     #prompt:focus-within { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
+    /* promptSent: the prompt just sent, read-only, on the prompt bar's yellow. The editor's own
+       background is the claude2-sent theme's. */
+    #prompt.sent { background: var(--yellow); }
     /* Inset just past the rounded corners, so the editor's square ones stay inside the border. */
     #prompt > div { position: absolute; inset: 3px; }
     /* Monaco draws its widgets' text at 11-13px; these are the ones the prompt box can show. */
     .monaco-editor .find-widget > .find-part, .monaco-editor .find-widget > .replace-part, .monaco-editor .find-widget .monaco-findInput .input, .monaco-findInput .monaco-inputbox,
-    .quick-input-widget, .context-view.fixed, .monaco-hover, .hover-row.status-bar, .monaco-keybinding > .monaco-keybinding-key { font-size: calc(14px * var(--z)) !important; }
+    .quick-input-widget, .context-view.fixed, .monaco-hover, .hover-row.status-bar, .monaco-keybinding > .monaco-keybinding-key, .monaco-editor-overlaymessage .message { font-size: calc(14px * var(--z)) !important; }
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
     .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
@@ -686,12 +689,20 @@ ${tooltipScript()}
     // moves, its undo) on a markdown model. A webview can't start a worker from a resource URL,
     // which is a different origin, so the worker is a blob that imports the bundled one.
     self.MonacoEnvironment = { getWorker: () => new Worker(URL.createObjectURL(new Blob(['importScripts(' + JSON.stringify(${editorWorkerUrl}) + ')'], { type: 'text/javascript' }))) };
+    const themeColors = { 'editor.background': '#fcfcfb', foreground: '#000000', descriptionForeground: '#000000', 'input.placeholderForeground': '#000000', 'keybindingLabel.foreground': '#000000' };
     monaco.editor.defineTheme('claude2', {
       base: 'vs',
       inherit: true,
       // Black wherever the stock light theme greys text: html delimiters, widget text, placeholders.
       rules: [{ token: 'delimiter.html', foreground: '000000' }],
-      colors: { 'editor.background': '#fcfcfb', foreground: '#000000', descriptionForeground: '#000000', 'input.placeholderForeground': '#000000', 'keybindingLabel.foreground': '#000000' },
+      colors: themeColors,
+    });
+    // promptSent's: the same, on the prompt bar's yellow. A theme is page-wide, but this page has one editor.
+    monaco.editor.defineTheme('claude2-sent', {
+      base: 'vs',
+      inherit: true,
+      rules: [{ token: 'delimiter.html', foreground: '000000' }],
+      colors: { ...themeColors, 'editor.background': '#fff7bf' },
     });
     const promptHost = document.getElementById('prompt');
     const promptBox = monaco.editor.create(promptHost.firstElementChild, {
@@ -722,6 +733,8 @@ ${tooltipScript()}
       // The textarea input path: VS Code's webview host forwards copy and paste as execCommand,
       // which lands on a focused textarea.
       editContext: false,
+      // What typing into a sent prompt says.
+      readOnlyMessage: { value: 'Already sent. Ctrl-Enter clears the box for the next prompt.' },
     });
     const promptModel = promptBox.getModel();
     // The frame grows with the text, never below three lines, and the CSS caps it at six. The floor
@@ -788,6 +801,12 @@ ${tooltipScript()}
           bigPromptLoaded = true;
           bigPromptEditor = session.bigPrompt === true;
           document.querySelector('.shell').classList.toggle('big-prompt-editor', bigPromptEditor);
+          // A sent prompt comes back as the session's last one; a draft already in the box outranks it.
+          const last = session.turns[session.turns.length - 1];
+          if (session.sentPrompt === true) {
+            setPromptSent(!!last && !promptModel.getValueLength());
+            if (promptSent) promptModel.setValue(untab(typedText(last)));
+          }
         }
         document.title = session.name || 'Claude2';
         render();
@@ -809,6 +828,14 @@ ${tooltipScript()}
         showImageChars();
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
+      } else if (message.type === 'filePicked') {
+        leaveSent();
+      } else if (message.type === 'promptReturned' && promptSent) {
+        // The prompt never ran, so the box goes back to the edit mode it was sent from, with
+        // the extension's copy of the text. Size untouched.
+        draftSent = untab(String(message.prompt || ''));
+        setPromptSent(false);
+        if (promptModel.getValue() !== draftSent) promptModel.setValue(draftSent);
       } else if (message.type === 'models' && message.models && typeof message.models === 'object') {
         models = message.models;
         presets = Array.isArray(message.presets) ? message.presets : presets;
@@ -818,8 +845,22 @@ ${tooltipScript()}
       }
     });
 
-    // Ctrl-Enter sends, in place of Monaco's insert-line-below.
+    // Ctrl-Enter sends, in place of Monaco's insert-line-below. On a sent prompt it clears the box instead.
     promptBox.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, submitPrompt);
+    // Ctrl-Alt-click anywhere in the box toggles bigPromptEditor, in either mode. Capture phase, so
+    // Monaco never sees the press (its ctrl-click adds a cursor). Monaco listens for pointer
+    // events; the mouse ones are only blocked, so a browser that still fires them can't toggle twice.
+    promptHost.addEventListener('pointerdown', (event) => {
+      if (!event.ctrlKey || !event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setBigPromptEditor(!bigPromptEditor);
+    }, true);
+    promptHost.addEventListener('mousedown', (event) => {
+      if (!event.ctrlKey || !event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
     // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
     // completion list or a snippet is up, where Tab means something else.
     promptBox.addCommand(monaco.KeyCode.Tab, tabLines, 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode');
@@ -869,6 +910,8 @@ ${tooltipScript()}
     // paste adds one; the pictures already waiting stay. The extension ignores a second copy
     // of one already in the list. Capture phase, so Monaco never sees the paste.
     promptHost.addEventListener('paste', (event) => {
+      // A sent prompt takes no paste, a picture included; Monaco's read-only drops the text.
+      if (promptSent) return;
       const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
       const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
       const file = item ? item.getAsFile() : null;
@@ -910,6 +953,7 @@ ${tooltipScript()}
       if (!loadButton.disabled) loadButton.click();
     }, true);
     document.getElementById('cap').addEventListener('click', (event) => {
+      leaveSent();
       // Every click takes another picture and adds it to the ones already waiting. The button
       // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
       capButton.disabled = true;
@@ -1073,7 +1117,8 @@ ${tooltipScript()}
     }
 
     function sendDraft(type) {
-      const draft = promptModel.getValue();
+      // A sent prompt is not a draft: as far as the extension knows, the box is empty.
+      const draft = promptSent ? '' : promptModel.getValue();
       if (type === 'draftChanged' && draft === draftSent) return;
       draftSent = draft;
       vscode.postMessage({ type, sessionId, draft });
@@ -1185,6 +1230,24 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'bigPromptChanged', sessionId, on });
     }
 
+    // promptSent: after a send the box keeps the prompt, read-only and yellow, to be read against
+    // the answer. Ctrl-Enter clears it and leaves big-box mode; Load, Cap and a File pick clear it
+    // and keep the size. The session keeps the flag, like bigPromptEditor.
+    let promptSent = false;
+    function setPromptSent(on) {
+      promptSent = on;
+      promptBox.updateOptions({ readOnly: on });
+      monaco.editor.setTheme(on ? 'claude2-sent' : 'claude2');
+      promptHost.classList.toggle('sent', on);
+      vscode.postMessage({ type: 'sentPromptChanged', sessionId, on });
+    }
+    // Back to edit mode on an empty box. An edit, so ctrl-z brings the sent text back to edit.
+    function leaveSent() {
+      if (!promptSent) return;
+      setPromptSent(false);
+      replaceText(0, promptModel.getValueLength(), '');
+    }
+
     // Which 🖼️ char a Monaco mouse event is on, or -1 for anywhere else. The chars are one
     // injected span, all the same width, so the x offset into the span decides.
     function imageCharAt(event) {
@@ -1216,6 +1279,11 @@ ${tooltipScript()}
     }
 
     function submitPrompt() {
+      if (promptSent) {
+        leaveSent();
+        setBigPromptEditor(false);
+        return;
+      }
       // The 🖼️ chars are this pane's way of showing the attached pictures, not part of the
       // prompt: the extension has the list, and appends a sentence per picture to the text.
       const prompt = promptModel.getValue();
@@ -1224,12 +1292,11 @@ ${tooltipScript()}
       if (!prompt.trim() && !imageCount) return;
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
-      // draftSent first, so the clearing edit has no draft to send. The clear is an edit, so
-      // ctrl-z brings the sent text back.
+      // The text stays, read-only, and the extension drops its draft copy on its own.
       draftSent = '';
       imageCount = 0;
       showImageChars();
-      replaceText(0, promptModel.getValueLength(), '');
+      setPromptSent(true);
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
@@ -1238,6 +1305,7 @@ ${tooltipScript()}
     }
 
     function loadSelectedPrompt() {
+      leaveSent();
       if (!session.turns.length) return;
       const turn = session.turns[Math.max(0, Math.min(session.turns.length - 1, anchorIndex))];
       if (!turn) return;

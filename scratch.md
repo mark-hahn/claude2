@@ -1,39 +1,43 @@
 
-# big box editor behavior
+# new prompt box editor behavior
 - i want to continue to see all prompt text after that text is submitted
   - i want to compare the prompt to the response being returned
 
-- current box behavior is considered edit mode
-  - it can be a big box or small box
-  - monaco editing is supported
-  - background in box is white
-  - ctrl-enter while box is focused:
-    - submits the prompt text like it does now
-    - text is not removed from box
-    - switches editor to read-only mode (see below)
-    - box size does not change
+## current box behavior is considered edit mode
+- it can be a big box or small box
+- monaco editing is supported
+- background in box is white
+- ctrl-enter while box is focused:
+  - submits the prompt text like it does now
+  - text is not removed from box
+  - switches editor to read-only mode (see below)
+  - box size does not change
 
-- new read-only mode:
-  - background in box should be same color as background of prompt bar
-  - text cannot be modified
-  - ctrl-enter while box is focused:
-    - does not submit the text prompt
-    - clears the text in the editor box
-    - shrinks box to exit big box mode
-    - it exits read-only mode and switches to edit mode
+## new read-only mode:
+- background in box should be same color as background of prompt bar
+- text cannot be modified
+- ctrl-enter while box is focused:
+  - does not submit the text prompt
+  - clears the text in the editor box
+  - shrinks box to exit big box mode
+  - it exits read-only mode and switches to edit mode
 
-- behavior in all modes
-  - ctrl-alt click toggles large box mode
-  - load, cap, and file buttons exit read-only mode and enters edit mode
+## behavior in all modes
+- ctrl-alt click toggles large box mode
+- load, cap, and file buttons exit read-only mode and enters edit mode
+- changing session with session card in sidebar preserves state of session
+  - the includes box size mode and read-only/edit modes
 
-- i want this sequence when a new session is opened:
-  - big box is open
-  - box is in edit mode
-  - ctrl-enter submits the prompt text
-  - box keeps the text
-  - box enters read-only mode
+## i want this sequence when a new session is opened:
+- box is opened in small box mode
+- box is in edit mode
 
-- 
+## actions
+- if these instructions are ambiguous, incomplete, contradictory, or you think there is a better way to do this then:
+  - write the problems to new-box-problems.md and stop
+  - make no changes other than writing to new-box-problems.md
+- otherwise implement these instructions immediately
+
 
 ???????
 selective delete session cards
