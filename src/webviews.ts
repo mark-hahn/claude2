@@ -1224,7 +1224,6 @@ ${tooltipScript()}
       if (!prompt.trim() && !imageCount) return;
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
-      setBigPromptEditor(false);
       promptBox.value = '';
       imageCount = 0;
       draftSent = '';

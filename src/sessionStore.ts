@@ -83,7 +83,7 @@ export class SessionStore {
       trashed: false,
       model,
       effort,
-      bigPrompt: false,
+      bigPrompt: true,
       turns: [],
     };
     this.sessions.unshift(session);
