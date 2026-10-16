@@ -323,7 +323,7 @@ class Claude2Controller implements vscode.Disposable {
       await this.deleteAllTrashed();
     } else if (type === "deleteSessions") {
       const ids = Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf).filter((id) => id !== "") : [];
-      await this.deleteTrashedSessions(ids, `Permanently delete the ${ids.length} older session${ids.length === 1 ? "" : "s"} below this one?`);
+      await this.deleteTrashedSessions(ids, ids.length === 1 ? "Permanently delete this session?" : `Permanently delete this session and the ${ids.length - 1} older session${ids.length === 2 ? "" : "s"} below it?`);
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();

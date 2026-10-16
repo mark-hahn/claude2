@@ -228,8 +228,8 @@ ${tooltipScript()}
       }
       visible.forEach((session, index) => {
         const trashed = searchText ? session.trashed === true : showTrash;
-        // Everything the trash list shows below this card, oldest end first: the ctrl-click sweep.
-        const olderIds = trashed ? visible.slice(index + 1).filter((other) => other.trashed === true).map((other) => other.id) : [];
+        // This card and everything the trash list shows below it: the ctrl-click sweep.
+        const sweepIds = trashed ? visible.slice(index).filter((other) => other.trashed === true).map((other) => other.id) : [];
         const card = document.createElement('div');
         card.className = trashed ? 'card trashed' : 'card';
         if (session.id === selectedId) {
@@ -269,20 +269,18 @@ ${tooltipScript()}
         trash.textContent = '\u{1F5D1}';
         // Same icon, two meanings: one hop to the trash, then gone for good.
         trash.title = trashed
-          ? (olderIds.length > 0
-            ? 'Delete this session permanently (ctrl-click to delete the ' + olderIds.length + ' older session' + (olderIds.length === 1 ? '' : 's') + ' below it instead)'
+          ? (sweepIds.length > 1
+            ? 'Delete this session permanently (ctrl-click to also delete the ' + (sweepIds.length - 1) + ' older session' + (sweepIds.length === 2 ? '' : 's') + ' below it)'
             : 'Delete this session permanently')
           : 'Move this session to the trash';
         trash.addEventListener('pointerdown', (event) => event.stopPropagation());
         trash.addEventListener('click', (event) => {
           event.stopPropagation();
           if (trashed) {
-            // Ctrl-click sweeps the older half of the trash: every card below this one goes,
-            // this one stays. Either way the extension asks before anything is forgotten.
+            // Ctrl-click sweeps the older end of the trash: this card and every card below it.
+            // Either way the extension asks before anything is forgotten.
             if (event.ctrlKey) {
-              if (olderIds.length > 0) {
-                vscode.postMessage({ type: 'deleteSessions', sessionIds: olderIds });
-              }
+              vscode.postMessage({ type: 'deleteSessions', sessionIds: sweepIds });
               return;
             }
             vscode.postMessage({ type: 'deleteSession', sessionId: session.id });
