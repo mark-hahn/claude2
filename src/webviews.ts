@@ -460,6 +460,15 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
     #model, #effort { padding-left: 6.5px; padding-right: 6.5px; width: calc(11.5ch - 2px); flex: 1 0 auto; }
+    /* bigPromptEditor: the editor runs the window's full height on the left, and the pane and the
+       controls share the column to its right, the controls at their own two-row height. The dock
+       dissolves so its two children can sit in the shell's grid beside the pane. */
+    .shell.big-prompt-editor { grid-template-columns: minmax(0, 1fr) auto; }
+    .shell.big-prompt-editor .dock { display: contents; }
+    .shell.big-prompt-editor #prompt { grid-column: 1; grid-row: 1 / 3; align-self: stretch; field-sizing: fixed; max-height: none; margin: 8px 0 8px 12px; }
+    /* Sized by the column, never by its own content, or a long line would widen the column. */
+    .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
+    .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
     .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -799,8 +808,9 @@ ${tooltipScript()}
         return;
       }
       // A file tag is plain text, so the caret the click just set says which one was hit. Only
-      // ctrl does anything: a tag has nothing to show, it can only be taken back off.
-      if (event.ctrlKey) removeFileTag(promptBox.selectionStart);
+      // ctrl does anything: a tag has nothing to show, it can only be taken back off. A ctrl-click
+      // anywhere else toggles bigPromptEditor.
+      if (event.ctrlKey && !removeFileTag(promptBox.selectionStart)) toggleBigPromptEditor();
     });
     // The 🖼️ chars are clickable, so the pointer says so over them.
     promptBox.addEventListener('mousemove', (event) => {
@@ -1102,15 +1112,26 @@ ${tooltipScript()}
     function removeFileTag(caret) {
       const text = promptBox.value;
       const start = text.lastIndexOf('<', caret);
-      if (start < 0) return;
+      if (start < 0) return false;
       const end = text.indexOf('>', start);
       // The caret has to be inside the tag -- ending on its '>' counts -- and a newline in
       // between means these two brackets were never one tag.
-      if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return;
+      if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return false;
       const cut = text[end + 1] === ' ' ? end + 2 : end + 1;
       promptBox.value = text.slice(0, start) + text.slice(cut);
       promptBox.setSelectionRange(start, start);
       sendDraft('draftChanged');
+      return true;
+    }
+
+    // bigPromptEditor: the prompt box takes the window's full height and the pane narrows to the
+    // column above the controls. The pane changed size without a window resize, so the open
+    // box's clamp is redone here.
+    let bigPromptEditor = false;
+    function toggleBigPromptEditor() {
+      bigPromptEditor = !bigPromptEditor;
+      document.querySelector('.shell').classList.toggle('big-prompt-editor', bigPromptEditor);
+      resyncSelectedBlock();
     }
 
     // Which 🖼️ char the pointer came down on, or -1 for a click anywhere else. The caret cannot
