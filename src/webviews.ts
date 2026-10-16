@@ -520,8 +520,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .bar-icon:hover { background: var(--wash); }
     .bar-icon svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     /* The prompt box: a frame around a Monaco editor. It grows with the text (--content-h, set by
-       the script) from two lines to six, and still stretches to the controls' height beside it. */
-    #prompt { position: relative; flex: 1 1 260px; min-width: 180px; min-height: max(var(--edh), min(var(--content-h, 0px), calc(126px * var(--z) + 22px))); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+       the script) from three lines to six, and still stretches to the controls' height beside it. */
+    #prompt { position: relative; flex: 1 1 260px; min-width: 180px; min-height: max(var(--edh), min(var(--content-h, 0px), calc(126px * var(--z) + 18px))); max-height: calc(126px * var(--z) + 18px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
     #prompt:focus-within { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
     /* Inset just past the rounded corners, so the editor's square ones stay inside the border. */
     #prompt > div { position: absolute; inset: 3px; }
@@ -599,7 +599,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box">File</button></div>
           <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
@@ -703,8 +703,10 @@ ${tooltipScript()}
       fontSize: 14 * zoom,
       lineHeight: 1.5,
       tabSize: 2,
-      // With the frame's 3px inset and 1px border, the text sits where the old textarea's did.
-      padding: { top: 7, bottom: 7 },
+      // Ctrl-click adds and removes cursors (Monaco's default is alt), so alt-click follows links.
+      multiCursorModifier: 'ctrlCmd',
+      // With the frame's 3px inset and 1px border: the old textarea's gap on top, a small one below.
+      padding: { top: 7, bottom: 3 },
       lineDecorationsWidth: 8,
       lineNumbers: 'off',
       glyphMargin: false,
@@ -722,8 +724,27 @@ ${tooltipScript()}
       editContext: false,
     });
     const promptModel = promptBox.getModel();
-    // The frame grows with the text; the CSS clamps it between two lines and six.
-    promptBox.onDidContentSizeChange(() => promptHost.style.setProperty('--content-h', (promptBox.getContentHeight() + 8) + 'px'));
+    // The frame grows with the text, never below three lines, and the CSS caps it at six. The floor
+    // is Monaco's own rounded line height, so a zoom level never leaves the third line cut off.
+    function fitPrompt() {
+      const threeLines = 3 * promptBox.getOption(monaco.editor.EditorOption.lineHeight) + 10;
+      promptHost.style.setProperty('--content-h', (Math.max(promptBox.getContentHeight(), threeLines) + 8) + 'px');
+    }
+    promptBox.onDidContentSizeChange(fitPrompt);
+    fitPrompt();
+    // DEBUG: why the box runs taller than its text inside VS Code. Logs to the Claude2 output.
+    new ResizeObserver(() => {
+      const h = (el) => el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : -1;
+      const style = getComputedStyle(promptHost);
+      vscode.postMessage({ type: 'debugLog', sessionId, text: 'promptBox ' + JSON.stringify({
+        lines: promptModel.getLineCount(), viewLines: promptBox._getViewModel ? promptBox._getViewModel().getLineCount() : -1,
+        lh: promptBox.getOption(monaco.editor.EditorOption.lineHeight), content: promptBox.getContentHeight(), layoutH: promptBox.getLayoutInfo().height,
+        contentVar: promptHost.style.getPropertyValue('--content-h'), edh: getComputedStyle(document.documentElement).getPropertyValue('--edh'),
+        minH: style.minHeight, maxH: style.maxHeight, box: h(promptHost), inner: h(promptHost.firstElementChild),
+        dock: h(document.querySelector('.dock')), controls: h(dockControls), bar: h(dockControls.querySelector('.bar')), footer: h(dockControls.querySelector('.footer')),
+        big: bigPromptEditor, dpr: devicePixelRatio, zoom,
+      }) });
+    }).observe(promptHost);
     // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
     new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
@@ -752,8 +773,8 @@ ${tooltipScript()}
         statusAt = Date.now();
         // draftSent first, so the change event this fires has nothing new to send back.
         if (typeof message.draft === 'string' && message.draft && !promptModel.getValueLength()) {
-          draftSent = message.draft;
-          promptModel.setValue(message.draft);
+          draftSent = untab(message.draft);
+          promptModel.setValue(draftSent);
         }
         if (typeof message.search === 'string') searchText = message.search;
         // The extension's copy of the scroll memory is the persistent one; it is taken once,
@@ -799,6 +820,9 @@ ${tooltipScript()}
 
     // Ctrl-Enter sends, in place of Monaco's insert-line-below.
     promptBox.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, submitPrompt);
+    // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
+    // completion list or a snippet is up, where Tab means something else.
+    promptBox.addCommand(monaco.KeyCode.Tab, tabLines, 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode');
     // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
     // newline to count, so the top line is the one where the caret's own Up didn't move it.
     promptBox.onKeyDown((event) => {
@@ -848,7 +872,16 @@ ${tooltipScript()}
       const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
       const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
       const file = item ? item.getAsFile() : null;
-      if (!file) return;
+      if (!file) {
+        // Pasted text loses its tab chars, through Monaco's own paste so it stays one undo step.
+        // The find box's own pastes are left alone.
+        const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+        if (!promptBox.hasTextFocus() || !text.includes('\\t')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        promptBox.trigger('keyboard', 'paste', { text: untab(text) });
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       capButton.disabled = true;
@@ -857,23 +890,11 @@ ${tooltipScript()}
       reader.onerror = () => { capButton.disabled = false; };
       reader.readAsDataURL(file);
     }, true);
-    // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
-    // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
+    // A click on one of the leading 🖼️ chars shows that picture in the Image pane. The chars' own
     // CSS gives them the pointer.
     promptBox.onMouseUp((event) => {
-      const ctrl = event.event.ctrlKey;
       const index = imageCharAt(event);
-      if (index >= 0) {
-        vscode.postMessage(ctrl ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
-        return;
-      }
-      // A file tag is plain text, so the caret the click just set says which one was hit. Only
-      // ctrl does anything: a tag has nothing to show, it can only be taken back off. A ctrl-click
-      // anywhere else in the text area toggles bigPromptEditor; one on a scrollbar or a widget
-      // (the find box) does not.
-      const type = event.target.type;
-      if (!ctrl || (type !== monaco.editor.MouseTargetType.CONTENT_TEXT && type !== monaco.editor.MouseTargetType.CONTENT_EMPTY)) return;
-      if (!removeFileTag(promptModel.getOffsetAt(promptBox.getPosition()))) setBigPromptEditor(!bigPromptEditor);
+      if (index >= 0) vscode.postMessage({ type: 'showImage', sessionId, turnId: '', index });
     });
     stopButton.addEventListener('click', () => {
       markStopping();
@@ -1079,6 +1100,52 @@ ${tooltipScript()}
       promptBox.setPosition(promptModel.getPositionAt(caret));
     }
 
+    // No tab char ever goes in the box: Tab itself makes list items, and text arriving with tabs
+    // (a paste, a draft, Load) has each one turned into two spaces.
+    function untab(text) {
+      return text.replace(/\\t/g, '  ');
+    }
+
+    // Tab on each line a caret or selection touches: the margin steps right to the next even count
+    // (an odd one by 1, an even one by 2) and the text becomes a "- " item, exactly one space after
+    // the dash. A run of lines leaves its blank ones alone; a lone blank line becomes an empty item.
+    function tabLines() {
+      const lines = new Set();
+      for (const s of promptBox.getSelections()) {
+        // A selection ending at the very start of a line does not take that line in.
+        const last = s.endLineNumber > s.startLineNumber && s.endColumn === 1 ? s.endLineNumber - 1 : s.endLineNumber;
+        for (let n = s.startLineNumber; n <= last; n++) lines.add(n);
+      }
+      const edits = [];
+      const tabbed = new Map();
+      for (const n of lines) {
+        const line = promptModel.getLineContent(n);
+        if (lines.size > 1 && !line.trim()) continue;
+        const start = tabLine(line);
+        edits.push({ range: new monaco.Range(n, 1, n, start.old + 1), text: start.prefix });
+        tabbed.set(n, start);
+      }
+      // A caret keeps its place in its line's text; one that was in the margin or on the dash
+      // lands at the start of the text.
+      const move = (n, col) => {
+        const start = tabbed.get(n);
+        return !start ? col : col > start.old ? col + start.prefix.length - start.old : start.prefix.length + 1;
+      };
+      const selections = promptBox.getSelections().map((s) => new monaco.Selection(
+        s.selectionStartLineNumber, move(s.selectionStartLineNumber, s.selectionStartColumn), s.positionLineNumber, move(s.positionLineNumber, s.positionColumn)));
+      promptBox.pushUndoStop();
+      promptBox.executeEdits('claude2', edits, selections);
+      promptBox.pushUndoStop();
+    }
+
+    // What Tab puts at the start of a line: prefix replaces the line's first old chars, its
+    // margin and any dash with the spaces after it.
+    function tabLine(line) {
+      const margin = line.match(/^ */)[0].length;
+      const dash = line.slice(margin).match(/^- */);
+      return { old: margin + (dash ? dash[0].length : 0), prefix: ' '.repeat(margin + 2 - margin % 2) + '- ' };
+    }
+
     // An attached file rides in the text as a <name> tag rather than in a prefix of its own: the
     // draft carries it for free, and the extension turns each tag back into a path on the way out.
     // New tags lead the typing, the way another picture would.
@@ -1175,7 +1242,7 @@ ${tooltipScript()}
       const turn = session.turns[Math.max(0, Math.min(session.turns.length - 1, anchorIndex))];
       if (!turn) return;
       // The pictures are not loaded with it: they belong to the prompt that was sent.
-      const typed = typedText(turn);
+      const typed = untab(typedText(turn));
       const insert = typed + (promptModel.getValueLength() ? '\\n\\n' : '');
       // An edit rather than a value swap, so ctrl-z takes the load back out.
       promptBox.focus();

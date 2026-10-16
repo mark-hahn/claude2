@@ -37,30 +37,23 @@ for (const [name, html] of Object.entries(pages)) {
 assert.ok(/const IMG = '\\u\{1F5BC\}\\uFE0F'/.test(pages.conversation), 'conversation pane lost the image char');
 assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
 
-// A file tag is cut out of the prompt box by hand rather than by a prefix rule, so the one piece
-// with edges worth pinning -- where the caret counts as inside a tag -- is run here against a
-// stand-in model. The function is lifted out of the generated script; nothing else in it is needed.
+// Tab turns a line into a list item one step in; tabLine says what replaces the line's start.
 {
-  const source = pages.conversation.match(/function removeFileTag\(caret\)[\s\S]*?\n {4}\}/);
-  assert.ok(source, 'conversation pane lost removeFileTag');
-  let value = '';
-  const model = { getValue: () => value };
-  const replaceText = (start, end, text) => {
-    value = value.slice(0, start) + text + value.slice(end);
+  const source = pages.conversation.match(/function tabLine\(line\)[\s\S]*?\n {4}\}/);
+  assert.ok(source, 'conversation pane lost tabLine');
+  const tabLine = new Function(source[0] + '\nreturn tabLine;')();
+  const tab = (line) => {
+    const { old, prefix } = tabLine(line);
+    return prefix + line.slice(old);
   };
-  const removeFileTag = new Function('promptModel', 'replaceText', source[0] + '\nreturn removeFileTag;')(model, replaceText);
-  const cut = (text, caret) => {
-    value = text;
-    removeFileTag(caret);
-    return value;
-  };
-  assert.strictEqual(cut('<book> summarize this', 3), 'summarize this', 'caret inside the tag');
-  assert.strictEqual(cut('<book> summarize this', 5), 'summarize this', "caret on the tag's '>'");
-  assert.strictEqual(cut('hi <book> there', 6), 'hi there', 'a tag after some typing');
-  assert.strictEqual(cut('<book> summarize this', 9), '<book> summarize this', 'caret past the tag');
-  assert.strictEqual(cut('nothing to cut', 4), 'nothing to cut', 'no tag at all');
-  assert.strictEqual(cut('a < b\nc > d', 3), 'a < b\nc > d', 'brackets spanning a newline');
-  console.log('ok: file tags come back out of the prompt box');
+  assert.strictEqual(tab('text'), '  - text', 'even margin (none) steps two and gains a dash');
+  assert.strictEqual(tab(' text'), '  - text', 'odd margin steps one');
+  assert.strictEqual(tab('   text'), '    - text', 'odd margin of three steps one');
+  assert.strictEqual(tab('  - text'), '    - text', 'an item steps in two, keeping its dash');
+  assert.strictEqual(tab('-text'), '  - text', 'one space after the dash');
+  assert.strictEqual(tab('-    text'), '  - text', 'only one space after the dash');
+  assert.strictEqual(tab(''), '  - ', 'an empty line becomes an empty item');
+  console.log('ok: tab makes list items');
 }
 
 // The export has to drop tool lines and the graft tally the way the box does, and keep the

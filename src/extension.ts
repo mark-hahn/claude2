@@ -642,6 +642,8 @@ class Claude2Controller implements vscode.Disposable {
       if (this.pendingPromptFocus.delete(sessionId)) {
         void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "focusPrompt" });
       }
+    } else if (type === "debugLog") {
+      this.channel.appendLine(`webview ${sessionId.slice(0, 8)}: ${stringOf(record?.text)}`);
     } else if (type === "captureScreen") {
       await this.captureForSession(sessionId, record?.hideWindow === true);
     } else if (type === "pasteImage") {
