@@ -655,6 +655,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), record?.keepDraft === true);
     } else if (type === "picksChanged") {
       await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
+    } else if (type === "bigPromptChanged") {
+      await this.store.setBigPrompt(sessionId, record?.on === true);
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {

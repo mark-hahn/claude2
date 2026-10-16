@@ -63,6 +63,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card-trash { display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
     .card-trash:hover { background: #fbd9d9; }
+    .card-turns { font-size: 14px; color: var(--ink); }
     .card-clock { display: flex; }
     .card-clock.running { color: #1a8f2e; }
     .card-clock.background { color: #d11a1a; }
@@ -297,6 +298,11 @@ ${tooltipScript()}
           actions.appendChild(restore);
         }
         actions.appendChild(trash);
+        const turnCount = document.createElement('span');
+        turnCount.className = 'card-turns';
+        turnCount.textContent = String((session.turns || []).length);
+        turnCount.title = 'Prompt turns';
+        actions.appendChild(turnCount);
         card.appendChild(actions);
 
         let timer = 0;
@@ -702,6 +708,12 @@ ${tooltipScript()}
           boxScrollsLoaded = true;
           boxScrolls = message.boxScrolls;
         }
+        // Taken once, at load, like boxScrolls: a state echo must not undo a toggle still in flight.
+        if (!bigPromptLoaded) {
+          bigPromptLoaded = true;
+          bigPromptEditor = session.bigPrompt === true;
+          document.querySelector('.shell').classList.toggle('big-prompt-editor', bigPromptEditor);
+        }
         document.title = session.name || 'Claude2';
         render();
       } else if (message.type === 'turnDelta') {
@@ -810,7 +822,7 @@ ${tooltipScript()}
       // A file tag is plain text, so the caret the click just set says which one was hit. Only
       // ctrl does anything: a tag has nothing to show, it can only be taken back off. A ctrl-click
       // anywhere else toggles bigPromptEditor.
-      if (event.ctrlKey && !removeFileTag(promptBox.selectionStart)) toggleBigPromptEditor();
+      if (event.ctrlKey && !removeFileTag(promptBox.selectionStart)) setBigPromptEditor(!bigPromptEditor);
     });
     // The 🖼️ chars are clickable, so the pointer says so over them.
     promptBox.addEventListener('mousemove', (event) => {
@@ -1127,11 +1139,15 @@ ${tooltipScript()}
     // bigPromptEditor: the prompt box takes the window's full height and the pane narrows to the
     // column above the controls. The pane changed size without a window resize, so the open
     // box's clamp is redone here.
+    // The session keeps the flag, so a reload comes back in the same layout.
     let bigPromptEditor = false;
-    function toggleBigPromptEditor() {
-      bigPromptEditor = !bigPromptEditor;
-      document.querySelector('.shell').classList.toggle('big-prompt-editor', bigPromptEditor);
+    let bigPromptLoaded = false;
+    function setBigPromptEditor(on) {
+      if (on === bigPromptEditor) return;
+      bigPromptEditor = on;
+      document.querySelector('.shell').classList.toggle('big-prompt-editor', on);
       resyncSelectedBlock();
+      vscode.postMessage({ type: 'bigPromptChanged', sessionId, on });
     }
 
     // Which 🖼️ char the pointer came down on, or -1 for a click anywhere else. The caret cannot
@@ -1199,6 +1215,7 @@ ${tooltipScript()}
       if (!prompt.trim() && !imageCount) return;
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
+      setBigPromptEditor(false);
       promptBox.value = '';
       imageCount = 0;
       draftSent = '';

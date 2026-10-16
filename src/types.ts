@@ -119,6 +119,8 @@ export interface ClaudeSession {
   // Empty means the session never picked and the configured default applies.
   model: string;
   effort: string;
+  // The conversation pane's big-prompt layout, so a reload comes back the way it was left.
+  bigPrompt: boolean;
   turns: ClaudeTurn[];
 }
 
