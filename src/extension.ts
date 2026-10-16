@@ -284,6 +284,10 @@ class Claude2Controller implements vscode.Disposable {
       this.refreshSidebar();
       return;
     }
+    if (type === "debugLog") {
+      this.channel.appendLine(`sidebar: ${stringOf(record?.text)}`);
+      return;
+    }
     // Alt-click copies; it must not disturb the selection or sweep away an empty session.
     if (type === "copyText") {
       await this.copyToClipboard(stringOf(record?.text));

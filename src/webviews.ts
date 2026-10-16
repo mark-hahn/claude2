@@ -112,6 +112,10 @@ ${tooltipScript()}
     // rather than yanking the input out from under the typing.
     let editingId = '';
     let pendingRender = false;
+    // The one armed long press. render() replaces every card, so the press it belongs to ends
+    // there: a timer left armed would start a rename on a card no longer in the page, one whose
+    // input can't take focus and so never blurs, and editingId would hold off every render after.
+    let pressTimer = 0;
     const list = document.getElementById('sessions');
     const trashButton = document.getElementById('trash');
     const sessionCounts = document.getElementById('sessionCounts');
@@ -194,6 +198,7 @@ ${tooltipScript()}
     });
 
     function render() {
+      window.clearTimeout(pressTimer);
       list.replaceChildren();
       // Header tally: active sessions over trashed ones, whichever list is showing.
       const trashCount = sessions.filter((session) => session.trashed === true).length;
@@ -305,7 +310,6 @@ ${tooltipScript()}
         actions.appendChild(turnCount);
         card.appendChild(actions);
 
-        let timer = 0;
         let renamed = false;
         card.addEventListener('pointerdown', (event) => {
           // Alt-click is a copy, so it must not arm the long-press rename.
@@ -318,13 +322,14 @@ ${tooltipScript()}
           if (renamed) {
             return;
           }
-          timer = window.setTimeout(() => {
+          window.clearTimeout(pressTimer);
+          pressTimer = window.setTimeout(() => {
             renamed = true;
             startRename(name, session);
           }, 650);
         });
         for (const eventName of ['pointerup', 'pointercancel', 'pointerleave']) {
-          card.addEventListener(eventName, () => window.clearTimeout(timer));
+          card.addEventListener(eventName, () => window.clearTimeout(pressTimer));
         }
         card.addEventListener('click', (event) => {
           if (event.altKey) {
@@ -351,6 +356,12 @@ ${tooltipScript()}
 
     function startRename(nameEl, session) {
       if (editingId) {
+        return;
+      }
+      // DEBUG: render() clears the press timer, so this should never trip. If the sidebar freezes
+      // again, this line in the Claude2 output says whether a replaced card is still the cause.
+      if (!nameEl.isConnected) {
+        vscode.postMessage({ type: 'debugLog', text: 'long press fired on a replaced card ' + session.id.slice(0, 8) });
         return;
       }
       editingId = session.id;
