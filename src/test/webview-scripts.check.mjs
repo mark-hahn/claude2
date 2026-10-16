@@ -14,7 +14,7 @@ const webview = { cspSource: 'vscode-resource:' };
 const defaults = { model: 'claude-opus-5', effort: 'high', contextWindow: 256000, maxTurns: 10 };
 const pages = {
   sidebar: sidebarHtml(webview),
-  conversation: conversationHtml(webview, 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, defaultPreset: 0, date: 0, seenDate: 0 }, 1),
+  conversation: conversationHtml(webview, 'vscode-resource:/dist', 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, defaultPreset: 0, date: 0, seenDate: 0 }, 1),
   instructions: managementHtml(webview, 'instructions', 'UTC', 1),
   quota: managementHtml(webview, 'quota', 'UTC', 1),
   plugins: managementHtml(webview, 'plugins', 'UTC', 1),
@@ -39,22 +39,20 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
 
 // A file tag is cut out of the prompt box by hand rather than by a prefix rule, so the one piece
 // with edges worth pinning -- where the caret counts as inside a tag -- is run here against a
-// stand-in box. The function is lifted out of the generated script; nothing else in it is needed.
+// stand-in model. The function is lifted out of the generated script; nothing else in it is needed.
 {
   const source = pages.conversation.match(/function removeFileTag\(caret\)[\s\S]*?\n {4}\}/);
   assert.ok(source, 'conversation pane lost removeFileTag');
-  const box = {
-    value: '',
-    selectionStart: 0,
-    setSelectionRange(at) {
-      this.selectionStart = at;
-    },
+  let value = '';
+  const model = { getValue: () => value };
+  const replaceText = (start, end, text) => {
+    value = value.slice(0, start) + text + value.slice(end);
   };
-  const removeFileTag = new Function('promptBox', 'sendDraft', source[0] + '\nreturn removeFileTag;')(box, () => {});
-  const cut = (value, caret) => {
-    box.value = value;
+  const removeFileTag = new Function('promptModel', 'replaceText', source[0] + '\nreturn removeFileTag;')(model, replaceText);
+  const cut = (text, caret) => {
+    value = text;
     removeFileTag(caret);
-    return box.value;
+    return value;
   };
   assert.strictEqual(cut('<book> summarize this', 3), 'summarize this', 'caret inside the tag');
   assert.strictEqual(cut('<book> summarize this', 5), 'summarize this', "caret on the tag's '>'");

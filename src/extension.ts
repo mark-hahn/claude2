@@ -557,7 +557,8 @@ class Claude2Controller implements vscode.Disposable {
       });
       panel.iconPath = this.tabIcon();
       const info = readModelInfo(this.context.globalState);
-      panel.webview.html = conversationHtml(panel.webview, sessionId, this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
+      const dist = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist")).toString();
+      panel.webview.html = conversationHtml(panel.webview, dist, sessionId,this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
       panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
       panel.onDidChangeViewState(() => {
         if (panel?.active) {

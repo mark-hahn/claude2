@@ -430,8 +430,11 @@ ${tooltipScript()}
 </html>`;
 }
 
-export function conversationHtml(webview: vscode.Webview, sessionId: string, defaults: ConversationDefaults, info: ModelInfo, zoom = 1): string {
+// `dist` is the extension's dist folder as a webview URI: the prompt editor's Monaco bundle,
+// built there by esbuild.js, loads from it.
+export function conversationHtml(webview: vscode.Webview, dist: string, sessionId: string, defaults: ConversationDefaults, info: ModelInfo, zoom = 1): string {
   const nonce = getNonce();
+  const editorWorkerUrl = JSON.stringify(`${dist}/editorWorker.js`);
   const z = zoomFactor(zoom);
   const models = JSON.stringify(info.models);
   const presets = JSON.stringify(info.presets);
@@ -452,7 +455,8 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource}; worker-src blob:;">
+  <link rel="stylesheet" href="${dist}/promptEditor.css">
   <style>
     :root { color-scheme: light; --ink: #000; --muted: #000; --surface: #fcfcfb; --page: #f9f9f7; --border: #d9d8d1; --yellow: #fff7bf; --wash: rgba(0,0,0,0.07); --done: #0c6b32; --z: 1; --edh: calc(42px * var(--z) + 22px); }
     * { box-sizing: border-box; }
@@ -471,12 +475,13 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
        dissolves so its two children can sit in the shell's grid beside the pane. */
     .shell.big-prompt-editor { grid-template-columns: minmax(0, 1fr) auto; }
     .shell.big-prompt-editor .dock { display: contents; }
-    .shell.big-prompt-editor #prompt { grid-column: 1; grid-row: 1 / 3; align-self: stretch; field-sizing: fixed; max-height: none; margin: 8px 0 8px 12px; }
+    .shell.big-prompt-editor #prompt { grid-column: 1; grid-row: 1 / 3; align-self: stretch; max-height: none; margin: 8px 0 8px 12px; }
     /* Sized by the column, never by its own content, or a long line would widen the column. */
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
     .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
-    .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
+    /* Scoped: Monaco puts an "empty" class on its find box input. */
+    .history > .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
     .turn.selected .prompt-bar { outline: 2px solid #f28b82; outline-offset: -2px; }
     .prompt-bar { width: 100%; height: 1.65em; border: 1px solid #eadf90; background: var(--yellow); color: #14120a; display: block; text-align: left; padding: 1px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; cursor: pointer; }
@@ -514,8 +519,15 @@ export function conversationHtml(webview: vscode.Webview, sessionId: string, def
     .bar-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; margin-right: 6px; border-radius: 3px; cursor: pointer; }
     .bar-icon:hover { background: var(--wash); }
     .bar-icon svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-    textarea { resize: none; flex: 1 1 260px; min-width: 180px; height: auto; field-sizing: content; min-height: var(--edh); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 11px; font: calc(14px * var(--z))/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
-    textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
+    /* The prompt box: a frame around a Monaco editor. It grows with the text (--content-h, set by
+       the script) from two lines to six, and still stretches to the controls' height beside it. */
+    #prompt { position: relative; flex: 1 1 260px; min-width: 180px; min-height: max(var(--edh), min(var(--content-h, 0px), calc(126px * var(--z) + 22px))); max-height: calc(126px * var(--z) + 22px); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+    #prompt:focus-within { outline: 2px solid var(--ink); outline-offset: -1px; border-color: transparent; }
+    /* Inset just past the rounded corners, so the editor's square ones stay inside the border. */
+    #prompt > div { position: absolute; inset: 3px; }
+    /* Monaco draws its widgets' text at 11-13px; these are the ones the prompt box can show. */
+    .monaco-editor .find-widget > .find-part, .monaco-editor .find-widget > .replace-part, .monaco-editor .find-widget .monaco-findInput .input, .monaco-findInput .monaco-inputbox,
+    .quick-input-widget, .context-view.fixed, .monaco-hover, .hover-row.status-bar, .monaco-keybinding > .monaco-keybinding-key { font-size: calc(14px * var(--z)) !important; }
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
     .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
@@ -579,7 +591,7 @@ ${tooltipStyle()}  </style>
   <div class="shell">
     <div id="history" class="history"><div class="empty"></div></div>
     <div class="dock">
-      <textarea id="prompt" spellcheck="true"></textarea>
+      <div id="prompt"><div></div></div>
       <div class="dock-controls">
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
@@ -593,6 +605,7 @@ ${tooltipStyle()}  </style>
       </div>
     </div>
   </div>
+  <script nonce="${nonce}" src="${dist}/promptEditor.js"></script>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
 ${zoomScript(z)}
@@ -663,13 +676,56 @@ ${tooltipScript()}
     let allOpen = false;
     let draftSent = '';
     // U+1F5BC U+FE0F, one per picture attached to this prompt. The run of them leads the prompt
-    // box's text and every prompt bar built from a turn that carried pictures.
+    // box (drawn there, not typed) and every prompt bar built from a turn that carried pictures.
     const IMG = '\\u{1F5BC}\\uFE0F';
     // How many pictures are waiting on this session's next prompt. The extension owns the list;
-    // this is only what the prefix is rebuilt from.
+    // this is only what the box's 🖼️ chars are drawn from.
     let imageCount = 0;
     const historyBox = document.getElementById('history');
-    const promptBox = document.getElementById('prompt');
+    // The prompt box is a Monaco editor: VS Code's own editing (multi-cursor, find/replace, line
+    // moves, its undo) on a markdown model. A webview can't start a worker from a resource URL,
+    // which is a different origin, so the worker is a blob that imports the bundled one.
+    self.MonacoEnvironment = { getWorker: () => new Worker(URL.createObjectURL(new Blob(['importScripts(' + JSON.stringify(${editorWorkerUrl}) + ')'], { type: 'text/javascript' }))) };
+    monaco.editor.defineTheme('claude2', {
+      base: 'vs',
+      inherit: true,
+      // Black wherever the stock light theme greys text: html delimiters, widget text, placeholders.
+      rules: [{ token: 'delimiter.html', foreground: '000000' }],
+      colors: { 'editor.background': '#fcfcfb', foreground: '#000000', descriptionForeground: '#000000', 'input.placeholderForeground': '#000000', 'keybindingLabel.foreground': '#000000' },
+    });
+    const promptHost = document.getElementById('prompt');
+    const promptBox = monaco.editor.create(promptHost.firstElementChild, {
+      language: 'markdown',
+      theme: 'claude2',
+      automaticLayout: true,
+      wordWrap: 'on',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: 14 * zoom,
+      lineHeight: 1.5,
+      tabSize: 2,
+      // With the frame's 3px inset and 1px border, the text sits where the old textarea's did.
+      padding: { top: 7, bottom: 7 },
+      lineDecorationsWidth: 8,
+      lineNumbers: 'off',
+      glyphMargin: false,
+      folding: false,
+      minimap: { enabled: false },
+      overviewRulerLanes: 0,
+      scrollBeyondLastLine: false,
+      // Popups may overhang the box's frame instead of being clipped by it.
+      fixedOverflowWidgets: true,
+      // VS Code's own markdown defaults: no completion popups while typing, no boxes on curly quotes.
+      quickSuggestions: false,
+      unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },
+      // The textarea input path: VS Code's webview host forwards copy and paste as execCommand,
+      // which lands on a focused textarea.
+      editContext: false,
+    });
+    const promptModel = promptBox.getModel();
+    // The frame grows with the text; the CSS clamps it between two lines and six.
+    promptBox.onDidContentSizeChange(() => promptHost.style.setProperty('--content-h', (promptBox.getContentHeight() + 8) + 'px'));
+    // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
+    new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
@@ -694,12 +750,10 @@ ${tooltipScript()}
         status = message.status || null;
         footer = message.footer || footer;
         statusAt = Date.now();
-        // Drafts are stored without the 🖼️ prefix -- it is rebuilt from the picture list, which
-        // is what makes a draft restored into a session holding no pictures come back clean.
-        if (typeof message.draft === 'string' && message.draft && !stripImagePrefix(promptBox.value)) {
-          promptBox.value = message.draft;
+        // draftSent first, so the change event this fires has nothing new to send back.
+        if (typeof message.draft === 'string' && message.draft && !promptModel.getValueLength()) {
           draftSent = message.draft;
-          syncImagePrefix();
+          promptModel.setValue(message.draft);
         }
         if (typeof message.search === 'string') searchText = message.search;
         // The extension's copy of the scroll memory is the persistent one; it is taken once,
@@ -731,7 +785,7 @@ ${tooltipScript()}
       } else if (message.type === 'imagesState') {
         imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
-        syncImagePrefix();
+        showImageChars();
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
       } else if (message.type === 'models' && message.models && typeof message.models === 'object') {
@@ -743,28 +797,19 @@ ${tooltipScript()}
       }
     });
 
-    promptBox.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && event.ctrlKey) {
-        event.preventDefault();
-        submitPrompt();
-      }
-      if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && LINE_KEYS[event.key] && LINE_KEYS[event.key]() !== false) {
-        event.preventDefault();
-        // Kept from VS Code, which would act on some of these too (ctrl-j toggles the panel).
-        event.stopPropagation();
-      }
-      // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
-      // newline to count, so the top line is the one where the caret's own Up didn't move it.
-      if (event.key === 'ArrowUp' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
-          && !promptBox.value.slice(0, promptBox.selectionStart).includes('\\n')) {
-        const start = promptBox.selectionStart;
-        const end = promptBox.selectionEnd;
-        window.setTimeout(() => {
-          if (document.activeElement !== promptBox || promptBox.selectionStart !== start || promptBox.selectionEnd !== end) return;
-          promptBox.blur();
-          arrowScroll(true);
-        });
-      }
+    // Ctrl-Enter sends, in place of Monaco's insert-line-below.
+    promptBox.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, submitPrompt);
+    // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
+    // newline to count, so the top line is the one where the caret's own Up didn't move it.
+    promptBox.onKeyDown((event) => {
+      if (event.keyCode !== monaco.KeyCode.UpArrow || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+      const before = promptBox.getSelection();
+      if (!before.isEmpty() || before.startLineNumber !== 1) return;
+      window.setTimeout(() => {
+        if (!promptBox.hasTextFocus() || !promptBox.getSelection().equalsSelection(before)) return;
+        document.activeElement.blur();
+        arrowScroll(true);
+      });
     });
     // Ctrl-up/down step the selected bar and open its box. A webview only sees keys while its
     // tab has focus, so this is live only in the focused claude2 tab.
@@ -772,6 +817,8 @@ ${tooltipScript()}
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       event.preventDefault();
+      // Kept from the prompt box, where Monaco would scroll a line.
+      event.stopPropagation();
       // A frozen pane thaws first, so the step below lands under the normal rules.
       const reapply = frozenPane ? thaw() : null;
       const before = anchorIndex;
@@ -788,57 +835,59 @@ ${tooltipScript()}
     // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
     // webview, and a debounce here is a window in which typing exists nowhere else. The message
     // is small and the receiving end only writes a map entry; the disk write is coalesced there.
-    promptBox.addEventListener('input', () => {
-      // Typing may have eaten into the 🖼️ prefix; it belongs to the picture list, not the typist,
-      // so it is put back before anything else reads the box.
-      syncImagePrefix();
+    promptModel.onDidChangeContent(() => {
+      showImageChars();
       sendDraft('draftChanged');
     });
     // Losing focus is the cue to name the session after an unsent draft.
-    promptBox.addEventListener('blur', () => sendDraft('draftBlur'));
+    promptBox.onDidBlurEditorWidget(() => sendDraft('draftBlur'));
     // An image on the clipboard becomes another attached picture rather than pasted text. Each
     // paste adds one; the pictures already waiting stay. The extension ignores a second copy
-    // of one already in the list.
-    promptBox.addEventListener('paste', (event) => {
+    // of one already in the list. Capture phase, so Monaco never sees the paste.
+    promptHost.addEventListener('paste', (event) => {
       const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
       const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
       const file = item ? item.getAsFile() : null;
       if (!file) return;
       event.preventDefault();
+      event.stopPropagation();
       capButton.disabled = true;
       const reader = new FileReader();
       reader.onload = () => vscode.postMessage({ type: 'pasteImage', sessionId, dataUri: String(reader.result) });
       reader.onerror = () => { capButton.disabled = false; };
       reader.readAsDataURL(file);
-    });
+    }, true);
     // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
-    // shows it in the Image pane, ctrl deletes it (the extension asks first).
-    promptBox.addEventListener('click', (event) => {
+    // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
+    // CSS gives them the pointer.
+    promptBox.onMouseUp((event) => {
+      const ctrl = event.event.ctrlKey;
       const index = imageCharAt(event);
       if (index >= 0) {
-        vscode.postMessage(event.ctrlKey ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
+        vscode.postMessage(ctrl ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
         return;
       }
       // A file tag is plain text, so the caret the click just set says which one was hit. Only
       // ctrl does anything: a tag has nothing to show, it can only be taken back off. A ctrl-click
-      // anywhere else toggles bigPromptEditor.
-      if (event.ctrlKey && !removeFileTag(promptBox.selectionStart)) setBigPromptEditor(!bigPromptEditor);
-    });
-    // The 🖼️ chars are clickable, so the pointer says so over them.
-    promptBox.addEventListener('mousemove', (event) => {
-      promptBox.style.cursor = imageCharAt(event, true) < 0 ? '' : 'pointer';
+      // anywhere else in the text area toggles bigPromptEditor; one on a scrollbar or a widget
+      // (the find box) does not.
+      const type = event.target.type;
+      if (!ctrl || (type !== monaco.editor.MouseTargetType.CONTENT_TEXT && type !== monaco.editor.MouseTargetType.CONTENT_EMPTY)) return;
+      if (!removeFileTag(promptModel.getOffsetAt(promptBox.getPosition()))) setBigPromptEditor(!bigPromptEditor);
     });
     stopButton.addEventListener('click', () => {
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
     document.getElementById('load').addEventListener('click', loadSelectedPrompt);
-    // Ctrl-L is the Load button, from the pane or the prompt box.
+    // Ctrl-L is the Load button, from the pane or the prompt box. Capture phase, and kept from
+    // Monaco, which would take it for its line select.
     window.addEventListener('keydown', (event) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'l') return;
       event.preventDefault();
+      event.stopPropagation();
       if (!loadButton.disabled) loadButton.click();
-    });
+    }, true);
     document.getElementById('cap').addEventListener('click', (event) => {
       // Every click takes another picture and adds it to the ones already waiting. The button
       // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
@@ -1003,145 +1052,55 @@ ${tooltipScript()}
     }
 
     function sendDraft(type) {
-      const draft = stripImagePrefix(promptBox.value);
+      const draft = promptModel.getValue();
       if (type === 'draftChanged' && draft === draftSent) return;
       draftSent = draft;
       vscode.postMessage({ type, sessionId, draft });
     }
 
-    // Everything after the leading run of 🖼️ chars: the text the user actually typed.
-    function stripImagePrefix(text) {
-      let at = 0;
-      while (text.startsWith(IMG, at)) at += IMG.length;
-      return text.slice(at);
+    // The 🖼️ chars lead the box's first line as injected text: drawn there but not part of the
+    // text, so typing, the caret and the draft never touch them. Set again on every edit, or one
+    // at the very start would carry them along with the text it moved.
+    const imageChars = promptBox.createDecorationsCollection();
+    function showImageChars() {
+      imageChars.set(imageCount ? [{
+        range: new monaco.Range(1, 1, 1, 1),
+        options: { before: { content: IMG.repeat(imageCount), inlineClassName: 'img-char', cursorStops: monaco.editor.InjectedTextCursorStops.Right } },
+      }] : []);
     }
 
-    // Puts the prefix back in step with the picture list, however the box got out of step --
-    // a picture added or deleted, a draft restored, or typing that ran over the chars.
-    function syncImagePrefix() {
-      const next = IMG.repeat(imageCount) + stripImagePrefix(promptBox.value);
-      if (next === promptBox.value) return;
-      const caret = promptBox.selectionStart + (next.length - promptBox.value.length);
-      promptBox.value = next;
-      // Never inside the prefix: the caret belongs in the typed text, which starts after it.
-      const at = Math.max(imageCount * IMG.length, Math.min(next.length, caret));
-      promptBox.setSelectionRange(at, at);
-    }
-
-    // VS Code-style line keys for the prompt box. A line runs to a newline, not to a wrap, and the
-    // first one starts after the 🖼️ prefix. Edits go through execCommand, so undo still works and
-    // the 'input' event carries them to the draft. A key whose function returns false is left alone.
-    const LINE_KEYS = {
-      j: joinLine,
-      "'": headingFirstLine,
-      '/': () => mapLines((line) => line.replace(/^[ \\t]*/, '- ')),
-      // Indent steps land on even counts: 1 or 2 spaces, whichever gets there.
-      '.': () => mapLines((line) => ' '.repeat(2 - leadingSpaces(line) % 2) + line),
-      ',': () => mapLines((line) => line.slice(Math.min(leadingSpaces(line), 2 - leadingSpaces(line) % 2))),
-      c: copyLine,
-      d: deleteLines,
-    };
-
-    function leadingSpaces(line) {
-      return line.match(/^ */)[0].length;
-    }
-
-    function lineStartAt(pos) {
-      const text = promptBox.value;
-      return Math.max(text.slice(0, pos).lastIndexOf('\\n') + 1, text.length - stripImagePrefix(text).length);
-    }
-
-    function lineEndAt(pos) {
-      const end = promptBox.value.indexOf('\\n', pos);
-      return end < 0 ? promptBox.value.length : end;
-    }
-
-    // Start and end of the lines the selection touches; a bare caret touches its own line, and a
-    // selection ending just past a newline stops at the line before it.
-    function selectedLines() {
-      const { selectionStart: s, selectionEnd: e } = promptBox;
-      return [lineStartAt(s), lineEndAt(e > s && promptBox.value[e - 1] === '\\n' ? e - 1 : e)];
-    }
-
-    function editBox(start, end, text, selStart, selEnd = selStart) {
-      promptBox.setSelectionRange(start, end);
-      if (start !== end || text) document.execCommand(text ? 'insertText' : 'delete', false, text);
-      promptBox.setSelectionRange(selStart, selEnd);
-    }
-
-    // Rewrites each selected line. A caret moves with its line's text; a selection grows to cover
-    // the whole rewritten lines.
-    function mapLines(fn) {
-      const [a, b] = selectedLines();
-      const old = promptBox.value.slice(a, b);
-      const next = old.split('\\n').map(fn).join('\\n');
-      if (next === old) return;
-      const { selectionStart: s, selectionEnd: e } = promptBox;
-      if (s === e) editBox(a, b, next, Math.max(a, s + next.length - old.length));
-      else editBox(a, b, next, a, a + next.length);
-    }
-
-    // Always the box's first line, wherever the selection is; the selection just moves with the text.
-    function headingFirstLine() {
-      const a = lineStartAt(0);
-      const ws = promptBox.value.slice(a).match(/^[ \\t]*/)[0].length;
-      const shift = (pos) => pos < a ? pos : Math.max(a + 2, pos + 2 - ws);
-      editBox(a, a + ws, '# ', shift(promptBox.selectionStart), shift(promptBox.selectionEnd));
-    }
-
-    // The next line is appended to the caret's, the whitespace between becoming one space with
-    // the caret on its left.
-    function joinLine() {
-      const text = promptBox.value;
-      const end = lineEndAt(promptBox.selectionStart);
-      if (end === text.length) return;
-      const from = end - text.slice(0, end).match(/[ \\t]*$/)[0].length;
-      const to = end + 1 + text.slice(end + 1).match(/^[ \\t]*/)[0].length;
-      editBox(from, to, ' ', from);
-    }
-
-    // Only a bare caret copies its line; a selection copies the normal way.
-    function copyLine() {
-      const { selectionStart: s, selectionEnd: e } = promptBox;
-      if (s !== e) return false;
-      void navigator.clipboard.writeText(promptBox.value.slice(lineStartAt(s), lineEndAt(s)));
-    }
-
-    // The newline after goes with the lines; the last line takes the one before it instead.
-    function deleteLines() {
-      const [a, b] = selectedLines();
-      const text = promptBox.value;
-      if (b < text.length) editBox(a, b + 1, '', a);
-      else if (text[a - 1] === '\\n') editBox(a - 1, b, '', lineStartAt(a - 1));
-      else editBox(a, b, '', a);
+    // An edit through Monaco, so ctrl-z takes it back. Offsets are into the box's text; the caret
+    // lands at caret in the text after the edit, by default just past the new text.
+    function replaceText(start, end, text, caret = start + text.length) {
+      const range = monaco.Range.fromPositions(promptModel.getPositionAt(start), promptModel.getPositionAt(end));
+      promptBox.pushUndoStop();
+      promptBox.executeEdits('claude2', [{ range, text }]);
+      promptBox.pushUndoStop();
+      promptBox.setPosition(promptModel.getPositionAt(caret));
     }
 
     // An attached file rides in the text as a <name> tag rather than in a prefix of its own: the
     // draft carries it for free, and the extension turns each tag back into a path on the way out.
-    // New tags lead the typing, after any 🖼️ chars, the way another picture would.
+    // New tags lead the typing, the way another picture would.
     function insertFileTag(name) {
       if (!name) return;
-      promptBox.value = IMG.repeat(imageCount) + '<' + name + '> ' + stripImagePrefix(promptBox.value);
-      promptBox.setSelectionRange(promptBox.value.length, promptBox.value.length);
+      const tag = '<' + name + '> ';
+      replaceText(0, 0, tag, promptModel.getValueLength() + tag.length);
       promptBox.focus();
-      sendDraft('draftChanged');
     }
 
     // Takes off the tag the caret sits in, with the space that follows it. A '<' the user typed
     // is only ever a tag to the extension if it matches an attached file, so cutting one here
     // that turns out to be plain typing costs nothing beyond the retype.
     function removeFileTag(caret) {
-      const text = promptBox.value;
+      const text = promptModel.getValue();
       const start = text.lastIndexOf('<', caret);
       if (start < 0) return false;
       const end = text.indexOf('>', start);
       // The caret has to be inside the tag -- ending on its '>' counts -- and a newline in
       // between means these two brackets were never one tag.
       if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return false;
-      const cut = text[end + 1] === ' ' ? end + 2 : end + 1;
-      promptBox.value = text.slice(0, start) + text.slice(cut);
-      promptBox.setSelectionRange(start, start);
-      sendDraft('draftChanged');
+      replaceText(start, text[end + 1] === ' ' ? end + 2 : end + 1, '');
       return true;
     }
 
@@ -1159,40 +1118,14 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'bigPromptChanged', sessionId, on });
     }
 
-    // Which 🖼️ char the pointer came down on, or -1 for a click anywhere else. The caret cannot
-    // answer this -- it lands on the boundary between two chars, so a click on either side of one
-    // gives the same offset -- so the x position decides, against a width measured in the box's
-    // own font. The caret is still worth asking whether the click was in the prefix at all.
-    function imageCharAt(event, hover) {
-      if (!imageCount) return -1;
-      const style = getComputedStyle(promptBox);
-      const box = promptBox.getBoundingClientRect();
-      // A hover has no caret to ask -- moving the mouse does not move it -- so the first line,
-      // the only one the prefix can be on, is decided by y instead.
-      if (hover) {
-        const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop) - promptBox.scrollTop;
-        if (event.clientY < top || event.clientY > top + parseFloat(style.lineHeight)) return -1;
-      } else if (promptBox.selectionStart > imageCount * IMG.length) {
-        return -1;
-      }
-      const left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
-      const index = Math.floor((event.clientX - left) / imageCharWidth(style.font));
+    // Which 🖼️ char a Monaco mouse event is on, or -1 for anywhere else. The chars are one
+    // injected span, all the same width, so the x offset into the span decides.
+    function imageCharAt(event) {
+      const span = imageCount && event.target.element ? event.target.element.closest('.img-char') : null;
+      if (!span) return -1;
+      const box = span.getBoundingClientRect();
+      const index = Math.floor((event.event.browserEvent.clientX - box.left) / (box.width / imageCount));
       return index >= 0 && index < imageCount ? index : -1;
-    }
-
-    // Measured in a span rather than on a canvas: the box and the span resolve the font stack the
-    // same way, and an emoji falls back to a different face than the monospace text around it.
-    let charRuler = { font: '', width: 0 };
-    function imageCharWidth(font) {
-      if (charRuler.font !== font) {
-        const ruler = document.createElement('span');
-        ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:' + font;
-        ruler.textContent = IMG.repeat(10);
-        document.body.appendChild(ruler);
-        charRuler = { font: font, width: ruler.getBoundingClientRect().width / 10 };
-        ruler.remove();
-      }
-      return charRuler.width;
     }
 
     // A stored prompt without the sentences the attached pictures added to it. Those sentences are
@@ -1218,15 +1151,18 @@ ${tooltipScript()}
     function submitPrompt() {
       // The 🖼️ chars are this pane's way of showing the attached pictures, not part of the
       // prompt: the extension has the list, and appends a sentence per picture to the text.
-      const prompt = stripImagePrefix(promptBox.value);
+      const prompt = promptModel.getValue();
       // Sending during a run is allowed: the extension stops the running turn and takes this
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
       if (!prompt.trim() && !imageCount) return;
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
-      promptBox.value = '';
-      imageCount = 0;
+      // draftSent first, so the clearing edit has no draft to send. The clear is an edit, so
+      // ctrl-z brings the sent text back.
       draftSent = '';
+      imageCount = 0;
+      showImageChars();
+      replaceText(0, promptModel.getValueLength(), '');
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
@@ -1240,12 +1176,10 @@ ${tooltipScript()}
       if (!turn) return;
       // The pictures are not loaded with it: they belong to the prompt that was sent.
       const typed = typedText(turn);
-      const start = promptBox.value.length - stripImagePrefix(promptBox.value).length;
-      const insert = typed + (promptBox.value.length > start ? '\\n\\n' : '');
+      const insert = typed + (promptModel.getValueLength() ? '\\n\\n' : '');
       // An edit rather than a value swap, so ctrl-z takes the load back out.
       promptBox.focus();
-      editBox(start, start, insert, promptBox.value.length + insert.length);
-      sendDraft('draftChanged');
+      replaceText(0, 0, insert, promptModel.getValueLength() + insert.length);
     }
 
     // Fills a box with the response. Where the run marked the start of its closing answer, the
@@ -3456,11 +3390,13 @@ function zoomScript(initial: number): string {
       vscode.postMessage({ type: 'zoom', zoom });
     }
 
+    // Capture phase, so it lands ahead of anything that consumes the wheel itself (the prompt
+    // box's Monaco editor); the preventDefault then tells that one to leave this wheel alone.
     window.addEventListener('wheel', (event) => {
       if (!event.ctrlKey) return;
       event.preventDefault();
       if (event.deltaY) applyZoom(zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP));
-    }, { passive: false });
+    }, { passive: false, capture: true });
 
     window.addEventListener('keydown', (event) => {
       if (!event.ctrlKey || event.altKey || event.metaKey) return;

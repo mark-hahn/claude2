@@ -1,12 +1,4 @@
 
-my wife, linda@hahnca.com, and I, mark@hahnca.com, have separate accounts.  i signed up for family but then I realized if my wife cancels her old account to switch to family she will lose her stored account history like recipes. so I want to cancel my mark@hahnca.com account and upgrade her linda@hahnca.com to family for me to use.  It is very important that she not lose her history.
-
-I understand you’d like to speak with a representative about upgrading Linda’s account to a Family plan while keeping her recipes. I can help review her current subscriptions and provide step-by-step guidance for upgrading online, ensuring her account history remains intact. Would you like instructions for upgrading Linda’s account to All Access Family through The New York Times website?
-
-Sign in to Linda’s account and open Family Subscription management to invite you as an additional subscriber. Each person keeps a separate login, so Linda’s saved recipes and account history remain on her account.
-
-are you sure  that when she upgrades to All Access Family she will not lose her saved recipies?
-
 ???????
 selective delete session cards
 periods for stats pane
