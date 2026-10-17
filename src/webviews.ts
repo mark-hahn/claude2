@@ -489,6 +489,19 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
     .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
+    /* Snips: a pad of prompt snippets laid over the pane, in the pane's own grid cell, so it
+       follows the pane between the two layouts. The pane stays rendered underneath. */
+    #history { grid-row: 1; grid-column: 1; }
+    /* Sized by the cell, never by its own content, like the pane. */
+    #snips-pad { grid-row: 1; grid-column: 1; display: none; flex-direction: column; gap: 6px; min-height: 0; contain: inline-size; padding: 10px 12px 8px; background: var(--page); }
+    .shell.snips-open #snips-pad { display: flex; }
+    .shell.big-prompt-editor #snips-pad { grid-column: 2; }
+    .snips-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; }
+    .snips-head button { font-weight: 400; }
+    .snips-edit { flex: 1 1 0; min-height: 0; position: relative; border: 1px solid var(--border); }
+    .snips-edit > div { position: absolute; inset: 0; }
+    /* The sent prompt's yellow theme is page-wide; the pad keeps the plain background. */
+    #snips-pad .monaco-editor { --vscode-editor-background: #fcfcfb; --vscode-editorGutter-background: #fcfcfb; --vscode-editorStickyScroll-background: #fcfcfb; --vscode-editorStickyScrollGutter-background: #fcfcfb; }
     /* Scoped: Monaco puts an "empty" class on its find box input. */
     .history > .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -602,6 +615,7 @@ ${tooltipStyle()}  </style>
 <body>
   <div class="shell">
     <div id="history" class="history"><div class="empty"></div></div>
+    <div id="snips-pad"><div class="snips-head"><span>Snips</span><button id="snips-close">Close</button></div><div class="snips-edit"><div></div></div></div>
     <div class="dock">
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
@@ -611,7 +625,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="load">Load</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box">File</button></div>
           <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
@@ -714,7 +728,8 @@ ${tooltipScript()}
       colors: { ...themeColors, 'editor.background': '#fff7bf' },
     });
     const promptHost = document.getElementById('prompt');
-    const promptBox = monaco.editor.create(promptHost.firstElementChild, {
+    // Shared with the Snips pad's editor.
+    const editorOptions = {
       language: 'markdown',
       theme: 'claude2',
       automaticLayout: true,
@@ -744,7 +759,8 @@ ${tooltipScript()}
       editContext: false,
       // What typing into a sent prompt says.
       readOnlyMessage: { value: 'Already sent. Ctrl-Enter clears the box for the next prompt.' },
-    });
+    };
+    const promptBox = monaco.editor.create(promptHost.firstElementChild, editorOptions);
     const promptModel = promptBox.getModel();
     // The frame grows with the text, never below three lines, and the CSS caps it at six. The floor
     // is Monaco's own rounded line height, so a zoom level never leaves the third line cut off.
@@ -767,12 +783,51 @@ ${tooltipScript()}
         big: bigPromptEditor, dpr: devicePixelRatio, zoom,
       }) });
     }).observe(promptHost);
+    // The Snips pad: one Monaco editor over the pane, its text kept by the extension in globalState
+    // so every window shares it. Built on the first open, from the stored text, so nothing typed
+    // before the text arrives can overwrite it. Every keystroke is saved, like the draft.
+    const shell = document.querySelector('.shell');
+    const snipsHost = document.getElementById('snips-pad');
+    let snipsBox = null;
+    // The pad's version when the text was last asked for: a reply that lands after more typing is stale.
+    let snipsAsked = 0;
+    function askSnips() {
+      snipsAsked = snipsBox ? snipsBox.getModel().getVersionId() : 0;
+      vscode.postMessage({ type: 'snipsLoad', sessionId });
+    }
+    function showSnips(text) {
+      if (!snipsBox) {
+        snipsBox = monaco.editor.create(snipsHost.querySelector('.snips-edit > div'), { ...editorOptions, fontSize: 14 * zoom, value: text });
+        snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', sessionId, text: snipsBox.getValue() }));
+        snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => setSnipsOpen(false) });
+        snipsBox.focus();
+        return;
+      }
+      if (snipsBox.getModel().getVersionId() !== snipsAsked || snipsBox.getValue() === text) return;
+      const view = snipsBox.saveViewState();
+      snipsBox.setValue(text);
+      snipsBox.restoreViewState(view);
+    }
+    function setSnipsOpen(open) {
+      shell.classList.toggle('snips-open', open);
+      if (!open) return promptBox.focus();
+      askSnips();
+      if (snipsBox) snipsBox.focus();
+    }
+    document.getElementById('snips').addEventListener('click', () => setSnipsOpen(!shell.classList.contains('snips-open')));
+    document.getElementById('snips-close').addEventListener('click', () => setSnipsOpen(false));
+    // Another window may have changed the text since: coming back to this one picks that up.
+    window.addEventListener('focus', () => {
+      if (snipsBox && shell.classList.contains('snips-open')) askSnips();
+    });
     // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
-    new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
+    new MutationObserver(() => {
+      promptBox.updateOptions({ fontSize: 14 * zoom });
+      if (snipsBox) snipsBox.updateOptions({ fontSize: 14 * zoom });
+    }).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const stopButton = document.getElementById('stop');
-    const loadButton = document.getElementById('load');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
     const cycleButton = document.getElementById('cycle');
@@ -826,6 +881,10 @@ ${tooltipScript()}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
+      } else if (message.type === 'snips') {
+        showSnips(String(message.text || ''));
+      } else if (message.type === 'closeSnips') {
+        shell.classList.remove('snips-open');
       } else if (message.type === 'stopDeclined') {
         stoppingTurn = null;
         stopButton.classList.remove('stopping');
@@ -854,8 +913,10 @@ ${tooltipScript()}
       }
     });
 
-    // Ctrl-Enter sends, in place of Monaco's insert-line-below. On a sent prompt it clears the box instead.
-    promptBox.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, submitPrompt);
+    // Ctrl-Enter sends, in place of Monaco's insert-line-below. On a sent prompt it clears the box
+    // instead, and on an empty one it toggles bigPromptEditor. Actions, not addCommand: Monaco's
+    // addCommand keys are page-wide, so they would fire in the Snips pad too.
+    promptBox.addAction({ id: 'claude2.submitPrompt', label: 'Send Prompt', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => submitPrompt() });
     // Ctrl-Alt-click anywhere in the box toggles bigPromptEditor, in either mode. Capture phase, so
     // Monaco never sees the press (its ctrl-click adds a cursor). Monaco listens for pointer
     // events; the mouse ones are only blocked, so a browser that still fires them can't toggle twice.
@@ -872,7 +933,7 @@ ${tooltipScript()}
     }, true);
     // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
     // completion list or a snippet is up, where Tab means something else.
-    promptBox.addCommand(monaco.KeyCode.Tab, tabLines, 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode');
+    promptBox.addAction({ id: 'claude2.tabLines', label: 'Make List Items', keybindings: [monaco.KeyCode.Tab], keybindingContext: 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode', run: () => tabLines() });
     // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
     // newline to count, so the top line is the one where the caret's own Up didn't move it.
     promptBox.onKeyDown((event) => {
@@ -952,14 +1013,13 @@ ${tooltipScript()}
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
-    document.getElementById('load').addEventListener('click', loadSelectedPrompt);
-    // Ctrl-L is the Load button, from the pane or the prompt box. Capture phase, and kept from
-    // Monaco, which would take it for its line select.
+    // Ctrl-L loads the selected block's prompt, from the pane or the prompt box. Capture phase,
+    // and kept from Monaco, which would take it for its line select.
     window.addEventListener('keydown', (event) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'l') return;
       event.preventDefault();
       event.stopPropagation();
-      if (!loadButton.disabled) loadButton.click();
+      if (session.turns.length) loadSelectedPrompt();
     }, true);
     document.getElementById('cap').addEventListener('click', (event) => {
       leaveSent();
@@ -1298,7 +1358,8 @@ ${tooltipScript()}
       const prompt = promptModel.getValue();
       // Sending during a run is allowed: the extension stops the running turn and takes this
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
-      if (!prompt.trim() && !imageCount) return;
+      if (!prompt.trim() && !imageCount) return setBigPromptEditor(!bigPromptEditor);
+      shell.classList.remove('snips-open');
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       // The text stays, read-only, and the extension drops its draft copy on its own.
@@ -1637,7 +1698,6 @@ ${tooltipScript()}
         saveBoxScrolls();
         wasStreaming = null;
       }
-      loadButton.disabled = !turns.length;
       // Rebuilding throws the open box's scroll away, so it is measured first and restored,
       // still pinned to the bottom when it was there (how a streaming box follows its text).
       const selectedResponse = historyBox.querySelector('[data-index="' + anchorIndex + '"] .response');

@@ -592,6 +592,8 @@ class Claude2Controller implements vscode.Disposable {
     this.lastConversationId = sessionId;
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
+    // A brand-new panel drops it, but starts with the pad closed anyway.
+    void panel.webview.postMessage({ type: "closeSnips" });
     this.postConversationState(sessionId);
     this.refreshSidebar();
     if (focusPrompt) {
@@ -673,6 +675,10 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
     } else if (type === "sentPromptChanged") {
       await this.store.setBoxFlag(sessionId, "sentPrompt", record?.on === true);
+    } else if (type === "snipsLoad") {
+      void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "snips", text: this.context.globalState.get<string>(snipsKey, "") });
+    } else if (type === "snipsChanged") {
+      await this.context.globalState.update(snipsKey, stringOf(record?.text));
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
@@ -2142,6 +2148,8 @@ const authNeededKey = "authNeeded";
 const draftsKey = "drafts";
 // Retired: an older build parked one draft here when its session went away. Cleared on load.
 const promptTextLostKey = "promptTextLost";
+// The Snips pad's text. globalState lives on the client, so every window -- windows, wsl, ssh -- shares it.
+const snipsKey = "snips";
 
 // A stray key would send the CLI to API-key auth instead of the subscription OAuth flow.
 function cliEnv(): NodeJS.ProcessEnv {
