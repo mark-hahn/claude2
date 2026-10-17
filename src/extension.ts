@@ -317,11 +317,14 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "renameSession") {
       await this.renameSession(stringOf(record?.sessionId), stringOf(record?.name));
     } else if (type === "trashSession") {
-      await this.store.setTrashed(stringOf(record?.sessionId), true);
+      // A trashed session's tab goes with its card; clicking the card in the trash list reopens it.
+      this.conversationPanels.get(requestedSessionId)?.dispose();
+      await this.store.setTrashed(requestedSessionId, true);
       this.refreshSidebar();
     } else if (type === "trashAllSessions") {
       for (const session of this.store.all()) {
         if (!session.trashed) {
+          this.conversationPanels.get(session.id)?.dispose();
           await this.store.setTrashed(session.id, true);
         }
       }

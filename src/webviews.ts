@@ -500,6 +500,12 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .snips-head button { font-weight: 400; }
     .snips-edit { flex: 1 1 0; min-height: 0; position: relative; border: 1px solid var(--border); }
     .snips-edit > div { position: absolute; inset: 0; }
+    /* Monaco's button labels ("Close (Escape)" on the find box's X) pop up over the pad's header,
+       and would take the click meant for whatever is under them. Sized to the text: Monaco places a
+       label above its button by the height it measured, and one squeezed against the editor's
+       right edge wrapped after that and grew down over the button. */
+    .context-view:has(.workbench-hover), .context-view:has(.workbench-hover) * { pointer-events: none; }
+    .context-view:has(.workbench-hover) { width: max-content !important; }
     /* The sent prompt's yellow theme is page-wide; the pad keeps the plain background. */
     #snips-pad .monaco-editor { --vscode-editor-background: #fcfcfb; --vscode-editorGutter-background: #fcfcfb; --vscode-editorStickyScroll-background: #fcfcfb; --vscode-editorStickyScrollGutter-background: #fcfcfb; }
     /* Scoped: Monaco puts an "empty" class on its find box input. */
@@ -1013,14 +1019,6 @@ ${tooltipScript()}
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
-    // Ctrl-L loads the selected block's prompt, from the pane or the prompt box. Capture phase,
-    // and kept from Monaco, which would take it for its line select.
-    window.addEventListener('keydown', (event) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== 'l') return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (session.turns.length) loadSelectedPrompt();
-    }, true);
     document.getElementById('cap').addEventListener('click', (event) => {
       leaveSent();
       // Every click takes another picture and adds it to the ones already waiting. The button
@@ -1200,7 +1198,8 @@ ${tooltipScript()}
     function showImageChars() {
       imageChars.set(imageCount ? [{
         range: new monaco.Range(1, 1, 1, 1),
-        options: { before: { content: IMG.repeat(imageCount), inlineClassName: 'img-char', cursorStops: monaco.editor.InjectedTextCursorStops.Right } },
+        // An empty range: without showIfCollapsed Monaco keeps the decoration but never draws it.
+        options: { showIfCollapsed: true, before: { content: IMG.repeat(imageCount), inlineClassName: 'img-char', cursorStops: monaco.editor.InjectedTextCursorStops.Right } },
       }] : []);
     }
 
@@ -1372,19 +1371,6 @@ ${tooltipScript()}
       pendingTurnCount = session.turns.length + 1;
       // A keyboard submit is the one selection change with no mouse press to thaw the pane.
       if (frozenPane) thaw();
-    }
-
-    function loadSelectedPrompt() {
-      leaveSent();
-      if (!session.turns.length) return;
-      const turn = session.turns[Math.max(0, Math.min(session.turns.length - 1, anchorIndex))];
-      if (!turn) return;
-      // The pictures are not loaded with it: they belong to the prompt that was sent.
-      const typed = untab(typedText(turn));
-      const insert = typed + (promptModel.getValueLength() ? '\\n\\n' : '');
-      // An edit rather than a value swap, so ctrl-z takes the load back out.
-      promptBox.focus();
-      replaceText(0, 0, insert, promptModel.getValueLength() + insert.length);
     }
 
     // Fills a box with the response. Where the run marked the start of its closing answer, the
