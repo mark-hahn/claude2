@@ -615,6 +615,9 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
        one is which is answered by clicking it, not by reading it. */
     .img-char { cursor: pointer; }
+    /* The prompt box's and snips pad's line dots, in Monaco's line gutter on the first row of each real line. */
+    .line-dot { cursor: pointer; }
+    .line-dot::after { content: ''; position: absolute; left: 2px; top: 50%; width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: #000; }
     @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
@@ -631,7 +634,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
           <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
@@ -733,6 +736,9 @@ ${tooltipScript()}
       rules: [{ token: 'delimiter.html', foreground: '000000' }],
       colors: { ...themeColors, 'editor.background': '#fff7bf' },
     });
+    // F1 belongs to VS Code, not to Monaco's own command palette. Unbound here, for both editors,
+    // the key goes on through the webview to the workbench's keybindings.
+    monaco.editor.addKeybindingRule({ keybinding: monaco.KeyCode.F1, command: '-editor.action.quickCommand' });
     const promptHost = document.getElementById('prompt');
     // Shared with the Snips pad's editor.
     const editorOptions = {
@@ -766,7 +772,10 @@ ${tooltipScript()}
       // What typing into a sent prompt says.
       readOnlyMessage: { value: 'Already sent. Ctrl-Enter clears the box for the next prompt.' },
     };
-    const promptBox = monaco.editor.create(promptHost.firstElementChild, editorOptions);
+    // Monaco places the caret on an all-ASCII line by counting columns instead of measuring, and it
+    // judges ASCII by the text alone: the injected 🖼️ chars are wider than the columns they count
+    // as, so with them in front every caret and click lands to the right. Measuring is always right.
+    const promptBox = monaco.editor.create(promptHost.firstElementChild, { ...editorOptions, disableMonospaceOptimizations: true });
     const promptModel = promptBox.getModel();
     // The frame grows with the text, never below three lines, and the CSS caps it at six. The floor
     // is Monaco's own rounded line height, so a zoom level never leaves the third line cut off.
@@ -776,6 +785,26 @@ ${tooltipScript()}
     }
     promptBox.onDidContentSizeChange(fitPrompt);
     fitPrompt();
+    // A dot in the gutter on the first row of each real line, so a wrapped line reads as one.
+    // Clicking a dot selects that line with its line break, like a line number in VS Code. Monaco
+    // leaves gutter clicks alone and keeps focus where it was, so the editor takes it here.
+    function addLineDots(editor) {
+      const model = editor.getModel();
+      const dots = editor.createDecorationsCollection();
+      const show = () => dots.set(Array.from({ length: model.getLineCount() }, (_, i) => ({
+        range: new monaco.Range(i + 1, 1, i + 1, 1),
+        options: { isWholeLine: true, firstLineDecorationClassName: 'line-dot' },
+      })));
+      model.onDidChangeContent(show);
+      show();
+      editor.onMouseDown((event) => {
+        if (!event.target.element || !event.target.element.closest('.line-dot')) return;
+        const line = event.target.position.lineNumber;
+        editor.setSelection(line < model.getLineCount() ? new monaco.Range(line, 1, line + 1, 1) : new monaco.Range(line, 1, line, model.getLineMaxColumn(line)));
+        editor.focus();
+      });
+    }
+    addLineDots(promptBox);
     // DEBUG: why the box runs taller than its text inside VS Code. Logs to the Claude2 output.
     new ResizeObserver(() => {
       const h = (el) => el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : -1;
@@ -804,6 +833,7 @@ ${tooltipScript()}
     function showSnips(text) {
       if (!snipsBox) {
         snipsBox = monaco.editor.create(snipsHost.querySelector('.snips-edit > div'), { ...editorOptions, fontSize: 14 * zoom, value: text });
+        addLineDots(snipsBox);
         snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', sessionId, text: snipsBox.getValue() }));
         snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => setSnipsOpen(false) });
         snipsBox.focus();
@@ -1009,10 +1039,24 @@ ${tooltipScript()}
       reader.onerror = () => { capButton.disabled = false; };
       reader.readAsDataURL(file);
     }, true);
-    // A click on one of the leading 🖼️ chars shows that picture in the Image pane. The chars' own
-    // CSS gives them the pointer.
+    // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
+    // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
+    // CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off. Either
+    // ctrl press is kept from Monaco, which would add a cursor; a ctrl-click anywhere else still does.
+    promptHost.addEventListener('mousedown', (event) => {
+      if (!event.ctrlKey) return;
+      const index = imageCharAt(event.target, event.clientX);
+      if (index >= 0) {
+        vscode.postMessage({ type: 'deleteImage', sessionId, index });
+      } else {
+        const target = promptBox.getTargetAtClientPoint(event.clientX, event.clientY);
+        if (!target || target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT || !removeFileTag(promptModel.getOffsetAt(target.position))) return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
     promptBox.onMouseUp((event) => {
-      const index = imageCharAt(event);
+      const index = event.event.ctrlKey ? -1 : imageCharAt(event.target.element, event.event.browserEvent.clientX);
       if (index >= 0) vscode.postMessage({ type: 'showImage', sessionId, turnId: '', index });
     });
     stopButton.addEventListener('click', () => {
@@ -1316,13 +1360,13 @@ ${tooltipScript()}
       replaceText(0, promptModel.getValueLength(), '');
     }
 
-    // Which 🖼️ char a Monaco mouse event is on, or -1 for anywhere else. The chars are one
-    // injected span, all the same width, so the x offset into the span decides.
-    function imageCharAt(event) {
-      const span = imageCount && event.target.element ? event.target.element.closest('.img-char') : null;
+    // Which 🖼️ char a mouse event on element at clientX is on, or -1 for anywhere else. The chars
+    // are one injected span, all the same width, so the x offset into the span decides.
+    function imageCharAt(element, clientX) {
+      const span = imageCount && element && element.closest ? element.closest('.img-char') : null;
       if (!span) return -1;
       const box = span.getBoundingClientRect();
-      const index = Math.floor((event.event.browserEvent.clientX - box.left) / (box.width / imageCount));
+      const index = Math.floor((clientX - box.left) / (box.width / imageCount));
       return index >= 0 && index < imageCount ? index : -1;
     }
 
