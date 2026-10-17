@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.173",
+  "version": "0.0.176",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -18,7 +18,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:claude2.conversation"
   ],
   "main": "./dist/extension.js",
   "contributes": {

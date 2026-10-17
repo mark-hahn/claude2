@@ -207,6 +207,9 @@ class Claude2Controller implements vscode.Disposable {
     this.sidebarProvider = new ClaudeSidebarProvider(this.context, this);
     this.context.subscriptions.push(
       vscode.window.registerWebviewViewProvider("claude2.sidebar", this.sidebarProvider),
+      vscode.window.registerWebviewPanelSerializer("claude2.conversation", {
+        deserializeWebviewPanel: async (panel, state) => this.restoreConversation(panel, state),
+      }),
       vscode.commands.registerCommand("claude2.open", () => void this.openFromTitleBar()),
       vscode.commands.registerCommand("claude2.newSession", () => void this.newSession()),
       vscode.commands.registerCommand("claude2.openInstructions", () => void this.openManagement("instructions")),
@@ -572,28 +575,7 @@ class Claude2Controller implements vscode.Disposable {
         enableScripts: true,
         retainContextWhenHidden: true,
       });
-      panel.iconPath = this.tabIcon();
-      const info = readModelInfo(this.context.globalState);
-      const dist = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist")).toString();
-      panel.webview.html = conversationHtml(panel.webview, dist, sessionId,this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
-      panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
-      panel.onDidChangeViewState(() => {
-        if (panel?.active) {
-          this.lastConversationId = sessionId;
-        }
-        // Losing visibility has to refresh too, otherwise the card keeps its tint.
-        this.refreshSidebar();
-      });
-      panel.onDidDispose(() => {
-        // The box that held the text is gone; what it last sent goes to disk now.
-        void this.flushDrafts();
-        this.conversationPanels.delete(sessionId);
-        if (this.lastConversationId === sessionId) {
-          this.lastConversationId = "";
-        }
-        this.refreshSidebar();
-      });
-      this.conversationPanels.set(sessionId, panel);
+      this.attachConversation(panel, sessionId);
     }
     this.lastConversationId = sessionId;
     panel.title = session.name;
@@ -608,6 +590,54 @@ class Claude2Controller implements vscode.Disposable {
       this.pendingPromptFocus.add(sessionId);
       void panel.webview.postMessage({ type: "focusPrompt" });
     }
+  }
+
+  // Fills a session's panel and tracks it; shared by `openConversation` and the serializer that
+  // brings tabs back after a reload, which hands over a panel VS Code has already placed.
+  private attachConversation(panel: vscode.WebviewPanel, sessionId: string): void {
+    panel.iconPath = this.tabIcon();
+    const info = readModelInfo(this.context.globalState);
+    const dist = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist")).toString();
+    panel.webview.html = conversationHtml(panel.webview, dist, sessionId,this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
+    panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
+    panel.onDidChangeViewState(() => {
+      if (panel.active) {
+        this.lastConversationId = sessionId;
+      }
+      // Losing visibility has to refresh too, otherwise the card keeps its tint.
+      this.refreshSidebar();
+    });
+    panel.onDidDispose(() => {
+      // The box that held the text is gone; what it last sent goes to disk now.
+      void this.flushDrafts();
+      this.conversationPanels.delete(sessionId);
+      if (this.lastConversationId === sessionId) {
+        this.lastConversationId = "";
+      }
+      this.refreshSidebar();
+    });
+    this.conversationPanels.set(sessionId, panel);
+  }
+
+  // A tab left open when the window closed comes back where it was; one whose session has
+  // since been deleted (or that predates the saved state) is just closed.
+  private restoreConversation(panel: vscode.WebviewPanel, state: unknown): void {
+    const sessionId = stringOf(recordOf(state)?.sessionId);
+    const session = this.store.get(sessionId);
+    if (!session || this.conversationPanels.has(sessionId)) {
+      panel.dispose();
+      return;
+    }
+    panel.webview.options = { enableScripts: true };
+    panel.title = session.name;
+    this.attachConversation(panel, sessionId);
+    if (panel.active) {
+      this.lastConversationId = sessionId;
+      // VS Code focused this tab before its page existed, which leaves focus on the webview's
+      // outer frame where keys like F1 never reach the workbench; the caret moves it inside.
+      this.pendingPromptFocus.add(sessionId);
+    }
+    this.refreshSidebar();
   }
 
   // Only a conversation panel VS Code currently has focused counts as current; if focus

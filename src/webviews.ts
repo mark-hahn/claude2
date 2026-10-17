@@ -651,6 +651,8 @@ ${tooltipStyle()}  </style>
 ${zoomScript(z)}
 ${tooltipScript()}
     const sessionId = ${safeSessionId};
+    // VS Code hands this back to the panel serializer, which reopens the tab after a reload.
+    vscode.setState({ sessionId });
     // Model id -> its effort levels, and the M button's presets: the host's stored model info,
     // replaced whenever the extension posts a newer copy.
     let models = ${models};
