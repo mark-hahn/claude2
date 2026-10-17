@@ -224,6 +224,13 @@ class Claude2Controller implements vscode.Disposable {
         }
       }),
     );
+    // The title-bar button only shows while an editor is open; this one is always there.
+    const launcher = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+    launcher.text = "$(comment-discussion) Claude2";
+    launcher.tooltip = "Claude2: new session";
+    launcher.command = "claude2.open";
+    launcher.show();
+    this.context.subscriptions.push(launcher);
     this.quota.start();
     this.watchInstructions();
     this.modelsReady = this.refreshModels();
