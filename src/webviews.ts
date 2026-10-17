@@ -330,6 +330,11 @@ ${tooltipScript()}
           card.addEventListener(eventName, () => window.clearTimeout(pressTimer));
         }
         card.addEventListener('click', (event) => {
+          if (event.altKey && event.ctrlKey) {
+            event.preventDefault();
+            vscode.postMessage({ type: 'moveSessionToTop', sessionId: session.id });
+            return;
+          }
           if (event.altKey) {
             event.preventDefault();
             vscode.postMessage({ type: 'copyText', text: session.name || '' });

@@ -337,6 +337,9 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
+    } else if (type === "moveSessionToTop") {
+      await this.store.touch(requestedSessionId);
+      this.refreshSidebar();
     } else if (type === "deleteSession") {
       const sessionId = stringOf(record?.sessionId);
       if (!(await this.confirmDelete(sessionId))) {

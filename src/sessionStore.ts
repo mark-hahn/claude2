@@ -131,6 +131,16 @@ export class SessionStore {
     return session;
   }
 
+  // Ctrl-alt-click on a card: the sidebar is ordered by updatedAt, so a bump moves it to the top.
+  public async touch(sessionId: string): Promise<void> {
+    const session = this.get(sessionId);
+    if (!session) {
+      return;
+    }
+    session.updatedAt = Date.now();
+    await this.save();
+  }
+
   public async setTrashed(sessionId: string, trashed: boolean): Promise<ClaudeSession | undefined> {
     const session = this.get(sessionId);
     if (!session) {
