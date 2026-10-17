@@ -670,6 +670,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.pickFile(sessionId);
     } else if (type === "deleteImage") {
       await this.deleteImage(sessionId, numberOf(record?.index));
+    } else if (type === "deleteFile") {
+      await this.deleteFile(sessionId, stringOf(record?.name), numberOf(record?.start));
     } else if (type === "submitPrompt") {
       await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), record?.keepDraft === true);
     } else if (type === "picksChanged") {
@@ -919,6 +921,20 @@ class Claude2Controller implements vscode.Disposable {
       void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
     }
     this.postImages(sessionId);
+  }
+
+  // Ctrl-clicking a <file> tag in the prompt box. The tag is only text, so on a yes the box takes
+  // it off itself; the file stays listed here and is left out at send time for want of its tag.
+  private async deleteFile(sessionId: string, name: string, start: number): Promise<void> {
+    const file = this.pendingFiles.get(sessionId)?.find((entry) => entry.name === name);
+    const answer = await vscode.window.showWarningMessage(
+      `Remove <${name}> from this prompt?`,
+      { modal: true, detail: file ? file.path : "Not an attached file" },
+      "Remove",
+    );
+    if (answer === "Remove") {
+      void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "removeFile", name, start });
+    }
   }
 
   // Where a submitted prompt's pictures live. Temp dirs are swept by the OS and a sent prompt has

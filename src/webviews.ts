@@ -932,6 +932,10 @@ ${tooltipScript()}
         showImageChars();
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
+      } else if (message.type === 'removeFile') {
+        // The ctrl-clicked tag, still where it was: the extension's dialog was modal.
+        const tag = fileTagAt(message.start);
+        if (tag && tag.start === message.start && tag.name === message.name) replaceText(tag.start, tag.end, '');
       } else if (message.type === 'filePicked') {
         leaveSent();
       } else if (message.type === 'promptReturned' && promptSent) {
@@ -1041,8 +1045,9 @@ ${tooltipScript()}
     }, true);
     // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
     // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
-    // CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off. Either
-    // ctrl press is kept from Monaco, which would add a cursor; a ctrl-click anywhere else still does.
+    // CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off, once
+    // the extension has asked too (removeFile). Either ctrl press is kept from Monaco, which would
+    // add a cursor; a ctrl-click anywhere else still does.
     promptHost.addEventListener('mousedown', (event) => {
       if (!event.ctrlKey) return;
       const index = imageCharAt(event.target, event.clientX);
@@ -1050,7 +1055,9 @@ ${tooltipScript()}
         vscode.postMessage({ type: 'deleteImage', sessionId, index });
       } else {
         const target = promptBox.getTargetAtClientPoint(event.clientX, event.clientY);
-        if (!target || target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT || !removeFileTag(promptModel.getOffsetAt(target.position))) return;
+        const tag = target && target.type === monaco.editor.MouseTargetType.CONTENT_TEXT ? fileTagAt(promptModel.getOffsetAt(target.position)) : null;
+        if (!tag) return;
+        vscode.postMessage({ type: 'deleteFile', sessionId, name: tag.name, start: tag.start });
       }
       event.preventDefault();
       event.stopPropagation();
@@ -1313,19 +1320,19 @@ ${tooltipScript()}
       promptBox.focus();
     }
 
-    // Takes off the tag the caret sits in, with the space that follows it. A '<' the user typed
-    // is only ever a tag to the extension if it matches an attached file, so cutting one here
-    // that turns out to be plain typing costs nothing beyond the retype.
-    function removeFileTag(caret) {
+    // The tag the caret sits in, or null: its name, and the span to cut, with the space that
+    // follows it. A '<' the user typed is only ever a tag to the extension if it matches an
+    // attached file, so cutting one here that turns out to be plain typing costs nothing beyond
+    // the retype.
+    function fileTagAt(caret) {
       const text = promptModel.getValue();
       const start = text.lastIndexOf('<', caret);
-      if (start < 0) return false;
+      if (start < 0) return null;
       const end = text.indexOf('>', start);
       // The caret has to be inside the tag -- ending on its '>' counts -- and a newline in
       // between means these two brackets were never one tag.
-      if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return false;
-      replaceText(start, text[end + 1] === ' ' ? end + 2 : end + 1, '');
-      return true;
+      if (end < 0 || end < caret - 1 || text.slice(start, end).includes('\\n')) return null;
+      return { start, end: text[end + 1] === ' ' ? end + 2 : end + 1, name: text.slice(start + 1, end) };
     }
 
     // bigPromptEditor: the prompt box takes the window's full height and the pane narrows to the
