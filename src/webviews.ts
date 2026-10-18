@@ -265,6 +265,10 @@ ${tooltipScript()}
         }
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
+        // The first prompt, which the name was made from; capped so a long one can't fill the pane.
+        const prompt = ((session.turns || [])[0] || {}).prompt || 'No prompt.';
+        card.dataset.tip = prompt.length > 800 ? prompt.slice(0, 800) + '…' : prompt;
+        card.dataset.tipDelay = '1200';
         const name = document.createElement('span');
         name.className = 'card-name';
         name.textContent = session.name || 'New session';
@@ -3750,11 +3754,14 @@ function tooltipScript(): string {
     document.body.appendChild(tipNode);
     let tipTimer = 0;
     let tipHost = null;
+    let tipPending = null;
+    let tipWarmUntil = 0;
     let tipX = 0;
     let tipText = '';
 
     function hideTip() {
       clearTimeout(tipTimer);
+      tipPending = null;
       tipHost = null;
       tipNode.classList.remove('shown');
     }
@@ -3790,6 +3797,10 @@ function tooltipScript(): string {
 
     document.addEventListener('mouseover', (event) => {
       const node = event.target && event.target.closest ? event.target.closest('[title], [data-tip]') : null;
+      // Moving between a host's own children must not restart a long delay or drop a shown tip.
+      if (node && (node === tipPending || node === tipHost)) return;
+      // A tip that is up hands straight over to the next host, gap or not, the way native ones do.
+      if (tipHost) tipWarmUntil = Date.now() + 500;
       if (!node) {
         hideTip();
         return;
@@ -3802,7 +3813,9 @@ function tooltipScript(): string {
       hideTip();
       if (!text) return;
       const x = event.clientX;
-      tipTimer = setTimeout(() => { if (node.isConnected) showTip(text, node, x); }, TIP_DELAY);
+      tipPending = node;
+      const delay = Date.now() < tipWarmUntil ? 0 : Number(node.dataset.tipDelay) || TIP_DELAY;
+      tipTimer = setTimeout(() => { tipPending = null; if (node.isConnected) showTip(text, node, x); }, delay);
     });
 
     document.addEventListener('mouseout', (event) => { if (!event.relatedTarget) hideTip(); });
