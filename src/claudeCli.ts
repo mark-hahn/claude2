@@ -33,6 +33,9 @@ interface RunPromptOptions {
   // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
   longTools: boolean;
   plugins: PluginFlags;
+  // Where the run's debug record goes: one <sessionId>.jsonl per session holding what each turn
+  // was started with (args, env) and the CLI's init message (version, tools, plugins, memory files).
+  debugDir: string;
   onText: (text: string) => void;
   onStatus: (status: RunningStatus) => void;
 }
@@ -209,11 +212,21 @@ export class ClaudeCliRunner {
       args.push("--settings", JSON.stringify({ enabledPlugins: { "ponytail@ponytail": false } }));
     }
 
+    const env = childEnv(options.contextWindow, options.plugins.graft);
     const child = spawn("claude", args, {
       cwd: options.workspacePath,
-      env: childEnv(options.contextWindow, options.plugins.graft),
+      env,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    // The debugging record: the CLI's transcript keeps neither what it was started with nor its
+    // init message, and the two are what a "why did this session behave differently" hunt needs.
+    const debugFile = path.join(options.debugDir, `${options.sessionId}.jsonl`);
+    const debugLog = (record: Record<string, unknown>): void => {
+      fs.promises.mkdir(options.debugDir, { recursive: true })
+        .then(() => fs.promises.appendFile(debugFile, `${JSON.stringify({ at: new Date().toISOString(), turnId: options.turnId, ...record })}\n`))
+        .catch((error) => this.log(`Debug record failed: ${errorText(error)}`));
+    };
+    debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW } } });
     const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, followUp: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
@@ -499,7 +512,9 @@ export class ClaudeCliRunner {
           // Compaction runs between API calls, so nothing else on the stream moves while it works.
           // Without this the phase would sit on whatever it last showed for the whole pause.
           const subtype = stringOf(message.subtype);
-          if (subtype === "status" && stringOf(message.status) === "compacting") {
+          if (subtype === "init") {
+            debugLog({ init: message });
+          } else if (subtype === "status" && stringOf(message.status) === "compacting") {
             if (status.phase !== "compacting") {
               appendToolLine(COMPACTING_LINE);
             }
@@ -681,6 +696,10 @@ function claude2SystemPrompt(contextWindow: number): string {
   return [
     "You are running in the Claude2 VS Code extension.",
     `The UI tracks a ${contextWindow.toLocaleString()} token context window for this session.`,
+    // The sidebar's tool line is the Bash description; without one it falls back to the raw
+    // command, which the user reads as a bug. The model drops the field for a whole session
+    // once its first Bash call lacks it, so the rule names the first call in particular.
+    "IMPORTANT: Every Bash tool call MUST include the `description` field -- a short plain-English phrase saying what the command does, e.g. \"Find gutter code occurrences\". This is required even for quick greps and one-liners, and above all on the very first Bash call of the session: the Claude2 UI shows that description as the tool line, and a missing one shows the raw command instead, which the user treats as a bug.",
   ].join("\n");
 }
 

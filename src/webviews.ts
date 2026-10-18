@@ -44,7 +44,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #login.needed { display: block; background: #fbd9d9; border-color: #e4a7a7; }
     #login.needed:hover { background: #f5c7c7; }
     #close { width: 56px; }
-    #clean { width: 52px; }
+    /* Grows past its Clean width for the "🗑 12" of a trash-list selection. */
+    #clean { min-width: 52px; padding: 0 6px; }
     #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
@@ -59,6 +60,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card:hover { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     .card.selected { background: #fbf3c4; border-color: #ddd08a; }
     .card.selected:hover { background: linear-gradient(var(--wash), var(--wash)), #fbf3c4; }
+    .card.trashed.selected { background: #fce4ec; border-color: #eab3c6; }
+    .card.trashed.selected:hover { background: linear-gradient(var(--wash), var(--wash)), #fce4ec; }
     .card-actions { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 6px; }
     .card-trash { display: none; border: none; background: transparent; min-height: 0; padding: 2px 4px; font-size: 14px; line-height: 1; border-radius: 6px; }
     .card:hover .card-trash { display: block; }
@@ -108,6 +111,10 @@ ${tooltipScript()}
     let busy = {};
     let scrolledId = '';
     let showTrash = false;
+    // Trashed cards picked for deletion, and the card a shift-click runs from. Trashed sessions
+    // have no pane, so picking is all a click on one does.
+    let picked = new Set();
+    let pickAnchor = '';
     // An inline rename owns its card until it commits, so a background refresh waits
     // rather than yanking the input out from under the typing.
     let editingId = '';
@@ -118,6 +125,8 @@ ${tooltipScript()}
     let pressTimer = 0;
     const list = document.getElementById('sessions');
     const trashButton = document.getElementById('trash');
+    // Clean on the active list; on the trash list it turns into the delete for the picked cards.
+    const cleanButton = document.getElementById('clean');
     const sessionCounts = document.getElementById('sessionCounts');
     const searchBox = document.getElementById('searchBox');
     // Search mode is on while this is non-empty. Enter in the box starts it; the X, an
@@ -128,7 +137,16 @@ ${tooltipScript()}
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
     document.getElementById('mngmnt').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'toggleManagement' }); });
     document.getElementById('login').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'login' }); });
-    document.getElementById('clean').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'discardEmpty' }); vscode.postMessage({ type: 'trashAllSessions' }); });
+    cleanButton.addEventListener('click', () => {
+      const sessionIds = [...picked];
+      clearSearch();
+      if (showTrash) {
+        vscode.postMessage({ type: 'deleteSessions', sessionIds });
+        return;
+      }
+      vscode.postMessage({ type: 'discardEmpty' });
+      vscode.postMessage({ type: 'trashAllSessions' });
+    });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
     // The pane up front builds the markdown, since it is what knows how its boxes read.
     document.getElementById('export').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'exportActive', sessionId: selectedId }); });
@@ -161,11 +179,12 @@ ${tooltipScript()}
     });
 
     // The extension mirrors the search into every conversation pane, so it hears
-    // about every change here, including the empty text that ends search mode.
+    // about every change here, including the empty text that ends search mode. A search
+    // of the trash list has no panes to tint: trashed sessions never have one.
     function setSearch(text) {
       searchText = text;
       searchBox.classList.toggle('searching', searchText !== '');
-      vscode.postMessage({ type: 'searchChanged', text: searchText });
+      vscode.postMessage({ type: 'searchChanged', text: showTrash ? '' : searchText });
       render();
     }
 
@@ -204,21 +223,22 @@ ${tooltipScript()}
       const trashCount = sessions.filter((session) => session.trashed === true).length;
       sessionCounts.textContent = (sessions.length - trashCount) + '/' + trashCount;
       let selectedCard = null;
-      let visible;
       const counts = new Map();
-      if (searchText) {
-        // Every session competes, trash included; a name-only match carries a zero count.
-        visible = sessions.filter((session) => {
-          const count = matchCount(session);
-          if (!count && !(session.name || '').toLowerCase().includes(searchText.toLowerCase())) return false;
-          counts.set(session.id, count);
-          return true;
-        });
-        // Stable sort: trashed cards sink below active ones, each group keeping its recency order.
-        visible.sort((left, right) => (left.trashed === true ? 1 : 0) - (right.trashed === true ? 1 : 0));
-      } else {
-        visible = sessions.filter((session) => (session.trashed === true) === showTrash);
-      }
+      // Search narrows whichever list is showing; a name-only match carries a zero count.
+      const visible = sessions.filter((session) => {
+        if ((session.trashed === true) !== showTrash) return false;
+        if (!searchText) return true;
+        const count = matchCount(session);
+        if (!count && !(session.name || '').toLowerCase().includes(searchText.toLowerCase())) return false;
+        counts.set(session.id, count);
+        return true;
+      });
+      // Only a trashed card on show can stay picked, so the delete button never reaches one out of sight.
+      const pickable = showTrash ? visible.map((session) => session.id) : [];
+      picked = new Set(pickable.filter((id) => picked.has(id)));
+      cleanButton.textContent = showTrash ? '\u{1F5D1}' + (picked.size ? ' ' + picked.size : '') : 'Clean';
+      cleanButton.title = showTrash ? 'Permanently delete the selected trashed sessions' : 'Move every session to the trash';
+      cleanButton.disabled = showTrash && picked.size === 0;
       if (visible.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
@@ -226,15 +246,13 @@ ${tooltipScript()}
         list.appendChild(empty);
         return;
       }
-      visible.forEach((session, index) => {
-        const trashed = searchText ? session.trashed === true : showTrash;
-        // This card and everything the trash list shows below it: the ctrl-click sweep.
-        const sweepIds = trashed ? visible.slice(index).filter((other) => other.trashed === true).map((other) => other.id) : [];
+      visible.forEach((session) => {
+        const trashed = showTrash;
         const card = document.createElement('div');
         card.className = trashed ? 'card trashed' : 'card';
-        if (session.id === selectedId) {
+        if (trashed ? picked.has(session.id) : session.id === selectedId) {
           card.classList.add('selected');
-          selectedCard = card;
+          if (!trashed) selectedCard = card;
         }
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
@@ -264,31 +282,19 @@ ${tooltipScript()}
           actions.appendChild(clock);
         }
 
-        const trash = document.createElement('button');
-        trash.className = 'card-trash';
-        trash.textContent = '\u{1F5D1}';
-        // Same icon, two meanings: one hop to the trash, then gone for good.
-        trash.title = trashed
-          ? (sweepIds.length > 1
-            ? 'Delete this session permanently (ctrl-click to also delete the ' + (sweepIds.length - 1) + ' older session' + (sweepIds.length === 2 ? '' : 's') + ' below it)'
-            : 'Delete this session permanently')
-          : 'Move this session to the trash';
-        trash.addEventListener('pointerdown', (event) => event.stopPropagation());
-        trash.addEventListener('click', (event) => {
-          event.stopPropagation();
-          if (trashed) {
-            // Ctrl-click sweeps the older end of the trash: this card and every card below it.
-            // Either way the extension asks before anything is forgotten.
-            if (event.ctrlKey) {
-              vscode.postMessage({ type: 'deleteSessions', sessionIds: sweepIds });
-              return;
-            }
-            vscode.postMessage({ type: 'deleteSession', sessionId: session.id });
-            return;
-          }
-          vscode.postMessage({ type: 'trashSession', sessionId: session.id });
-        });
-        if (trashed) {
+        // A trashed card is deleted for good only from the top delete button, by picking it.
+        if (!trashed) {
+          const trash = document.createElement('button');
+          trash.className = 'card-trash';
+          trash.textContent = '\u{1F5D1}';
+          trash.title = 'Move this session to the trash';
+          trash.addEventListener('pointerdown', (event) => event.stopPropagation());
+          trash.addEventListener('click', (event) => {
+            event.stopPropagation();
+            vscode.postMessage({ type: 'trashSession', sessionId: session.id });
+          });
+          actions.appendChild(trash);
+        } else {
           const restore = document.createElement('button');
           restore.className = 'card-restore';
           restore.textContent = 'R';
@@ -300,7 +306,6 @@ ${tooltipScript()}
           });
           actions.appendChild(restore);
         }
-        actions.appendChild(trash);
         const turnCount = document.createElement('span');
         turnCount.className = 'card-turns';
         turnCount.textContent = String((session.turns || []).length);
@@ -345,6 +350,11 @@ ${tooltipScript()}
             event.preventDefault();
             return;
           }
+          if (trashed) {
+            pick(session.id, event, pickable);
+            render();
+            return;
+          }
           vscode.postMessage({ type: 'openSession', sessionId: session.id });
         });
         list.appendChild(card);
@@ -355,6 +365,19 @@ ${tooltipScript()}
         scrolledId = selectedId;
         selectedCard.scrollIntoView({ block: 'nearest' });
       }
+    }
+
+    // List selection over the trashed cards on show: a click picks just that card, ctrl-click
+    // toggles it, shift-click adds the run from the anchor to whatever is already picked.
+    function pick(id, event, ids) {
+      if (event.shiftKey && ids.includes(pickAnchor)) {
+        const from = ids.indexOf(pickAnchor), to = ids.indexOf(id);
+        for (const run of ids.slice(Math.min(from, to), Math.max(from, to) + 1)) picked.add(run);
+        return;
+      }
+      if (!event.ctrlKey) picked = new Set();
+      if (picked.has(id)) picked.delete(id); else picked.add(id);
+      pickAnchor = id;
     }
 
     function startRename(nameEl, session) {
@@ -746,6 +769,19 @@ ${tooltipScript()}
     // F1 belongs to VS Code, not to Monaco's own command palette. Unbound here, for both editors,
     // the key goes on through the webview to the workbench's keybindings.
     monaco.editor.addKeybindingRule({ keybinding: monaco.KeyCode.F1, command: '-editor.action.quickCommand' });
+    // The user's own VS Code editing keys, which Monaco in a webview never sees. Ctrl-D is otherwise
+    // Monaco's add-next-match, and shift-alt-left/right its smart select.
+    const { KeyMod, KeyCode } = monaco;
+    const writable = 'textInputFocus && !editorReadonly';
+    monaco.editor.addKeybindingRules([
+      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyD, command: 'editor.action.deleteLines', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyJ, command: 'editor.action.joinLines', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD, command: 'editor.action.duplicateSelection', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyU, command: 'editor.action.transformToUppercase', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyL, command: 'editor.action.transformToLowercase', when: writable },
+      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.LeftArrow, command: 'cursorUndo', when: 'textInputFocus' },
+      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.RightArrow, command: 'cursorRedo', when: 'textInputFocus' },
+    ]);
     const promptHost = document.getElementById('prompt');
     // Shared with the Snips pad's editor.
     const editorOptions = {
@@ -793,8 +829,9 @@ ${tooltipScript()}
     promptBox.onDidContentSizeChange(fitPrompt);
     fitPrompt();
     // A dot in the gutter on the first row of each real line, so a wrapped line reads as one.
-    // Clicking a dot selects that line with its line break, like a line number in VS Code. Monaco
-    // leaves gutter clicks alone and keeps focus where it was, so the editor takes it here.
+    // Clicking a dot selects that line with its line break, like a line number in VS Code, and
+    // dragging from it selects every line passed over. Monaco leaves gutter clicks alone and keeps
+    // focus where it was, so the editor takes it here.
     function addLineDots(editor) {
       const model = editor.getModel();
       const dots = editor.createDecorationsCollection();
@@ -804,12 +841,34 @@ ${tooltipScript()}
       })));
       model.onDidChangeContent(show);
       show();
+      const selectLines = (from, to) => {
+        const top = Math.min(from, to), bottom = Math.max(from, to);
+        editor.setSelection(bottom < model.getLineCount() ? new monaco.Range(top, 1, bottom + 1, 1) : new monaco.Range(top, 1, bottom, model.getLineMaxColumn(bottom)));
+      };
+      // The line the drag started on and the pointer's height, while the button is down. Past the
+      // box's top or bottom edge it scrolls, faster the further out the pointer is, and the line
+      // taken is the one at that edge. Half a line in from the edge clears the padding.
+      let dragFrom = 0, dragY = 0;
+      const drag = () => {
+        if (!dragFrom) return;
+        const rect = editor.getDomNode().getBoundingClientRect();
+        const past = dragY < rect.top ? dragY - rect.top : dragY > rect.bottom ? dragY - rect.bottom : 0;
+        if (past) editor.setScrollTop(editor.getScrollTop() + past / 4);
+        const inset = editor.getOption(monaco.editor.EditorOption.lineHeight) / 2;
+        const target = editor.getTargetAtClientPoint(rect.left + rect.width / 2, Math.min(Math.max(dragY, rect.top + inset), rect.bottom - inset));
+        if (target && target.position) selectLines(dragFrom, target.position.lineNumber);
+        requestAnimationFrame(drag);
+      };
       editor.onMouseDown((event) => {
         if (!event.target.element || !event.target.element.closest('.line-dot')) return;
-        const line = event.target.position.lineNumber;
-        editor.setSelection(line < model.getLineCount() ? new monaco.Range(line, 1, line + 1, 1) : new monaco.Range(line, 1, line, model.getLineMaxColumn(line)));
+        dragFrom = event.target.position.lineNumber;
+        dragY = event.event.browserEvent.clientY;
+        selectLines(dragFrom, dragFrom);
         editor.focus();
+        requestAnimationFrame(drag);
       });
+      window.addEventListener('pointermove', (event) => { dragY = event.clientY; });
+      window.addEventListener('pointerup', () => { dragFrom = 0; });
     }
     addLineDots(promptBox);
     // DEBUG: why the box runs taller than its text inside VS Code. Logs to the Claude2 output.
@@ -1053,14 +1112,17 @@ ${tooltipScript()}
     // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
     // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
     // CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off, once
-    // the extension has asked too (removeFile). Either ctrl press is kept from Monaco, which would
-    // add a cursor; a ctrl-click anywhere else still does.
+    // the extension has asked too (removeFile). These presses are kept from Monaco, which would
+    // move the caret or add a cursor; a ctrl-click anywhere else still does. This has to be the
+    // mousedown: Monaco pointer-captures its lines on mousedown, so the mouseup's target is never
+    // the 🖼️ span.
     promptHost.addEventListener('mousedown', (event) => {
-      if (!event.ctrlKey) return;
+      if (event.button) return;
       const index = imageCharAt(event.target, event.clientX);
       if (index >= 0) {
-        vscode.postMessage({ type: 'deleteImage', sessionId, index });
+        vscode.postMessage(event.ctrlKey ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: '', index });
       } else {
+        if (!event.ctrlKey) return;
         const target = promptBox.getTargetAtClientPoint(event.clientX, event.clientY);
         const tag = target && target.type === monaco.editor.MouseTargetType.CONTENT_TEXT ? fileTagAt(promptModel.getOffsetAt(target.position)) : null;
         if (!tag) return;
@@ -1069,10 +1131,6 @@ ${tooltipScript()}
       event.preventDefault();
       event.stopPropagation();
     }, true);
-    promptBox.onMouseUp((event) => {
-      const index = event.event.ctrlKey ? -1 : imageCharAt(event.target.element, event.event.browserEvent.clientX);
-      if (index >= 0) vscode.postMessage({ type: 'showImage', sessionId, turnId: '', index });
-    });
     stopButton.addEventListener('click', () => {
       markStopping();
       vscode.postMessage({ type: 'stopPrompt', sessionId });

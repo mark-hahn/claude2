@@ -320,7 +320,7 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "renameSession") {
       await this.renameSession(stringOf(record?.sessionId), stringOf(record?.name));
     } else if (type === "trashSession") {
-      // A trashed session's tab goes with its card; clicking the card in the trash list reopens it.
+      // A trashed session's tab goes with its card, and nothing reopens it until it is restored.
       this.conversationPanels.get(requestedSessionId)?.dispose();
       await this.store.setTrashed(requestedSessionId, true);
       this.refreshSidebar();
@@ -336,19 +336,13 @@ class Claude2Controller implements vscode.Disposable {
       await this.deleteAllTrashed();
     } else if (type === "deleteSessions") {
       const ids = Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf).filter((id) => id !== "") : [];
-      await this.deleteTrashedSessions(ids, ids.length === 1 ? "Permanently delete this session?" : `Permanently delete this session and the ${ids.length - 1} older session${ids.length === 2 ? "" : "s"} below it?`);
+      await this.deleteTrashedSessions(ids, ids.length === 1 ? `Permanently delete "${this.store.get(ids[0])?.name || "this session"}"?` : `Permanently delete the ${ids.length} selected sessions?`);
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
     } else if (type === "moveSessionToTop") {
       await this.store.touch(requestedSessionId);
       this.refreshSidebar();
-    } else if (type === "deleteSession") {
-      const sessionId = stringOf(record?.sessionId);
-      if (!(await this.confirmDelete(sessionId))) {
-        return;
-      }
-      await this.deleteSession(sessionId);
     } else if (type === "exportActive") {
       void this.conversationPanels.get(requestedSessionId)?.webview.postMessage({ type: "exportSelected" });
     } else if (type === "searchChanged") {
@@ -489,27 +483,15 @@ class Claude2Controller implements vscode.Disposable {
     this.refreshSidebar();
   }
 
-  // The trash icon on a trashed card is the permanent one: the session is forgotten outright,
-  // not just hidden, so its tab and its unsent draft go with it. Deleting from the trash is the
-  // one deliberate way to throw typing away, alongside emptying the box.
-  private async confirmDelete(sessionId: string): Promise<boolean> {
-    const name = this.store.get(sessionId)?.name || "this session";
-    const answer = await vscode.window.showWarningMessage(
-      `Permanently delete "${name}"?`,
-      { modal: true, detail: "This cannot be undone." },
-      "Delete",
-    );
-    return answer === "Delete";
-  }
-
   // Ctrl-click on the trash button while the trash list is showing empties it for good.
   private async deleteAllTrashed(): Promise<void> {
     const ids = this.store.all().filter((session) => session.trashed).map((session) => session.id);
     await this.deleteTrashedSessions(ids, `Permanently delete ${ids.length} trashed session${ids.length === 1 ? "" : "s"}?`);
   }
 
-  // The bulk sweeps of the trash. One prompt covers the whole run, and each session then goes
-  // the same way as a single permanent delete: forgotten outright, tab and all. Only trashed
+  // The trash list's delete button and the ctrl-click that empties it. One prompt covers the
+  // whole run, and each session is then forgotten outright, not just hidden, so its unsent draft
+  // goes with it -- the one deliberate way to throw typing away, alongside emptying the box. Only trashed
   // sessions are ever taken, so a stale id list from the sidebar cannot reach a live session.
   private async deleteTrashedSessions(sessionIds: readonly string[], question: string): Promise<void> {
     const ids = sessionIds.filter((id) => this.store.get(id)?.trashed === true);
@@ -536,7 +518,7 @@ class Claude2Controller implements vscode.Disposable {
     this.conversationPanels.get(sessionId)?.dispose();
     this.conversationPanels.delete(sessionId);
     this.draftNames.delete(sessionId);
-    // Both ways in are the permanent delete of a trashed session, which is as deliberate as
+    // The only way in is the permanent delete of a trashed session, which is as deliberate as
     // clearing the box: the unsent text goes with the session rather than into one of its own.
     this.discarded.add(sessionId);
     if (this.drafts.delete(sessionId)) {
@@ -566,7 +548,8 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     const session = this.store.get(sessionId);
-    if (!session) {
+    // A trashed session has no pane until it is restored.
+    if (!session || session.trashed) {
       return;
     }
     let panel = this.conversationPanels.get(sessionId);
@@ -620,11 +603,11 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // A tab left open when the window closed comes back where it was; one whose session has
-  // since been deleted (or that predates the saved state) is just closed.
+  // since been deleted or trashed (or that predates the saved state) is just closed.
   private restoreConversation(panel: vscode.WebviewPanel, state: unknown): void {
     const sessionId = stringOf(recordOf(state)?.sessionId);
     const session = this.store.get(sessionId);
-    if (!session || this.conversationPanels.has(sessionId)) {
+    if (!session || session.trashed || this.conversationPanels.has(sessionId)) {
       panel.dispose();
       return;
     }
@@ -1003,6 +986,8 @@ class Claude2Controller implements vscode.Disposable {
     }
     try {
       await fs.rm(path.join(this.imagesRoot(), sessionId), { recursive: true, force: true });
+      // The session's debug record (see runPrompt's debugDir) goes with its pictures.
+      await fs.rm(path.join(this.context.globalStorageUri.fsPath, "debug", `${sessionId}.jsonl`), { force: true });
     } catch (error) {
       this.channel.appendLine(`Could not remove the images of session ${sessionId}: ${errorMessage(error)}`);
     }
@@ -1401,6 +1386,7 @@ class Claude2Controller implements vscode.Disposable {
         limits: this.runLimits(),
         longTools: this.settings.longToolDisplay,
         plugins,
+        debugDir: path.join(this.context.globalStorageUri.fsPath, "debug"),
         onText: (text) => {
           streamedResponse += text;
           this.store.patchTurn(sessionId, turn.id, { response: streamedResponse }, false);
