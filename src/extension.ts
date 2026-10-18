@@ -1387,6 +1387,7 @@ class Claude2Controller implements vscode.Disposable {
         priorContextTokens: priorContext,
         limits: this.runLimits(),
         longTools: this.settings.longToolDisplay,
+        fastMode: this.settings.fastMode,
         plugins,
         debugDir: path.join(this.context.globalStorageUri.fsPath, "debug"),
         onText: (text) => {

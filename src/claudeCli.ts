@@ -32,6 +32,7 @@ interface RunPromptOptions {
   limits: RunLimits;
   // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
   longTools: boolean;
+  fastMode: boolean;
   plugins: PluginFlags;
   // Where the run's debug record goes: one <sessionId>.jsonl per session holding what each turn
   // was started with (args, env) and the CLI's init message (version, tools, plugins, memory files).
@@ -206,13 +207,25 @@ export class ClaudeCliRunner {
     if (options.limits.maxBudgetUsd > 0) {
       args.push("--max-budget-usd", String(options.limits.maxBudgetUsd));
     }
+    // Command-line settings outrank the user scope, so these apply to just this run.
+    const runSettings: Record<string, unknown> = {};
     if (!options.plugins.ponytail) {
-      // Command-line settings outrank the user scope, so this turns the globally-enabled
-      // ponytail plugin off for just this run.
-      args.push("--settings", JSON.stringify({ enabledPlugins: { "ponytail@ponytail": false } }));
+      // Turns the globally-enabled ponytail plugin off.
+      runSettings.enabledPlugins = { "ponytail@ponytail": false };
+    }
+    if (options.fastMode) {
+      // A -p run only gets fast mode from its --settings.
+      runSettings.fastMode = true;
+    }
+    if (Object.keys(runSettings).length) {
+      args.push("--settings", JSON.stringify(runSettings));
     }
 
     const env = childEnv(options.contextWindow, options.plugins.graft);
+    if (!options.fastMode) {
+      // Fast mode bills usage credits, so off is a hard off that outranks a fastMode in any settings file.
+      env.CLAUDE_CODE_DISABLE_FAST_MODE = "1";
+    }
     const child = spawn("claude", args, {
       cwd: options.workspacePath,
       env,
@@ -226,7 +239,7 @@ export class ClaudeCliRunner {
         .then(() => fs.promises.appendFile(debugFile, `${JSON.stringify({ at: new Date().toISOString(), turnId: options.turnId, ...record })}\n`))
         .catch((error) => this.log(`Debug record failed: ${errorText(error)}`));
     };
-    debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW } } });
+    debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, CLAUDE_CODE_DISABLE_FAST_MODE: env.CLAUDE_CODE_DISABLE_FAST_MODE } } });
     const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, followUp: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));

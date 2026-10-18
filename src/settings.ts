@@ -14,10 +14,12 @@ export interface Settings {
   timezone: string;
   // Tool lines in the official extension's fuller form: header detail plus the call's input.
   longToolDisplay: boolean;
+  // Passed to each run's --settings, the only way a -p run gets fast mode. Opus only; bills usage credits.
+  fastMode: boolean;
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -52,6 +54,7 @@ export function checkSettings(value: unknown): Settings {
     permissionMode,
     timezone,
     longToolDisplay: record.longToolDisplay === true,
+    fastMode: record.fastMode === true,
   };
 }
 
