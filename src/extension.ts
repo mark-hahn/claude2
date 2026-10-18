@@ -325,7 +325,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.setTrashed(requestedSessionId, true);
       this.refreshSidebar();
     } else if (type === "trashAllSessions") {
-      for (const session of this.store.all()) {
+      // Oldest first, so the bumped timestamps keep the list in its existing order.
+      for (const session of this.store.all().reverse()) {
         if (!session.trashed) {
           this.conversationPanels.get(session.id)?.dispose();
           await this.store.setTrashed(session.id, true);
@@ -364,6 +365,7 @@ class Claude2Controller implements vscode.Disposable {
   private async newSession(): Promise<void> {
     await this.discardEmptySessions();
     const session = await this.createSession();
+    this.sidebarProvider?.showActive();
     this.refreshSidebar();
     await this.openConversation(session.id, true);
   }
@@ -2105,6 +2107,10 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = sidebarHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((message) => void this.controller.handleSidebarMessage(message), undefined, this.context.subscriptions);
     this.refresh();
+  }
+
+  public showActive(): void {
+    void this.view?.webview.postMessage({ type: "showActive" });
   }
 
   public refresh(): void {

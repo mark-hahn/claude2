@@ -162,11 +162,15 @@ ${tooltipScript()}
       }
       clearSearch();
       vscode.postMessage({ type: 'discardEmpty' });
-      showTrash = !showTrash;
+      setShowTrash(!showTrash);
+    });
+
+    function setShowTrash(on) {
+      showTrash = on;
       trashButton.classList.toggle('active', showTrash);
       trashButton.title = showTrash ? 'Show active sessions (ctrl-click to permanently delete every trashed session)' : 'Show trashed sessions (ctrl-click to trash every session)';
       render();
-    });
+    }
     searchBox.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -196,6 +200,11 @@ ${tooltipScript()}
 
     window.addEventListener('message', (event) => {
       const message = event.data;
+      // A new session lives on the active list, so opening one leaves the trash list.
+      if (message.type === 'showActive') {
+        if (showTrash) setShowTrash(false);
+        return;
+      }
       if (message.type === 'sessions') {
         sessions = Array.isArray(message.sessions) ? message.sessions : [];
         selectedId = typeof message.selectedId === 'string' ? message.selectedId : '';

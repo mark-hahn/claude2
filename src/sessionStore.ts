@@ -147,6 +147,8 @@ export class SessionStore {
       return undefined;
     }
     session.trashed = trashed;
+    // Into or out of the trash, the card lands at the top of the list it moves to.
+    session.updatedAt = Date.now();
     await this.save();
     return session;
   }
