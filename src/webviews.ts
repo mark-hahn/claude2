@@ -1023,14 +1023,16 @@ ${tooltipScript()}
     // instead, and on an empty one it toggles bigPromptEditor. Actions, not addCommand: Monaco's
     // addCommand keys are page-wide, so they would fire in the Snips pad too.
     promptBox.addAction({ id: 'claude2.submitPrompt', label: 'Send Prompt', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => submitPrompt() });
-    // Ctrl-Alt-click anywhere in the box toggles bigPromptEditor, in either mode. Capture phase, so
-    // Monaco never sees the press (its ctrl-click adds a cursor). Monaco listens for pointer
-    // events; the mouse ones are only blocked, so a browser that still fires them can't toggle twice.
+    // Ctrl-Alt-click anywhere in the box toggles bigPromptEditor, in either mode, and focuses the
+    // box. Capture phase, so Monaco never sees the press (its ctrl-click adds a cursor), which also
+    // means the click itself gives no focus. Monaco listens for pointer events; the mouse ones are
+    // only blocked, so a browser that still fires them can't toggle twice.
     promptHost.addEventListener('pointerdown', (event) => {
       if (!event.ctrlKey || !event.altKey) return;
       event.preventDefault();
       event.stopPropagation();
       setBigPromptEditor(!bigPromptEditor);
+      promptBox.focus();
     }, true);
     promptHost.addEventListener('mousedown', (event) => {
       if (!event.ctrlKey || !event.altKey) return;
