@@ -813,7 +813,8 @@ ${tooltipScript()}
       multiCursorModifier: 'ctrlCmd',
       // With the frame's 3px inset and 1px border: the old textarea's gap on top, a small one below.
       padding: { top: 7, bottom: 3 },
-      lineDecorationsWidth: 8,
+      // Room for the line dot and a clear gap after it before the text.
+      lineDecorationsWidth: 14,
       lineNumbers: 'off',
       glyphMargin: false,
       folding: false,

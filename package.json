@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.201",
+  "version": "0.0.202",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
