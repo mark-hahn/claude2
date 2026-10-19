@@ -759,6 +759,9 @@ function claude2SystemPrompt(contextWindow: number): string {
     // command, which the user reads as a bug. The model drops the field for a whole session
     // once its first Bash call lacks it, so the rule names the first call in particular.
     "IMPORTANT: Every Bash tool call MUST include the `description` field -- a short plain-English phrase saying what the command does, e.g. \"Find gutter code occurrences\". This is required even for quick greps and one-liners, and above all on the very first Bash call of the session: the Claude2 UI shows that description as the tool line, and a missing one shows the raw command instead, which the user treats as a bug.",
+    // Also read by the CLI's prompt-suggestion request, which otherwise favours "commit this" or
+    // "push it" once a task is done.
+    "The user does all git commits and pushes themselves and never asks Claude to. Never predict a commit or push prompt.",
   ].join("\n");
 }
 
