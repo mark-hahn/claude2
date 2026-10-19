@@ -1553,6 +1553,10 @@ class Claude2Controller implements vscode.Disposable {
   // typed since the send. An open pane decides, since it knows what the box holds; with none, a
   // stored draft is that typing, and only a session without one takes the guess as its draft.
   private placeSuggestion(sessionId: string, suggestion: string): void {
+    // Commits are the user's alone, so a guess that asks Claude for one is dropped.
+    if (/\bcommit/i.test(suggestion)) {
+      return;
+    }
     const panel = this.conversationPanels.get(sessionId);
     if (panel) {
       void panel.webview.postMessage({ type: "promptSuggestion", suggestion });

@@ -537,7 +537,9 @@ export class ClaudeCliRunner {
           if (Array.isArray(content)) {
             for (const entry of content) {
               const block = recordOf(entry);
-              if (!block || stringOf(block.type) !== "tool_use") {
+              // The advisor runs on the API side: its call is a server_tool_use with no input.
+              const advisorCall = stringOf(block?.type) === "server_tool_use" && stringOf(block?.name) === "advisor";
+              if (!block || (stringOf(block.type) !== "tool_use" && !advisorCall)) {
                 continue;
               }
               const blockId = stringOf(block.id);
@@ -545,7 +547,7 @@ export class ClaudeCliRunner {
                 continue;
               }
               seenToolUses.add(blockId);
-              appendToolLine(options.longTools ? longToolUseLine(block) : toolUseLine(block));
+              appendToolLine(advisorCall ? advisorLine(options.advisor) : options.longTools ? longToolUseLine(block) : toolUseLine(block));
             }
           }
         } else if (messageType === "system") {
@@ -978,6 +980,12 @@ const COMPACTING_LINE = "**Compacting:** =======";
 
 // One tool call on one line: the tool name plus whichever input field best names what it was pointed at.
 // The name is wrapped in ** so the conversation view can bold it; nothing else in the line is markup.
+// An advisor call says who was asked. What it advised comes back encrypted, for Claude alone.
+function advisorLine(advisor: string): string {
+  const model = advisor ? advisor[0].toUpperCase() + advisor.slice(1) : "the advisor model";
+  return `**Advisor:** asking ${model} to review the work so far`;
+}
+
 function toolUseLine(block: Record<string, unknown>): string {
   const name = stringOf(block.name) || "tool";
   const input = recordOf(block.input);
