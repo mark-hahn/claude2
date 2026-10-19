@@ -45,6 +45,9 @@
 
 # more rules
 - don't deploy anything -- i will deploy before i test
+- never turn on the advisor except through the footer's Advisor selector: no `/advisor` command
+  (it writes `advisorModel` to the global ~/.claude/settings.json, reaching every session on the
+  machine), no `advisorModel` in any settings file, no `--advisor` flag
 
 # conversation pane terminology
 - the editor window is the entire vscode editor pane below the editor tabs

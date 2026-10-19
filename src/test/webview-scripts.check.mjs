@@ -11,7 +11,7 @@ import { createRequire } from 'module';
 
 const { sidebarHtml, conversationHtml, managementHtml } = createRequire(import.meta.url)('/tmp/webviews.cjs');
 const webview = { cspSource: 'vscode-resource:' };
-const defaults = { model: 'claude-opus-5', effort: 'high', contextWindow: 256000, maxTurns: 10 };
+const defaults = { model: 'claude-opus-5', effort: 'high', advisor: '', contextWindow: 256000, maxTurns: 10 };
 const pages = {
   sidebar: sidebarHtml(webview),
   conversation: conversationHtml(webview, 'vscode-resource:/dist', 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, defaultPreset: 0, date: 0, seenDate: 0 }, 1),
@@ -75,6 +75,36 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   assert.strictEqual(exportMarkdown(),
     '# Demo\n\n> first\n> second\n\nwork\n\nmore\n\n***\n\nthe answer\n\n---\n\n> 🖼️only tools\n\ndone\n\n**Error:** boom\n');
   console.log('ok: session export matches the open boxes');
+}
+
+// The advisor picker offers only listed families stronger than the model, drops a pick the model
+// outranks, and a preset moves it to the next family up (advisorChoices().pop(), as cyclePicks does).
+{
+  const lift = (name) => {
+    const source = pages.conversation.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n {4}\\}'));
+    assert.ok(source, 'conversation pane lost ' + name);
+    return source[0];
+  };
+  const body = ['advisorChoices', 'fillAdvisors'].map(lift).join('\n');
+  const all = { 'opus[1m]': [], 'claude-fable-5-1[1m]': [], sonnet: [], haiku: [] };
+  const pick = (model, selected, models = all) => {
+    const advisorSelect = {};
+    const fillSelect = (select, values, chosen, label) => { select.labels = values.map(label); select.value = chosen; };
+    const { advisorChoices, fillAdvisors } = new Function('modelSelect', 'advisorSelect', 'models', 'fillSelect', body + '\nreturn { advisorChoices, fillAdvisors };')({ value: model }, advisorSelect, models, fillSelect);
+    fillAdvisors(selected === 'preset' ? advisorChoices().pop() : selected);
+    return advisorSelect.labels.join(',') + ' -> ' + advisorSelect.value;
+  };
+  assert.strictEqual(pick('haiku', 'sonnet'), 'none,Fable,Opus,Sonnet -> sonnet');
+  assert.strictEqual(pick('sonnet', 'opus'), 'none,Fable,Opus -> opus');
+  assert.strictEqual(pick('opus[1m]', 'opus'), 'none,Fable -> ', 'a pick the model outranks falls back to none');
+  assert.strictEqual(pick('claude-fable-5-1[1m]', 'fable'), 'none -> ');
+  assert.strictEqual(pick('sonnet', '', { sonnet: [], 'opus[1m]': [] }), 'none,Opus -> ', 'unlisted families are left out');
+  assert.strictEqual(pick('haiku', 'preset'), 'none,Fable,Opus,Sonnet -> sonnet', 'a preset takes the next family up');
+  assert.strictEqual(pick('sonnet', 'preset'), 'none,Fable,Opus -> opus');
+  assert.strictEqual(pick('opus[1m]', 'preset'), 'none,Fable -> fable');
+  assert.strictEqual(pick('claude-fable-5-1[1m]', 'preset'), 'none -> ', 'nothing outranks fable');
+  assert.ok(pages.conversation.includes("fillAdvisors(advisorOff ? '' : advisorChoices().pop());"), 'presets lost the sticky none');
+  console.log('ok: advisor picker');
 }
 
 console.log('ok: every webview script parses');

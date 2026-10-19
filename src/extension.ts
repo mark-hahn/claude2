@@ -691,9 +691,9 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "deleteFile") {
       await this.deleteFile(sessionId, stringOf(record?.name), numberOf(record?.start));
     } else if (type === "submitPrompt") {
-      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), record?.keepDraft === true);
+      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), stringOf(record?.advisor), record?.keepDraft === true);
     } else if (type === "picksChanged") {
-      await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
+      await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort), stringOf(record?.advisor));
     } else if (type === "bigPromptChanged") {
       await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
     } else if (type === "sentPromptChanged") {
@@ -1190,7 +1190,7 @@ class Claude2Controller implements vscode.Disposable {
     return ok;
   }
 
-  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
+  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false): Promise<void> {
     if (!prompt.trim()) {
       return;
     }
@@ -1213,7 +1213,7 @@ class Claude2Controller implements vscode.Disposable {
     const pending = this.runs.get(sessionId);
     // While the CLI waits on a background task (the B pill) the prompt joins that process
     // instead, so the task keeps running and its result still comes back.
-    const followUp = this.runner.canFollowUp(sessionId, model, effort);
+    const followUp = this.runner.canFollowUp(sessionId, model, effort, advisor);
     if (!followUp && (pending || this.runner.isRunning(sessionId))) {
       // Ctrl-Enter during a run means "drop that answer, take this one instead".
       if (!await this.confirmInterrupt(sessionId)) {
@@ -1236,13 +1236,16 @@ class Claude2Controller implements vscode.Disposable {
     try {
       sanitizeModel(model);
       effortArgs(effort);
+      if (advisor) {
+        sanitizeModel(advisor);
+      }
     } catch (error) {
       void vscode.window.showErrorMessage(`Prompt not sent: ${errorMessage(error)}`);
       putBack();
       this.postConversationState(sessionId);
       return;
     }
-    const run = this.runTurn(sessionId, prompt, model, effort, keepDraft).catch((error) => {
+    const run = this.runTurn(sessionId, prompt, model, effort, advisor, keepDraft).catch((error) => {
       this.channel.appendLine(`Claude turn failed: ${errorMessage(error)}`);
     });
     this.runs.set(sessionId, run);
@@ -1252,7 +1255,7 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private async runTurn(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
+  private async runTurn(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false): Promise<void> {
     const session = this.store.get(sessionId);
     if (!session) {
       return;
@@ -1294,7 +1297,7 @@ class Claude2Controller implements vscode.Disposable {
     const selectedEffort = effort;
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
     // with is what the session reopens on.
-    await this.store.setPicks(sessionId, selectedModel, selectedEffort);
+    await this.store.setPicks(sessionId, selectedModel, selectedEffort, advisor);
     const wasFirstPrompt = session.turns.length === 0;
     // Where the conversation already sits in the window. A turn that errored never recorded a
     // level, so the newest turn that did is the one to carry forward.
@@ -1388,6 +1391,7 @@ class Claude2Controller implements vscode.Disposable {
         limits: this.runLimits(),
         longTools: this.settings.longToolDisplay,
         fastMode: this.settings.fastMode,
+        advisor,
         plugins,
         debugDir: path.join(this.context.globalStorageUri.fsPath, "debug"),
         onText: (text) => {
@@ -2075,6 +2079,7 @@ class Claude2Controller implements vscode.Disposable {
     return {
       model: session?.model ?? "",
       effort: session?.effort ?? "",
+      advisor: session?.advisor ?? "",
       contextWindow: this.settings.contextWindowTokens,
       maxTurns: this.settings.maxTurns,
     };

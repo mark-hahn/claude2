@@ -8,6 +8,7 @@ export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "
 export interface ConversationDefaults {
   model: string;
   effort: string;
+  advisor: string;
   contextWindow: number;
   maxTurns: number;
 }
@@ -492,6 +493,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   const safeSessionId = JSON.stringify(sessionId);
   const defaultModel = JSON.stringify(defaults.model);
   const defaultEffort = JSON.stringify(defaults.effort);
+  const defaultAdvisor = JSON.stringify(defaults.advisor);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
   const maxTurns = JSON.stringify(defaults.maxTurns);
@@ -519,7 +521,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
-    #model, #effort { padding-left: 6.5px; padding-right: 6.5px; width: calc(11.5ch - 2px); flex: 1 0 auto; }
+    #model, #effort, #advisor { padding-left: 6.5px; padding-right: 6.5px; width: calc((11.5ch - 2px) * 0.8); flex: 1 0 auto; }
     /* bigPromptEditor: the editor runs the window's full height on the left, and the pane and the
        controls share the column to its right, the controls at their own two-row height. The dock
        dissolves so its two children can sit in the shell's grid beside the pane. */
@@ -670,7 +672,7 @@ ${tooltipStyle()}  </style>
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
         <div class="bar">
-          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select></div>
+          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><select id="advisor" title="Advisor: a stronger model Claude can consult mid-task"></select></div>
           <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep" id="projected-sep">|</span><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div></div>
         </div>
         <div class="footer">
@@ -701,6 +703,7 @@ ${tooltipScript()}
     const fallbackEffort = ${JSON.stringify(DEFAULT_EFFORT)};
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
+    const defaultAdvisor = ${defaultAdvisor};
     const contextWindow = ${contextWindow};
     const compactAt = Math.max(1000, contextWindow - ${compactReserve});
     const maxTurns = ${maxTurns};
@@ -942,6 +945,7 @@ ${tooltipScript()}
     }).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
+    const advisorSelect = document.getElementById('advisor');
     const stopButton = document.getElementById('stop');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
@@ -949,10 +953,15 @@ ${tooltipScript()}
 
     fillSelect(modelSelect, pickableModels(), defaultModel, modelLabel);
     fillEfforts(defaultEffort);
+    fillAdvisors(defaultAdvisor);
+    // None picked by hand is sticky through presets. A none forced by a model nothing outranks
+    // (fable) is not, so the next preset brings an advisor back.
+    let advisorOff = defaultAdvisor === '';
     // The pickers belong to the session, not the panel: every change is written back so
-    // reopening this session later comes up on the same model and effort.
-    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); sendPicks(); });
+    // reopening this session later comes up on the same model, effort and advisor.
+    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); fillAdvisors(advisorSelect.value); sendPicks(); });
     effortSelect.addEventListener('change', sendPicks);
+    advisorSelect.addEventListener('change', () => { advisorOff = advisorSelect.value === ''; sendPicks(); });
     cycleButton.addEventListener('click', cyclePicks);
     describePicks();
 
@@ -1029,6 +1038,7 @@ ${tooltipScript()}
         prefs = message.prefs && typeof message.prefs === 'object' ? message.prefs : prefs;
         fillSelect(modelSelect, pickableModels(), modelSelect.value, modelLabel);
         fillEfforts(effortSelect.value);
+        fillAdvisors(advisorSelect.value);
       }
     });
 
@@ -1292,9 +1302,24 @@ ${tooltipScript()}
       fillSelect(effortSelect, list, list.includes(selected) ? selected : list.includes(fallbackEffort) ? fallbackEffort : list[0]);
     }
 
+    // Each family stronger than the selected model's that the CLI lists, strongest first. A model
+    // in none of them (haiku) is the weakest and gets all three.
+    function advisorChoices() {
+      const families = ['fable', 'opus', 'sonnet'];
+      const own = families.findIndex((family) => modelSelect.value.includes(family));
+      return families.slice(0, own === -1 ? families.length : own).filter((family) => Object.keys(models).some((model) => model.includes(family)));
+    }
+
+    // The advisor picker offers none, then advisorChoices. A pick the new model outranks falls
+    // back to none.
+    function fillAdvisors(selected) {
+      const offered = advisorChoices();
+      fillSelect(advisorSelect, ['', ...offered], offered.includes(selected) ? selected : '', (family) => (family ? family[0].toUpperCase() + family.slice(1) : 'none'));
+    }
+
     function sendPicks() {
       describePicks();
-      vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value });
+      vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value });
     }
 
     // Step to the next enabled preset (set in the Models pane). A pairing set by hand through the
@@ -1306,6 +1331,8 @@ ${tooltipScript()}
       const next = enabled[(at + 1) % enabled.length];
       fillSelect(modelSelect, pickableModels(), next.model, modelLabel);
       fillEfforts(next.effort);
+      // The advisor moves to the next family up from the preset's model, unless none is sticky.
+      fillAdvisors(advisorOff ? '' : advisorChoices().pop());
       sendPicks();
     }
 
@@ -1491,7 +1518,7 @@ ${tooltipScript()}
       if (!prompt.trim() && !imageCount) return setBigPromptEditor(!bigPromptEditor);
       shell.classList.remove('snips-open');
       markStopping();
-      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
+      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value });
       // The text stays, read-only, and the extension drops its draft copy on its own.
       draftSent = '';
       imageCount = 0;
@@ -1998,7 +2025,7 @@ ${tooltipScript()}
     document.getElementById('context').addEventListener('click', (event) => {
       if (event.currentTarget.classList.contains('compacted')) return clearCompaction();
       if ((status && status.active) || !session.turns.length) return;
-      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/compact', model: modelSelect.value, effort: effortSelect.value, keepDraft: true });
+      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/compact', model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value, keepDraft: true });
     });
 
     // Acknowledging the quota warning is durable: the extension clears the stored flag and

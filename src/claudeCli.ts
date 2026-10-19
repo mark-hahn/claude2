@@ -33,6 +33,8 @@ interface RunPromptOptions {
   // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
   longTools: boolean;
   fastMode: boolean;
+  // The footer's Advisor pick: empty for none, else the model the advisor tool consults.
+  advisor: string;
   plugins: PluginFlags;
   // Where the run's debug record goes: one <sessionId>.jsonl per session holding what each turn
   // was started with (args, env) and the CLI's init message (version, tools, plugins, memory files).
@@ -53,6 +55,7 @@ interface RunningProcess {
   // What the process was started with; a follow-up prompt has to match, since neither can change mid-process.
   model: string;
   effort: string;
+  advisor: string;
   // Hands the live process to a new prompt's block while it waits on a background task.
   followUp: ((next: RunPromptOptions) => Promise<ClaudeRunResult>) | null;
 }
@@ -126,14 +129,14 @@ export class ClaudeCliRunner {
 
   // True while the pill shows B and this prompt could go into the waiting process, which keeps
   // the background task alive, rather than stopping it.
-  public canFollowUp(sessionId: string, model: string, effort: string): boolean {
+  public canFollowUp(sessionId: string, model: string, effort: string, advisor: string): boolean {
     const running = this.running.get(sessionId);
-    return !!running?.followUp && !running.stopped && running.status.phase === "background" && running.model === model && running.effort === effort;
+    return !!running?.followUp && !running.stopped && running.status.phase === "background" && running.model === model && running.effort === effort && running.advisor === advisor;
   }
 
   public async runPrompt(options: RunPromptOptions): Promise<ClaudeRunResult> {
     const live = this.running.get(options.sessionId);
-    if (live?.followUp && this.canFollowUp(options.sessionId, options.model, options.effort)) {
+    if (live?.followUp && this.canFollowUp(options.sessionId, options.model, options.effort, options.advisor)) {
       return await live.followUp(options);
     }
     if (live) {
@@ -207,8 +210,11 @@ export class ClaudeCliRunner {
     if (options.limits.maxBudgetUsd > 0) {
       args.push("--max-budget-usd", String(options.limits.maxBudgetUsd));
     }
-    // Command-line settings outrank the user scope, so these apply to just this run.
-    const runSettings: Record<string, unknown> = {};
+    // Command-line settings outrank every settings file, so these apply to just this run.
+    // advisorModel is what /advisor sets, but /advisor writes it to the user's settings file,
+    // where it would reach every session on the machine. Always sent: the CLI reads "" as no
+    // advisor, so none here overrides an advisorModel left in any settings file.
+    const runSettings: Record<string, unknown> = { advisorModel: options.advisor ? sanitizeModel(options.advisor) : "" };
     if (!options.plugins.ponytail) {
       // Turns the globally-enabled ponytail plugin off.
       runSettings.enabledPlugins = { "ponytail@ponytail": false };
@@ -217,9 +223,7 @@ export class ClaudeCliRunner {
       // A -p run only gets fast mode from its --settings.
       runSettings.fastMode = true;
     }
-    if (Object.keys(runSettings).length) {
-      args.push("--settings", JSON.stringify(runSettings));
-    }
+    args.push("--settings", JSON.stringify(runSettings));
 
     const env = childEnv(options.contextWindow, options.plugins.graft);
     if (!options.fastMode) {
@@ -240,7 +244,7 @@ export class ClaudeCliRunner {
         .catch((error) => this.log(`Debug record failed: ${errorText(error)}`));
     };
     debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, CLAUDE_CODE_DISABLE_FAST_MODE: env.CLAUDE_CODE_DISABLE_FAST_MODE } } });
-    const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, followUp: null };
+    const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, advisor: options.advisor, followUp: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
     // Left open on purpose: under stream-json input the CLI reads stdin for the whole run, and
