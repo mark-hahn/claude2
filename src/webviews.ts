@@ -2708,7 +2708,7 @@ ${tabsStyle()}  </style>
         <tr><td>Permission mode</td><td><select id="permissionMode">${modes}</select></td></tr>
         <tr><td>Quota pane timezone (IANA)</td><td><input id="timezone" type="text"></td></tr>
         <tr><td>Long tool display</td><td><input id="longToolDisplay" type="checkbox"></td></tr>
-        <tr><td>Fast mode</td><td><input id="fastMode" type="checkbox"></td></tr>
+        <tr><td>Fast mode ($)</td><td><input id="fastMode" type="checkbox"></td></tr>
         <tr><td>Prompt suggestions</td><td><input id="promptSuggestions" type="checkbox"></td></tr>
       </table>
       <div class="save-row"><button id="save">Save</button><span id="note"></span></div>
