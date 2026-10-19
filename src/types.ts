@@ -98,6 +98,8 @@ export interface ClaudeTurn {
   tokensOut: number;
   contextWindow: number;
   contextUsed: number;
+  // /clear ran in this turn: Claude's context starts over here, so the gauge takes this turn's level, even 0.
+  cleared: boolean;
   finished: boolean;
   stopped: boolean;
   error: string | null;
@@ -165,6 +167,8 @@ export interface ClaudeRunResult {
   ponySkips: PonySkip[];
   // The text of the last message, the one that ended the run: what the CLI's result repeats.
   answer: string;
+  // /clear moved Claude's conversation to this new CLI session; null when nothing was cleared.
+  clearedInto: string | null;
 }
 
 export interface QuotaReadingRow {

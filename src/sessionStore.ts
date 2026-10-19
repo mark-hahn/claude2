@@ -21,6 +21,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     tokensOut: typeof turn.tokensOut === "number" ? turn.tokensOut : 0,
     contextWindow: typeof turn.contextWindow === "number" ? turn.contextWindow : CLAUDE2_CONTEXT_WINDOW,
     contextUsed: typeof turn.contextUsed === "number" ? turn.contextUsed : 0,
+    cleared: turn.cleared === true,
     finished: turn.finished === true,
     stopped: turn.stopped === true,
     error: typeof turn.error === "string" ? turn.error : null,

@@ -5,7 +5,7 @@ import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
 import { captureScreen, notifyDesktop } from "./capture";
-import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, truncateSessionTranscript, type RunLimits } from "./claudeCli";
+import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swapSessionTranscripts, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
@@ -1301,7 +1301,7 @@ class Claude2Controller implements vscode.Disposable {
     const wasFirstPrompt = session.turns.length === 0;
     // Where the conversation already sits in the window. A turn that errored never recorded a
     // level, so the newest turn that did is the one to carry forward.
-    const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || level, 0);
+    const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || (prior.cleared ? 0 : level), 0);
     // The text is on its way to the CLI, so the saved draft goes now: what is stored has to
     // match the box, which holds no draft once Send is pressed (just the sent prompt, read-only).
     if (!keepDraft && this.drafts.delete(sessionId)) {
@@ -1324,6 +1324,7 @@ class Claude2Controller implements vscode.Disposable {
       tokensOut: 0,
       contextWindow: defaults.contextWindow,
       contextUsed: priorContext,
+      cleared: false,
       finished: false,
       stopped: false,
       error: null,
@@ -1392,6 +1393,13 @@ class Claude2Controller implements vscode.Disposable {
         longTools: this.settings.longToolDisplay,
         fastMode: this.settings.fastMode,
         advisor,
+        promptSuggestions: this.settings.promptSuggestions,
+        // A keepDraft run (the gauge's /compact) exists to leave the box alone.
+        onSuggestion: (suggestion) => {
+          if (!keepDraft) {
+            this.placeSuggestion(sessionId, suggestion);
+          }
+        },
         plugins,
         debugDir: path.join(this.context.globalStorageUri.fsPath, "debug"),
         onText: (text) => {
@@ -1412,12 +1420,19 @@ class Claude2Controller implements vscode.Disposable {
           queueStream();
         },
       });
+      // After /clear this session goes on resuming its own id, so that transcript has to become the
+      // cleared conversation. If the swap fails Claude keeps its context, and so does the gauge.
+      const cleared = result.clearedInto !== null && swapSessionTranscripts(this.workspacePath(), sessionId, result.clearedInto);
+      if (result.clearedInto !== null && !cleared) {
+        this.channel.appendLine(`Clear: transcript ${result.clearedInto} could not take the place of session ${sessionId}'s; Claude keeps its context.`);
+      }
       this.store.patchTurn(sessionId, turn.id, {
         response: markAnswer(streamedResponse || result.text, result.stopped ? "" : result.answer),
         completedAt: Date.now(),
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         contextUsed: result.contextTokens,
+        cleared,
         finished: true,
         stopped: result.stopped,
         costUsd: result.costUsd,
@@ -1532,6 +1547,18 @@ class Claude2Controller implements vscode.Disposable {
   private returnPrompt(sessionId: string, prompt: string): void {
     this.noteDraft(sessionId, prompt);
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "promptReturned", prompt });
+  }
+
+  // The Prompt suggestions setting: the CLI's guess at the next prompt, for a box with nothing
+  // typed since the send. An open pane decides, since it knows what the box holds; with none, a
+  // stored draft is that typing, and only a session without one takes the guess as its draft.
+  private placeSuggestion(sessionId: string, suggestion: string): void {
+    const panel = this.conversationPanels.get(sessionId);
+    if (panel) {
+      void panel.webview.postMessage({ type: "promptSuggestion", suggestion });
+    } else if (!this.drafts.get(sessionId)?.trim()) {
+      this.noteDraft(sessionId, suggestion);
+    }
   }
 
   // Stored verbatim — only whether it is blank is judged on the trimmed text — so a restored

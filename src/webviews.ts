@@ -677,7 +677,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
           <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
@@ -932,6 +932,9 @@ ${tooltipScript()}
       askSnips();
       if (snipsBox) snipsBox.focus();
     }
+    // Clr: /clear, sent like the gauge's /compact so the draft in the box stays.
+    const clrButton = document.getElementById('clr');
+    clrButton.addEventListener('click', () => vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/clear', model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value, keepDraft: true }));
     document.getElementById('snips').addEventListener('click', () => setSnipsOpen(!shell.classList.contains('snips-open')));
     document.getElementById('snips-close').addEventListener('click', () => setSnipsOpen(false));
     // Another window may have changed the text since: coming back to this one picks that up.
@@ -1032,6 +1035,15 @@ ${tooltipScript()}
         draftSent = untab(String(message.prompt || ''));
         setPromptSent(false);
         if (promptModel.getValue() !== draftSent) promptModel.setValue(draftSent);
+      } else if (message.type === 'promptSuggestion' && typeof message.suggestion === 'string') {
+        // The Prompt suggestions setting: the CLI's guess at the next prompt takes the box only
+        // while nothing has been typed since the send -- it still shows the sent prompt, or it was
+        // cleared and left empty. Typing wins and the guess is dropped. An edit, so ctrl-z brings
+        // back the sent prompt, and the change event hands the text on as the draft.
+        if (promptSent || !promptModel.getValueLength()) {
+          if (promptSent) setPromptSent(false);
+          replaceText(0, promptModel.getValueLength(), untab(message.suggestion));
+        }
       } else if (message.type === 'models' && message.models && typeof message.models === 'object') {
         models = message.models;
         presets = Array.isArray(message.presets) ? message.presets : presets;
@@ -1823,6 +1835,8 @@ ${tooltipScript()}
       // Nav row enablement, once the selection has settled: each button greys out when the move
       // it offers would do nothing. Cap is the exception -- it is always live.
       stopButton.disabled = !active;
+      // Clr sends /clear, which would stop a running turn, and has nothing to clear before one.
+      clrButton.disabled = active || !session.turns.length;
       // The stopped turn has ended (or a Ctrl-Enter replacement has started in its place).
       if (stoppingTurn && (!active || status.turnId !== stoppingTurn)) {
         stoppingTurn = null;
@@ -2040,7 +2054,7 @@ ${tooltipScript()}
       const latest = turns[turns.length - 1];
       // Context is a level, so it holds at wherever the conversation last sat. Turns that errored
       // before an API call carry no level, hence the scan back rather than reading only the latest.
-      const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || level, 0);
+      const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || (turn.cleared ? 0 : level), 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
       const contextBox = document.getElementById('context');
@@ -2695,6 +2709,7 @@ ${tabsStyle()}  </style>
         <tr><td>Quota pane timezone (IANA)</td><td><input id="timezone" type="text"></td></tr>
         <tr><td>Long tool display</td><td><input id="longToolDisplay" type="checkbox"></td></tr>
         <tr><td>Fast mode</td><td><input id="fastMode" type="checkbox"></td></tr>
+        <tr><td>Prompt suggestions</td><td><input id="promptSuggestions" type="checkbox"></td></tr>
       </table>
       <div class="save-row"><button id="save">Save</button><span id="note"></span></div>
     </div>
@@ -2716,7 +2731,7 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
-    for (const id of fields.concat(['longToolDisplay', 'fastMode'])) document.getElementById(id).addEventListener('input', () => note('Not saved'));
+    for (const id of fields.concat(['longToolDisplay', 'fastMode', 'promptSuggestions'])) document.getElementById(id).addEventListener('input', () => note('Not saved'));
     void load();
 
     function request(type, payload) {
@@ -2733,6 +2748,7 @@ ${zoomScript(z)}
       for (const id of fields) document.getElementById(id).value = String(reply.payload[id]);
       document.getElementById('longToolDisplay').checked = reply.payload.longToolDisplay === true;
       document.getElementById('fastMode').checked = reply.payload.fastMode === true;
+      document.getElementById('promptSuggestions').checked = reply.payload.promptSuggestions === true;
       note('');
     }
 
@@ -2744,6 +2760,7 @@ ${zoomScript(z)}
       }
       settings.longToolDisplay = document.getElementById('longToolDisplay').checked;
       settings.fastMode = document.getElementById('fastMode').checked;
+      settings.promptSuggestions = document.getElementById('promptSuggestions').checked;
       const reply = await request('saveSettings', { settings });
       note(reply.ok ? 'Saved. Other windows use it after they reload.' : 'Save failed: ' + (reply.error || 'unknown error'));
     }

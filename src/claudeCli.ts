@@ -35,6 +35,10 @@ interface RunPromptOptions {
   fastMode: boolean;
   // The footer's Advisor pick: empty for none, else the model the advisor tool consults.
   advisor: string;
+  // The Prompt suggestions setting: the CLI predicts the next prompt after the turn and
+  // onSuggestion gets it. Not every turn has one; the CLI skips a cold cache, for one.
+  promptSuggestions: boolean;
+  onSuggestion: (suggestion: string) => void;
   plugins: PluginFlags;
   // Where the run's debug record goes: one <sessionId>.jsonl per session holding what each turn
   // was started with (args, env) and the CLI's init message (version, tools, plugins, memory files).
@@ -223,12 +227,25 @@ export class ClaudeCliRunner {
       // A -p run only gets fast mode from its --settings.
       runSettings.fastMode = true;
     }
+    if (options.promptSuggestions) {
+      // A -p run only predicts with the flag, and the setting outranks a promptSuggestionEnabled
+      // false that /config may have left in a settings file.
+      args.push("--prompt-suggestions", "true");
+      runSettings.promptSuggestionEnabled = true;
+    }
     args.push("--settings", JSON.stringify(runSettings));
 
     const env = childEnv(options.contextWindow, options.plugins.graft);
     if (!options.fastMode) {
       // Fast mode bills usage credits, so off is a hard off that outranks a fastMode in any settings file.
       env.CLAUDE_CODE_DISABLE_FAST_MODE = "1";
+    }
+    // The env var outranks every setting. Off is a hard off; on drops an inherited one, since its
+    // "true" would also keep suggestions running near the plan limit, where the CLI otherwise stops.
+    if (options.promptSuggestions) {
+      delete env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION;
+    } else {
+      env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
     }
     const child = spawn("claude", args, {
       cwd: options.workspacePath,
@@ -243,7 +260,7 @@ export class ClaudeCliRunner {
         .then(() => fs.promises.appendFile(debugFile, `${JSON.stringify({ at: new Date().toISOString(), turnId: options.turnId, ...record })}\n`))
         .catch((error) => this.log(`Debug record failed: ${errorText(error)}`));
     };
-    debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, CLAUDE_CODE_DISABLE_FAST_MODE: env.CLAUDE_CODE_DISABLE_FAST_MODE } } });
+    debugLog({ spawn: { mode, cwd: options.workspacePath, args, env: { GRAFT_DIR: env.GRAFT_DIR, CLAUDE_CODE_AUTO_COMPACT_WINDOW: env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, CLAUDE_CODE_DISABLE_FAST_MODE: env.CLAUDE_CODE_DISABLE_FAST_MODE, CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION } } });
     const running: RunningProcess = { child, status, stopped: false, killTimer: null, model: options.model, effort: options.effort, advisor: options.advisor, followUp: null };
     this.running.set(options.sessionId, running);
     child.stdin.on("error", (error) => this.log(`Claude stdin error: ${error.message}`));
@@ -275,6 +292,9 @@ export class ClaudeCliRunner {
       // turn on its own, but only while stdin is still open.
       let backgroundTasks = 0;
       let resultError: string | null = null;
+      // /clear: the CLI carries on in a new session, whose id the result line brings.
+      let conversationReset = false;
+      let clearedInto: string | null = null;
       let settled = false;
       let sawTextDelta = false;
       let toolBatchOpen = false;
@@ -376,6 +396,7 @@ export class ClaudeCliRunner {
           durationMs: durationMs || Math.max(0, Date.now() - status.startedAt),
           ponySkips,
           answer,
+          clearedInto,
         };
       };
 
@@ -426,6 +447,8 @@ export class ClaudeCliRunner {
         durationMs = 0;
         ponySkips = [];
         reportedTurns = 0;
+        conversationReset = false;
+        clearedInto = null;
         sawTextDelta = false;
         toolBatchOpen = false;
         turnEnded = false;
@@ -562,6 +585,19 @@ export class ClaudeCliRunner {
         } else if (messageType === "rate_limit_event") {
           status.phase = "working";
           emitStatus();
+        } else if (messageType === "conversation_reset") {
+          // /clear: the context is empty from here on.
+          conversationReset = true;
+          contextTokens = 0;
+          status.contextTokens = 0;
+          emitStatus();
+        } else if (messageType === "prompt_suggestion") {
+          // Lands after the result, while the CLI holds the process open for it. A run stopped by
+          // a new prompt keeps its guess to itself: the box now holds that prompt.
+          const suggestion = stringOf(message.suggestion);
+          if (suggestion.trim() && !running.stopped) {
+            options.onSuggestion(suggestion);
+          }
         } else if (messageType === "result") {
           // Each result covers only its own turn (a background task can bring a second one), so
           // usage, duration and turns add up; total_cost_usd alone is already the process total.
@@ -595,6 +631,10 @@ export class ClaudeCliRunner {
             emitStatus();
           }
           stopReason = stringOf(message.stop_reason) || stringOf(message.terminal_reason);
+          const reportedSession = stringOf(message.session_id);
+          if (conversationReset && reportedSession && reportedSession !== options.sessionId) {
+            clearedInto = reportedSession;
+          }
           if (isError) {
             const subtype = stringOf(message.subtype);
             // An auth failure arrives as is_error under subtype "success", with the real story in
@@ -813,6 +853,21 @@ function sessionTranscriptExists(workspacePath: string, sessionId: string): bool
 
 // A fork keeps the whole conversation alive under a new session id, so the CLI transcript is copied
 // across with the old id swapped out -- the copy resumes as a session of its own, not as the source.
+// /clear leaves the old conversation in its transcript and goes on in a new one. Trading the two
+// files' ids keeps the session on its own id, now holding the cleared conversation, and leaves the
+// old one resumable from a terminal under the other id, as the CLI's own /clear does.
+export function swapSessionTranscripts(workspacePath: string, sessionId: string, otherId: string): boolean {
+  try {
+    const mine = fs.readFileSync(transcriptPath(workspacePath, sessionId), "utf8");
+    const other = fs.readFileSync(transcriptPath(workspacePath, otherId), "utf8");
+    fs.writeFileSync(transcriptPath(workspacePath, sessionId), other.split(otherId).join(sessionId), "utf8");
+    fs.writeFileSync(transcriptPath(workspacePath, otherId), mine.split(sessionId).join(otherId), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function copySessionTranscript(workspacePath: string, fromId: string, toId: string): boolean {
   try {
     const text = fs.readFileSync(transcriptPath(workspacePath, fromId), "utf8");

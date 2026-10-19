@@ -16,10 +16,12 @@ export interface Settings {
   longToolDisplay: boolean;
   // Passed to each run's --settings, the only way a -p run gets fast mode. Opus only; bills usage credits.
   fastMode: boolean;
+  // After each turn the CLI's guess at the next prompt replaces the prompt box. Costs a little plan usage per turn.
+  promptSuggestions: boolean;
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -55,6 +57,7 @@ export function checkSettings(value: unknown): Settings {
     timezone,
     longToolDisplay: record.longToolDisplay === true,
     fastMode: record.fastMode === true,
+    promptSuggestions: record.promptSuggestions === true,
   };
 }
 
