@@ -314,9 +314,10 @@ export class ClaudeCliRunner {
       // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
       // Each carries the mark and the local wall-clock time it arrived, "hh:mm:ss ", ahead of its text.
       // A long tool line's continuation lines carry the mark too, so they stay in its tool group.
-      const appendToolLine = (text: string): void => {
+      const appendToolLine = (text: string, now = new Date()): void => {
         const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
-        const chunk = `${gap}${TOOL_LINE_MARK}${new Date().toTimeString().slice(0, 8)} ${text.replace(/\n/g, `\n${TOOL_LINE_MARK}`)}\n`;
+        const t = laParts(now);
+        const chunk = `${gap}${TOOL_LINE_MARK}${t.hour}:${t.minute}:${t.second} ${text.replace(/\n/g, `\n${TOOL_LINE_MARK}`)}\n`;
         responseText += chunk;
         show(chunk);
         toolBatchOpen = true;
@@ -452,13 +453,15 @@ export class ClaudeCliRunner {
         sawTextDelta = false;
         toolBatchOpen = false;
         turnEnded = false;
-        appendToolLine(STARTED_LINE);
+        const now = new Date();
+        appendToolLine(startedLine(now), now);
         Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "working", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
         emitStatus();
         child.stdin.write(userMessage(next.prompt));
       });
 
-      appendToolLine(STARTED_LINE);
+      const now = new Date();
+      appendToolLine(startedLine(now), now);
       emitStatus();
 
       const handleClaudeLine = (line: string): void => {
@@ -977,7 +980,18 @@ function phaseForBlock(blockType: string): ClaudePhase {
 }
 
 // Every block's response opens and closes with these, stored with it like any tool line.
-const STARTED_LINE = "**Started:** =======";
+// Tool-line times and the Started date both come from here, in LA time, so they can't disagree.
+// h23 keeps midnight as 00, not en-US's 24.
+function laParts(now: Date): Record<string, string> {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hourCycle: "h23", weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(now);
+  return Object.fromEntries(parts.map((x) => [x.type, x.value]));
+}
+
+// Started carries the LA date, e.g. "**Started:** Mon 2026/10/19". Pass the same Date given to appendToolLine.
+function startedLine(now: Date): string {
+  const p = laParts(now);
+  return `**Started:** ${p.weekday} ${p.year}/${p.month}/${p.day}`;
+}
 const FINISHED_LINE = "**Finished:** =======";
 const COMPACTING_LINE = "**Compacting:** =======";
 
