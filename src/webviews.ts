@@ -576,9 +576,6 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     #prompt.sent { background: var(--yellow); }
     /* Inset just past the rounded corners, so the editor's square ones stay inside the border. */
     #prompt > div { position: absolute; inset: 3px; }
-    /* Monaco draws its widgets' text at 11-13px; these are the ones the prompt box can show. */
-    .monaco-editor .find-widget > .find-part, .monaco-editor .find-widget > .replace-part, .monaco-editor .find-widget .monaco-findInput .input, .monaco-findInput .monaco-inputbox,
-    .quick-input-widget, .context-view.fixed, .monaco-hover, .hover-row.status-bar, .monaco-keybinding > .monaco-keybinding-key, .monaco-editor-overlaymessage .message { font-size: calc(14px * var(--z)) !important; }
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
     .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
@@ -637,7 +634,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
        one is which is answered by clicking it, not by reading it. */
     .img-char { cursor: pointer; }
-${lineDotStyle()}    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
+${monacoStyle()}    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
 <body>
@@ -902,9 +899,7 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       event.preventDefault();
       event.stopPropagation();
     }, true);
-    // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
-    // completion list or a snippet is up, where Tab means something else.
-    promptBox.addAction({ id: 'claude2.tabLines', label: 'Make List Items', keybindings: [monaco.KeyCode.Tab], keybindingContext: 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode', run: () => tabLines() });
+    addTabKeys(promptBox);
     // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
     // newline to count, so the top line is the one where the caret's own Up didn't move it.
     promptBox.onKeyDown((event) => {
@@ -949,23 +944,15 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
     promptBox.onDidBlurEditorWidget(() => sendDraft('draftBlur'));
     // An image on the clipboard becomes another attached picture rather than pasted text. Each
     // paste adds one; the pictures already waiting stay. The extension ignores a second copy
-    // of one already in the list. Capture phase, so Monaco never sees the paste.
+    // of one already in the list. Capture phase, so Monaco never sees the paste, and ahead of
+    // addTabKeys' handler for pasted text, which is on the editor inside this frame.
     promptHost.addEventListener('paste', (event) => {
       // A sent prompt takes no paste, a picture included; Monaco's read-only drops the text.
       if (promptSent) return;
       const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
       const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
       const file = item ? item.getAsFile() : null;
-      if (!file) {
-        // Pasted text loses its tab chars, through Monaco's own paste so it stays one undo step.
-        // The find box's own pastes are left alone.
-        const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
-        if (!promptBox.hasTextFocus() || !text.includes('\\t')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        promptBox.trigger('keyboard', 'paste', { text: untab(text) });
-        return;
-      }
+      if (!file) return;
       event.preventDefault();
       event.stopPropagation();
       capButton.disabled = true;
@@ -1211,52 +1198,6 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       promptBox.executeEdits('claude2', [{ range, text }]);
       promptBox.pushUndoStop();
       promptBox.setPosition(promptModel.getPositionAt(caret));
-    }
-
-    // No tab char ever goes in the box: Tab itself makes list items, and text arriving with tabs
-    // (a paste, a draft, Load) has each one turned into two spaces.
-    function untab(text) {
-      return text.replace(/\\t/g, '  ');
-    }
-
-    // Tab on each line a caret or selection touches: the margin steps right to the next even count
-    // (an odd one by 1, an even one by 2) and the text becomes a "- " item, exactly one space after
-    // the dash. A run of lines leaves its blank ones alone; a lone blank line becomes an empty item.
-    function tabLines() {
-      const lines = new Set();
-      for (const s of promptBox.getSelections()) {
-        // A selection ending at the very start of a line does not take that line in.
-        const last = s.endLineNumber > s.startLineNumber && s.endColumn === 1 ? s.endLineNumber - 1 : s.endLineNumber;
-        for (let n = s.startLineNumber; n <= last; n++) lines.add(n);
-      }
-      const edits = [];
-      const tabbed = new Map();
-      for (const n of lines) {
-        const line = promptModel.getLineContent(n);
-        if (lines.size > 1 && !line.trim()) continue;
-        const start = tabLine(line);
-        edits.push({ range: new monaco.Range(n, 1, n, start.old + 1), text: start.prefix });
-        tabbed.set(n, start);
-      }
-      // A caret keeps its place in its line's text; one that was in the margin or on the dash
-      // lands at the start of the text.
-      const move = (n, col) => {
-        const start = tabbed.get(n);
-        return !start ? col : col > start.old ? col + start.prefix.length - start.old : start.prefix.length + 1;
-      };
-      const selections = promptBox.getSelections().map((s) => new monaco.Selection(
-        s.selectionStartLineNumber, move(s.selectionStartLineNumber, s.selectionStartColumn), s.positionLineNumber, move(s.positionLineNumber, s.positionColumn)));
-      promptBox.pushUndoStop();
-      promptBox.executeEdits('claude2', edits, selections);
-      promptBox.pushUndoStop();
-    }
-
-    // What Tab puts at the start of a line: prefix replaces the line's first old chars, its
-    // margin and any dash with the spaces after it.
-    function tabLine(line) {
-      const margin = line.match(/^ */)[0].length;
-      const dash = line.slice(margin).match(/^- */);
-      return { old: margin + (dash ? dash[0].length : 0), prefix: ' '.repeat(margin + 2 - margin % 2) + '- ' };
     }
 
     // An attached file rides in the text as a <name> tag rather than in a prefix of its own: the
@@ -3591,13 +3532,7 @@ export function snipsHtml(webview: vscode.Webview, dist: string, zoom = 1): stri
   <style>
     body { margin: 0; height: 100vh; overflow: hidden; background: #fcfcfb; color: #000; }
     #snips { position: absolute; inset: 0; }
-    /* Monaco's button labels ("Close (Escape)" on the find box's X) would take the click meant for
-       whatever is under them. Sized to the text: Monaco places a label above its button by the
-       height it measured, and one squeezed against the editor's right edge wrapped after that and
-       grew down over the button. */
-    .context-view:has(.workbench-hover), .context-view:has(.workbench-hover) * { pointer-events: none; }
-    .context-view:has(.workbench-hover) { width: max-content !important; }
-${lineDotStyle()}  </style>
+${monacoStyle()}  </style>
 </head>
 <body>
   <div id="snips"></div>
@@ -3617,6 +3552,7 @@ ${monacoScript(dist)}
       if (!snipsBox) {
         snipsBox = monaco.editor.create(document.getElementById('snips'), { ...editorOptions, value: text });
         addLineDots(snipsBox);
+        addTabKeys(snipsBox);
         snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', text: snipsBox.getValue() }));
         snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => vscode.postMessage({ type: 'closeSnips' }) });
         snipsBox.focus();
@@ -3629,7 +3565,7 @@ ${monacoScript(dist)}
     }
     window.addEventListener('message', (event) => {
       const message = event.data;
-      if (message.type === 'snips') showSnips(String(message.text || ''));
+      if (message.type === 'snips') showSnips(untab(String(message.text || '')));
     });
     // Another window may have changed the text since: coming back to this one picks that up.
     window.addEventListener('focus', () => { if (snipsBox) askSnips(); });
@@ -3642,7 +3578,8 @@ ${monacoScript(dist)}
 }
 
 // Monaco's setup, shared by the prompt box and the Snips tab: the worker, the theme, the user's
-// editing keys, the editor options, and the gutter's line dots. Expects `monaco` and `zoom`.
+// editing keys, the editor options, the gutter's line dots, and Tab's list items with the untabbing
+// of text that arrives. Expects `monaco` and `zoom`.
 function monacoScript(dist: string): string {
   return `
     // A webview can't start a worker from a resource URL, which is a different origin, so the
@@ -3746,14 +3683,82 @@ function monacoScript(dist: string): string {
       window.addEventListener('pointermove', (event) => { dragY = event.clientY; });
       window.addEventListener('pointerup', () => { dragFrom = 0; });
     }
+    // No tab char ever goes in the box: Tab itself makes list items, and text arriving with tabs
+    // (a paste, a draft, Load) has each one turned into two spaces.
+    function untab(text) {
+      return text.replace(/\\t/g, '  ');
+    }
+    // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
+    // completion list or a snippet is up, where Tab means something else. Pasted text loses its tab
+    // chars, through Monaco's own paste so it stays one undo step; the find box's own pastes and a
+    // read-only editor's are left alone. Capture phase, so Monaco never sees the paste.
+    function addTabKeys(editor) {
+      editor.addAction({ id: 'claude2.tabLines', label: 'Make List Items', keybindings: [monaco.KeyCode.Tab], keybindingContext: 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode', run: () => tabLines(editor) });
+      editor.getContainerDomNode().addEventListener('paste', (event) => {
+        const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+        if (!editor.hasTextFocus() || editor.getOption(monaco.editor.EditorOption.readOnly) || !text.includes('\\t')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        editor.trigger('keyboard', 'paste', { text: untab(text) });
+      }, true);
+    }
+    // Tab on each line a caret or selection touches: the margin steps right to the next even count
+    // (an odd one by 1, an even one by 2) and the text becomes a "- " item, exactly one space after
+    // the dash. A run of lines leaves its blank ones alone; a lone blank line becomes an empty item.
+    function tabLines(editor) {
+      const model = editor.getModel();
+      const lines = new Set();
+      for (const s of editor.getSelections()) {
+        // A selection ending at the very start of a line does not take that line in.
+        const last = s.endLineNumber > s.startLineNumber && s.endColumn === 1 ? s.endLineNumber - 1 : s.endLineNumber;
+        for (let n = s.startLineNumber; n <= last; n++) lines.add(n);
+      }
+      const edits = [];
+      const tabbed = new Map();
+      for (const n of lines) {
+        const line = model.getLineContent(n);
+        if (lines.size > 1 && !line.trim()) continue;
+        const start = tabLine(line);
+        edits.push({ range: new monaco.Range(n, 1, n, start.old + 1), text: start.prefix });
+        tabbed.set(n, start);
+      }
+      // A caret keeps its place in its line's text; one that was in the margin or on the dash
+      // lands at the start of the text.
+      const move = (n, col) => {
+        const start = tabbed.get(n);
+        return !start ? col : col > start.old ? col + start.prefix.length - start.old : start.prefix.length + 1;
+      };
+      const selections = editor.getSelections().map((s) => new monaco.Selection(
+        s.selectionStartLineNumber, move(s.selectionStartLineNumber, s.selectionStartColumn), s.positionLineNumber, move(s.positionLineNumber, s.positionColumn)));
+      editor.pushUndoStop();
+      editor.executeEdits('claude2', edits, selections);
+      editor.pushUndoStop();
+    }
+    // What Tab puts at the start of a line: prefix replaces the line's first old chars, its
+    // margin and any dash with the spaces after it.
+    function tabLine(line) {
+      const margin = line.match(/^ */)[0].length;
+      const dash = line.slice(margin).match(/^- */);
+      return { old: margin + (dash ? dash[0].length : 0), prefix: ' '.repeat(margin + 2 - margin % 2) + '- ' };
+    }
 `;
 }
 
-// The prompt box's and Snips tab's line dots, in Monaco's line gutter on the first row of each real line.
-function lineDotStyle(): string {
+// The prompt box's and Snips tab's Monaco styles.
+function monacoStyle(): string {
   return `
+    /* The line dots, in Monaco's line gutter on the first row of each real line. */
     .line-dot { cursor: pointer; }
     .line-dot::after { content: ''; position: absolute; left: 2px; top: 50%; width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: #000; }
+    /* Monaco draws its widgets' text at 11-13px; these are the ones the editor can show. */
+    .monaco-editor .find-widget > .find-part, .monaco-editor .find-widget > .replace-part, .monaco-editor .find-widget .monaco-findInput .input, .monaco-findInput .monaco-inputbox,
+    .quick-input-widget, .context-view.fixed, .monaco-hover, .hover-row.status-bar, .monaco-keybinding > .monaco-keybinding-key, .monaco-editor-overlaymessage .message { font-size: calc(14px * var(--z)) !important; }
+    /* Monaco's button labels ("Close (Escape)" on the find box's X) would take the click meant for
+       whatever is under them. Sized to the text: Monaco places a label above its button by the
+       height it measured, and one squeezed against the editor's right edge wrapped after that and
+       grew down over the button. */
+    .context-view:has(.workbench-hover), .context-view:has(.workbench-hover) * { pointer-events: none; }
+    .context-view:has(.workbench-hover) { width: max-content !important; }
 `;
 }
 
