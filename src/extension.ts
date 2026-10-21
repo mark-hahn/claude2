@@ -337,6 +337,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.renameSession(stringOf(record?.sessionId), stringOf(record?.name));
     } else if (type === "trashSession") {
       // A trashed session's tab goes with its card, and nothing reopens it until it is restored.
+      // A run still going is stopped first, so it cannot carry on editing files out of sight.
+      this.runner.stop(requestedSessionId);
       this.conversationPanels.get(requestedSessionId)?.dispose();
       await this.store.setTrashed(requestedSessionId, true);
       this.refreshSidebar();
@@ -344,6 +346,7 @@ class Claude2Controller implements vscode.Disposable {
       // Oldest first, so the bumped timestamps keep the list in its existing order.
       for (const session of this.store.all().reverse()) {
         if (!session.trashed) {
+          this.runner.stop(session.id);
           this.conversationPanels.get(session.id)?.dispose();
           await this.store.setTrashed(session.id, true);
         }
