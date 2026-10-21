@@ -23,3 +23,4 @@ responses/**
 CLAUDE.md
 .github/**
 *.vsix
+.deploy-version

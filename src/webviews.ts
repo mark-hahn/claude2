@@ -716,7 +716,7 @@ ${tooltipScript()}
     // (below) is the exception.
     let boxOpen = true;
     // Where the box contents land on the next render: 'bottom' after an open, 'top' after
-    // hiding tool groups, null to keep the current position.
+    // hiding tool groups, 'answer' when a run ends, null to keep the current position.
     let boxScrollNext = null;
     let initializedSelection = false;
     let pendingTurnCount = 0;
@@ -1626,7 +1626,10 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       if (streamingTurn && (!active || status.turnId !== streamingTurn)) {
         wasStreaming = streamingTurn;
         // A finished run's box drops its tool groups, the same as a fresh open.
-        if (turns[anchorIndex] && turns[anchorIndex].id === streamingTurn) toolsBox = false;
+        const ended = turns[anchorIndex] && turns[anchorIndex].id === streamingTurn ? turns[anchorIndex] : null;
+        if (ended) toolsBox = false;
+        // A run that answered (not stopped, not failed) lands its open box on the answer.
+        if (ended && boxOpen && !allOpen && ended.finished && !ended.stopped && !ended.error) boxScrollNext = 'answer';
       }
       streamingTurn = active ? status.turnId : null;
       const openTurn = boxOpen && turns[anchorIndex] ? turns[anchorIndex].id : null;
@@ -2054,6 +2057,12 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
         }
       }
       if (response) {
+        // 'answer' puts the answer rule at the top of the box; with no rule the whole box is
+        // the answer, so that is its top.
+        if (boxScroll === 'answer') {
+          const rule = response.querySelector('.answer-rule');
+          boxScroll = rule ? response.scrollTop + rule.getBoundingClientRect().top - response.getBoundingClientRect().top - response.clientTop : 'top';
+        }
         if (boxScroll === 'bottom') response.scrollTop = response.scrollHeight;
         else if (boxScroll === 'top') response.scrollTop = 0;
         else response.scrollTop = boxScroll || 0;

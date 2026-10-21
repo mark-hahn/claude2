@@ -8,13 +8,16 @@ WIN_USER=mark
 WIN_HOME=/mnt/c/Users/$WIN_USER
 
 echo "== bump version =="
-npm version patch --no-git-tag-version >/dev/null
-VERSION=$(node -p "require('./package.json').version")
+# The deployed version lives in the untracked .deploy-version, not package.json, so a deploy
+# leaves no git change. vsce stamps it into the vsix only.
+[ -f .deploy-version ] || node -p "require('./package.json').version" > .deploy-version
+VERSION=$(node -p "const [a,b,c]=require('fs').readFileSync('.deploy-version','utf8').trim().split('.'); [a,b,+c+1].join('.')")
+echo "$VERSION" > .deploy-version
 VSIX=claude2-$VERSION.vsix
 rm -f claude2-*.vsix
 
 echo "== build $VSIX =="
-npx vsce package >/dev/null
+npx vsce package "$VERSION" --no-update-package-json --no-git-tag-version -o "$VSIX" >/dev/null
 ls -la "$VSIX"
 
 echo "== WSL =="

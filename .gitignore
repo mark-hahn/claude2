@@ -6,3 +6,6 @@ out/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# deploy's version counter (see deploy) — keeps package.json out of git status.
+.deploy-version
