@@ -36,9 +36,9 @@ export function sidebarHtml(webview: vscode.Webview): string {
     button:disabled { color: #bfbfbf; border-color: #bfbfbf; cursor: default; }
     #new { width: 42px; }
     /* Drawn rather than typed: font glyphs stay thin even bold, and the + sits low. currentColor keeps the grey-out. */
-    #new svg, #export svg { display: block; margin: 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    #new svg { display: block; margin: 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     /* Icon buttons hug their glyph. */
-    #mngmnt, #export { padding: 0 6px; }
+    #mngmnt { padding: 0 6px; }
     #mngmnt { font-size: 16px; }
     #mngmnt.alert { background: #fbd9d9; border-color: #e4a7a7; }
     #login { width: 64px; display: none; }
@@ -47,6 +47,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #close { width: 56px; }
     /* Grows past its Clean width for the "🗑 12" of a trash-list selection. */
     #clean { min-width: 52px; padding: 0 6px; }
+    #snips { padding: 0 6px; }
     #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
@@ -86,9 +87,9 @@ ${tooltipStyle()}  </style>
     <div class="top">
       <div class="row">
         <button id="mngmnt" title="Quotas, instructions, stats, and models">&#x2699;&#xFE0E;</button>
+        <button id="snips" title="Open or close the Snips tab: snippets of prompt text, one copy shared by every window">Snips</button>
         <button id="new" title="New Claude2 session"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button>
-        <button id="export" title="Export the session up front to a markdown file in the project root" disabled><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button>
-        <button id="close" title="Close every session tab but the current one; again to close the last one, then the management pane" disabled>Close</button>
+        <button id="close" title="Close every session tab but the current one; again to close the Snips tab, then the last one, then the management pane" disabled>Close</button>
         <button id="login" title="Authorization expired: sign in to your Anthropic account again">Re-Auth</button>
       </div>
       <div class="row sessions-row">
@@ -149,8 +150,7 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'trashAllSessions' });
     });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
-    // The pane up front builds the markdown, since it is what knows how its boxes read.
-    document.getElementById('export').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'exportActive', sessionId: selectedId }); });
+    document.getElementById('snips').addEventListener('click', () => vscode.postMessage({ type: 'toggleSnips' }));
     trashButton.addEventListener('click', (event) => {
       // Ctrl-click is the bulk action for whichever list is showing: on the active list
       // everything goes to the trash at once, on the trash list everything in it is
@@ -215,9 +215,6 @@ ${tooltipScript()}
         document.getElementById('close').disabled = message.panesOpen !== true;
         // The CLI's model list changed since the Models tab was last opened.
         document.getElementById('mngmnt').classList.toggle('alert', message.modelsAlert === true);
-        // Nothing to export without a pane up front showing a session with runs in it.
-        const selected = sessions.find((session) => session.id === selectedId);
-        document.getElementById('export').disabled = !selected || !(selected.turns || []).length;
         if (editingId) {
           pendingRender = true;
           return;
@@ -485,7 +482,6 @@ ${tooltipScript()}
 // built there by esbuild.js, loads from it.
 export function conversationHtml(webview: vscode.Webview, dist: string, sessionId: string, defaults: ConversationDefaults, info: ModelInfo, zoom = 1): string {
   const nonce = getNonce();
-  const editorWorkerUrl = JSON.stringify(`${dist}/editorWorker.js`);
   const z = zoomFactor(zoom);
   const models = JSON.stringify(info.models);
   const presets = JSON.stringify(info.presets);
@@ -532,25 +528,6 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
     .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
     .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
-    /* Snips: a pad of prompt snippets laid over the pane, in the pane's own grid cell, so it
-       follows the pane between the two layouts. The pane stays rendered underneath. */
-    #history { grid-row: 1; grid-column: 1; }
-    /* Sized by the cell, never by its own content, like the pane. */
-    #snips-pad { grid-row: 1; grid-column: 1; display: none; flex-direction: column; gap: 6px; min-height: 0; contain: inline-size; padding: 10px 12px 8px; background: var(--page); }
-    .shell.snips-open #snips-pad { display: flex; }
-    .shell.big-prompt-editor #snips-pad { grid-column: 2; }
-    .snips-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; }
-    .snips-head button { font-weight: 400; }
-    .snips-edit { flex: 1 1 0; min-height: 0; position: relative; border: 1px solid var(--border); }
-    .snips-edit > div { position: absolute; inset: 0; }
-    /* Monaco's button labels ("Close (Escape)" on the find box's X) pop up over the pad's header,
-       and would take the click meant for whatever is under them. Sized to the text: Monaco places a
-       label above its button by the height it measured, and one squeezed against the editor's
-       right edge wrapped after that and grew down over the button. */
-    .context-view:has(.workbench-hover), .context-view:has(.workbench-hover) * { pointer-events: none; }
-    .context-view:has(.workbench-hover) { width: max-content !important; }
-    /* The sent prompt's yellow theme is page-wide; the pad keeps the plain background. */
-    #snips-pad .monaco-editor { --vscode-editor-background: #fcfcfb; --vscode-editorGutter-background: #fcfcfb; --vscode-editorStickyScroll-background: #fcfcfb; --vscode-editorStickyScrollGutter-background: #fcfcfb; }
     /* Scoped: Monaco puts an "empty" class on its find box input. */
     .history > .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -620,6 +597,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .dock-controls button { background: #fff; }
     .dock-controls button:hover:not(:disabled) { background: #fff; border-color: #000; }
     .dock-controls button:disabled { background: #fff; color: #bfbfbf; border-color: #bfbfbf; }
+    /* Drawn rather than typed, as the sidebar's + is; one line tall, so the row keeps its height. */
+    #export svg { display: block; width: 1.45em; height: 1.45em; fill: none; stroke: currentColor; stroke-width: 1.0; stroke-linecap: round; stroke-linejoin: round; }
     #stop { display: inline-flex; align-items: center; justify-content: center; font-size: calc(16px * var(--z)); line-height: 1; }
     /* Scoped to the enabled state on purpose: an id beats the .dock-controls disabled rule, so a
        plain "#stop { color: #000 }" would keep the glyph black while the button is dead. */
@@ -658,16 +637,12 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
        one is which is answered by clicking it, not by reading it. */
     .img-char { cursor: pointer; }
-    /* The prompt box's and snips pad's line dots, in Monaco's line gutter on the first row of each real line. */
-    .line-dot { cursor: pointer; }
-    .line-dot::after { content: ''; position: absolute; left: 2px; top: 50%; width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: #000; }
-    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
+${lineDotStyle()}    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="shell">
     <div id="history" class="history"><div class="empty"></div></div>
-    <div id="snips-pad"><div class="snips-head"><span>Snips</span><button id="snips-close">Close</button></div><div class="snips-edit"><div></div></div></div>
     <div class="dock">
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
@@ -677,7 +652,7 @@ ${tooltipStyle()}  </style>
         </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="snips" title="Snippets of prompt text, one copy shared by every window">Snips</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
           <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
       </div>
@@ -764,74 +739,15 @@ ${tooltipScript()}
     let imageCount = 0;
     const historyBox = document.getElementById('history');
     // The prompt box is a Monaco editor: VS Code's own editing (multi-cursor, find/replace, line
-    // moves, its undo) on a markdown model. A webview can't start a worker from a resource URL,
-    // which is a different origin, so the worker is a blob that imports the bundled one.
-    self.MonacoEnvironment = { getWorker: () => new Worker(URL.createObjectURL(new Blob(['importScripts(' + JSON.stringify(${editorWorkerUrl}) + ')'], { type: 'text/javascript' }))) };
-    const themeColors = { 'editor.background': '#fcfcfb', foreground: '#000000', descriptionForeground: '#000000', 'input.placeholderForeground': '#000000', 'keybindingLabel.foreground': '#000000' };
-    monaco.editor.defineTheme('claude2', {
-      base: 'vs',
-      inherit: true,
-      // Black wherever the stock light theme greys text: html delimiters, widget text, placeholders.
-      rules: [{ token: 'delimiter.html', foreground: '000000' }],
-      colors: themeColors,
-    });
-    // promptSent's: the same, on the prompt bar's yellow. A theme is page-wide, but this page has one editor.
+    // moves, its undo) on a markdown model.
+${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. A theme is page-wide, but this page has one editor.
     monaco.editor.defineTheme('claude2-sent', {
       base: 'vs',
       inherit: true,
       rules: [{ token: 'delimiter.html', foreground: '000000' }],
       colors: { ...themeColors, 'editor.background': '#fff7bf' },
     });
-    // F1 belongs to VS Code, not to Monaco's own command palette. Unbound here, for both editors,
-    // the key goes on through the webview to the workbench's keybindings.
-    monaco.editor.addKeybindingRule({ keybinding: monaco.KeyCode.F1, command: '-editor.action.quickCommand' });
-    // The user's own VS Code editing keys, which Monaco in a webview never sees. Ctrl-D is otherwise
-    // Monaco's add-next-match, and shift-alt-left/right its smart select.
-    const { KeyMod, KeyCode } = monaco;
-    const writable = 'textInputFocus && !editorReadonly';
-    monaco.editor.addKeybindingRules([
-      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyD, command: 'editor.action.deleteLines', when: writable },
-      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyJ, command: 'editor.action.joinLines', when: writable },
-      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD, command: 'editor.action.duplicateSelection', when: writable },
-      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyU, command: 'editor.action.transformToUppercase', when: writable },
-      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyL, command: 'editor.action.transformToLowercase', when: writable },
-      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.LeftArrow, command: 'cursorUndo', when: 'textInputFocus' },
-      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.RightArrow, command: 'cursorRedo', when: 'textInputFocus' },
-    ]);
     const promptHost = document.getElementById('prompt');
-    // Shared with the Snips pad's editor.
-    const editorOptions = {
-      language: 'markdown',
-      theme: 'claude2',
-      automaticLayout: true,
-      wordWrap: 'on',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 14 * zoom,
-      lineHeight: 1.5,
-      tabSize: 2,
-      // Ctrl-click adds and removes cursors (Monaco's default is alt), so alt-click follows links.
-      multiCursorModifier: 'ctrlCmd',
-      // With the frame's 3px inset and 1px border: the old textarea's gap on top, a small one below.
-      padding: { top: 7, bottom: 3 },
-      // Room for the line dot and a clear gap after it before the text.
-      lineDecorationsWidth: 14,
-      lineNumbers: 'off',
-      glyphMargin: false,
-      folding: false,
-      minimap: { enabled: false },
-      overviewRulerLanes: 0,
-      scrollBeyondLastLine: false,
-      // Popups may overhang the box's frame instead of being clipped by it.
-      fixedOverflowWidgets: true,
-      // VS Code's own markdown defaults: no completion popups while typing, no boxes on curly quotes.
-      quickSuggestions: false,
-      unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },
-      // The textarea input path: VS Code's webview host forwards copy and paste as execCommand,
-      // which lands on a focused textarea.
-      editContext: false,
-      // What typing into a sent prompt says.
-      readOnlyMessage: { value: 'Already sent. Ctrl-Enter clears the box for the next prompt.' },
-    };
     // Monaco places the caret on an all-ASCII line by counting columns instead of measuring, and it
     // judges ASCII by the text alone: the injected 🖼️ chars are wider than the columns they count
     // as, so with them in front every caret and click lands to the right. Measuring is always right.
@@ -845,48 +761,6 @@ ${tooltipScript()}
     }
     promptBox.onDidContentSizeChange(fitPrompt);
     fitPrompt();
-    // A dot in the gutter on the first row of each real line, so a wrapped line reads as one.
-    // Clicking a dot selects that line with its line break, like a line number in VS Code, and
-    // dragging from it selects every line passed over. Monaco leaves gutter clicks alone and keeps
-    // focus where it was, so the editor takes it here.
-    function addLineDots(editor) {
-      const model = editor.getModel();
-      const dots = editor.createDecorationsCollection();
-      const show = () => dots.set(Array.from({ length: model.getLineCount() }, (_, i) => ({
-        range: new monaco.Range(i + 1, 1, i + 1, 1),
-        options: { isWholeLine: true, firstLineDecorationClassName: 'line-dot' },
-      })));
-      model.onDidChangeContent(show);
-      show();
-      const selectLines = (from, to) => {
-        const top = Math.min(from, to), bottom = Math.max(from, to);
-        editor.setSelection(bottom < model.getLineCount() ? new monaco.Range(top, 1, bottom + 1, 1) : new monaco.Range(top, 1, bottom, model.getLineMaxColumn(bottom)));
-      };
-      // The line the drag started on and the pointer's height, while the button is down. Past the
-      // box's top or bottom edge it scrolls, faster the further out the pointer is, and the line
-      // taken is the one at that edge. Half a line in from the edge clears the padding.
-      let dragFrom = 0, dragY = 0;
-      const drag = () => {
-        if (!dragFrom) return;
-        const rect = editor.getDomNode().getBoundingClientRect();
-        const past = dragY < rect.top ? dragY - rect.top : dragY > rect.bottom ? dragY - rect.bottom : 0;
-        if (past) editor.setScrollTop(editor.getScrollTop() + past / 4);
-        const inset = editor.getOption(monaco.editor.EditorOption.lineHeight) / 2;
-        const target = editor.getTargetAtClientPoint(rect.left + rect.width / 2, Math.min(Math.max(dragY, rect.top + inset), rect.bottom - inset));
-        if (target && target.position) selectLines(dragFrom, target.position.lineNumber);
-        requestAnimationFrame(drag);
-      };
-      editor.onMouseDown((event) => {
-        if (!event.target.element || !event.target.element.closest('.line-dot')) return;
-        dragFrom = event.target.position.lineNumber;
-        dragY = event.event.browserEvent.clientY;
-        selectLines(dragFrom, dragFrom);
-        editor.focus();
-        requestAnimationFrame(drag);
-      });
-      window.addEventListener('pointermove', (event) => { dragY = event.clientY; });
-      window.addEventListener('pointerup', () => { dragFrom = 0; });
-    }
     addLineDots(promptBox);
     // DEBUG: why the box runs taller than its text inside VS Code. Logs to the Claude2 output.
     new ResizeObserver(() => {
@@ -901,52 +775,11 @@ ${tooltipScript()}
         big: bigPromptEditor, dpr: devicePixelRatio, zoom,
       }) });
     }).observe(promptHost);
-    // The Snips pad: one Monaco editor over the pane, its text kept by the extension in globalState
-    // so every window shares it. Built on the first open, from the stored text, so nothing typed
-    // before the text arrives can overwrite it. Every keystroke is saved, like the draft.
-    const shell = document.querySelector('.shell');
-    const snipsHost = document.getElementById('snips-pad');
-    let snipsBox = null;
-    // The pad's version when the text was last asked for: a reply that lands after more typing is stale.
-    let snipsAsked = 0;
-    function askSnips() {
-      snipsAsked = snipsBox ? snipsBox.getModel().getVersionId() : 0;
-      vscode.postMessage({ type: 'snipsLoad', sessionId });
-    }
-    function showSnips(text) {
-      if (!snipsBox) {
-        snipsBox = monaco.editor.create(snipsHost.querySelector('.snips-edit > div'), { ...editorOptions, fontSize: 14 * zoom, value: text });
-        addLineDots(snipsBox);
-        snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', sessionId, text: snipsBox.getValue() }));
-        snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => setSnipsOpen(false) });
-        snipsBox.focus();
-        return;
-      }
-      if (snipsBox.getModel().getVersionId() !== snipsAsked || snipsBox.getValue() === text) return;
-      const view = snipsBox.saveViewState();
-      snipsBox.setValue(text);
-      snipsBox.restoreViewState(view);
-    }
-    function setSnipsOpen(open) {
-      shell.classList.toggle('snips-open', open);
-      if (!open) return promptBox.focus();
-      askSnips();
-      if (snipsBox) snipsBox.focus();
-    }
     // Clr: /clear, sent like the gauge's /compact so the draft in the box stays.
     const clrButton = document.getElementById('clr');
     clrButton.addEventListener('click', () => vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/clear', model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value, keepDraft: true }));
-    document.getElementById('snips').addEventListener('click', () => setSnipsOpen(!shell.classList.contains('snips-open')));
-    document.getElementById('snips-close').addEventListener('click', () => setSnipsOpen(false));
-    // Another window may have changed the text since: coming back to this one picks that up.
-    window.addEventListener('focus', () => {
-      if (snipsBox && shell.classList.contains('snips-open')) askSnips();
-    });
     // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
-    new MutationObserver(() => {
-      promptBox.updateOptions({ fontSize: 14 * zoom });
-      if (snipsBox) snipsBox.updateOptions({ fontSize: 14 * zoom });
-    }).observe(document.documentElement, { attributeFilter: ['style'] });
+    new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
     const advisorSelect = document.getElementById('advisor');
@@ -1009,15 +842,9 @@ ${tooltipScript()}
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
-      } else if (message.type === 'snips') {
-        showSnips(String(message.text || ''));
-      } else if (message.type === 'closeSnips') {
-        shell.classList.remove('snips-open');
       } else if (message.type === 'stopDeclined') {
         stoppingTurn = null;
         stopButton.classList.remove('stopping');
-      } else if (message.type === 'exportSelected') {
-        vscode.postMessage({ type: 'exportSession', sessionId, markdown: exportMarkdown() });
       } else if (message.type === 'imagesState') {
         imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
@@ -1057,7 +884,7 @@ ${tooltipScript()}
 
     // Ctrl-Enter sends, in place of Monaco's insert-line-below. On a sent prompt it clears the box
     // instead, and on an empty one it toggles bigPromptEditor. Actions, not addCommand: Monaco's
-    // addCommand keys are page-wide, so they would fire in the Snips pad too.
+    // addCommand keys are page-wide.
     promptBox.addAction({ id: 'claude2.submitPrompt', label: 'Send Prompt', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => submitPrompt() });
     // Ctrl-Alt-click anywhere in the box toggles bigPromptEditor, in either mode, and focuses the
     // box. Capture phase, so Monaco never sees the press (its ctrl-click adds a cursor), which also
@@ -1183,6 +1010,8 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey !== true });
     });
     document.getElementById('file').addEventListener('click', () => vscode.postMessage({ type: 'pickFile', sessionId }));
+    const exportButton = document.getElementById('export');
+    exportButton.addEventListener('click', () => vscode.postMessage({ type: 'exportSession', sessionId, markdown: exportMarkdown() }));
     // Manual scrolling never changes the selection; it is free only inside the window the
     // auto-scrolling rules allow (bordering bars and selected bar visible), so the scroll
     // position is clamped rather than the selection moved.
@@ -1529,7 +1358,6 @@ ${tooltipScript()}
       // Sending during a run is allowed: the extension stops the running turn and takes this
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
       if (!prompt.trim() && !imageCount) return setBigPromptEditor(!bigPromptEditor);
-      shell.classList.remove('snips-open');
       markStopping();
       vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value });
       // The text stays, read-only, and the extension drops its draft copy on its own.
@@ -1838,6 +1666,7 @@ ${tooltipScript()}
       stopButton.disabled = !active;
       // Clr sends /clear, which would stop a running turn, and has nothing to clear before one.
       clrButton.disabled = active || !session.turns.length;
+      exportButton.disabled = !session.turns.length;
       // The stopped turn has ended (or a Ctrl-Enter replacement has started in its place).
       if (stoppingTurn && (!active || status.turnId !== stoppingTurn)) {
         stoppingTurn = null;
@@ -3746,6 +3575,188 @@ ${zoomScript(z)}
 // reported to the extension, which stores it and seeds `initial` here when the pane is rebuilt --
 // webview state alone would not survive a window reload, since the panels are not serialized.
 // Requires the pane's script to have already declared `vscode`; drop it in right after acquireVsCodeApi().
+// The Snips tab: one Monaco editor of prompt snippets, its text kept by the extension in
+// globalState so every window shares it. Built from the stored text once it arrives, so nothing
+// typed before then can overwrite it. Every keystroke is saved, like the draft.
+export function snipsHtml(webview: vscode.Webview, dist: string, zoom = 1): string {
+  const nonce = getNonce();
+  const z = zoomFactor(zoom);
+  return `<!doctype html>
+<html lang="en" style="--z: ${z}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; font-src ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource}; worker-src blob:;">
+  <link rel="stylesheet" href="${dist}/promptEditor.css">
+  <style>
+    body { margin: 0; height: 100vh; overflow: hidden; background: #fcfcfb; color: #000; }
+    #snips { position: absolute; inset: 0; }
+    /* Monaco's button labels ("Close (Escape)" on the find box's X) would take the click meant for
+       whatever is under them. Sized to the text: Monaco places a label above its button by the
+       height it measured, and one squeezed against the editor's right edge wrapped after that and
+       grew down over the button. */
+    .context-view:has(.workbench-hover), .context-view:has(.workbench-hover) * { pointer-events: none; }
+    .context-view:has(.workbench-hover) { width: max-content !important; }
+${lineDotStyle()}  </style>
+</head>
+<body>
+  <div id="snips"></div>
+  <script nonce="${nonce}" src="${dist}/promptEditor.js"></script>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+${zoomScript(z)}
+${monacoScript(dist)}
+    let snipsBox = null;
+    // The editor's version when the text was last asked for: a reply that lands after more typing is stale.
+    let snipsAsked = 0;
+    function askSnips() {
+      snipsAsked = snipsBox ? snipsBox.getModel().getVersionId() : 0;
+      vscode.postMessage({ type: 'snipsLoad' });
+    }
+    function showSnips(text) {
+      if (!snipsBox) {
+        snipsBox = monaco.editor.create(document.getElementById('snips'), { ...editorOptions, value: text });
+        addLineDots(snipsBox);
+        snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', text: snipsBox.getValue() }));
+        snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => vscode.postMessage({ type: 'closeSnips' }) });
+        snipsBox.focus();
+        return;
+      }
+      if (snipsBox.getModel().getVersionId() !== snipsAsked || snipsBox.getValue() === text) return;
+      const view = snipsBox.saveViewState();
+      snipsBox.setValue(text);
+      snipsBox.restoreViewState(view);
+    }
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message.type === 'snips') showSnips(String(message.text || ''));
+    });
+    // Another window may have changed the text since: coming back to this one picks that up.
+    window.addEventListener('focus', () => { if (snipsBox) askSnips(); });
+    // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
+    new MutationObserver(() => { if (snipsBox) snipsBox.updateOptions({ fontSize: 14 * zoom }); }).observe(document.documentElement, { attributeFilter: ['style'] });
+    askSnips();
+  </script>
+</body>
+</html>`;
+}
+
+// Monaco's setup, shared by the prompt box and the Snips tab: the worker, the theme, the user's
+// editing keys, the editor options, and the gutter's line dots. Expects `monaco` and `zoom`.
+function monacoScript(dist: string): string {
+  return `
+    // A webview can't start a worker from a resource URL, which is a different origin, so the
+    // worker is a blob that imports the bundled one.
+    self.MonacoEnvironment = { getWorker: () => new Worker(URL.createObjectURL(new Blob(['importScripts(' + JSON.stringify(${JSON.stringify(`${dist}/editorWorker.js`)}) + ')'], { type: 'text/javascript' }))) };
+    const themeColors = { 'editor.background': '#fcfcfb', foreground: '#000000', descriptionForeground: '#000000', 'input.placeholderForeground': '#000000', 'keybindingLabel.foreground': '#000000' };
+    monaco.editor.defineTheme('claude2', {
+      base: 'vs',
+      inherit: true,
+      // Black wherever the stock light theme greys text: html delimiters, widget text, placeholders.
+      rules: [{ token: 'delimiter.html', foreground: '000000' }],
+      colors: themeColors,
+    });
+    // F1 belongs to VS Code, not to Monaco's own command palette. Unbound here, for every editor,
+    // the key goes on through the webview to the workbench's keybindings.
+    monaco.editor.addKeybindingRule({ keybinding: monaco.KeyCode.F1, command: '-editor.action.quickCommand' });
+    // The user's own VS Code editing keys, which Monaco in a webview never sees. Ctrl-D is otherwise
+    // Monaco's add-next-match, and shift-alt-left/right its smart select.
+    const { KeyMod, KeyCode } = monaco;
+    const writable = 'textInputFocus && !editorReadonly';
+    monaco.editor.addKeybindingRules([
+      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyD, command: 'editor.action.deleteLines', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyCode.KeyJ, command: 'editor.action.joinLines', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyD, command: 'editor.action.duplicateSelection', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyU, command: 'editor.action.transformToUppercase', when: writable },
+      { keybinding: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | KeyCode.KeyL, command: 'editor.action.transformToLowercase', when: writable },
+      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.LeftArrow, command: 'cursorUndo', when: 'textInputFocus' },
+      { keybinding: KeyMod.Shift | KeyMod.Alt | KeyCode.RightArrow, command: 'cursorRedo', when: 'textInputFocus' },
+    ]);
+    const editorOptions = {
+      language: 'markdown',
+      theme: 'claude2',
+      automaticLayout: true,
+      wordWrap: 'on',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: 14 * zoom,
+      lineHeight: 1.5,
+      tabSize: 2,
+      // Ctrl-click adds and removes cursors (Monaco's default is alt), so alt-click follows links.
+      multiCursorModifier: 'ctrlCmd',
+      // With the frame's 3px inset and 1px border: the old textarea's gap on top, a small one below.
+      padding: { top: 7, bottom: 3 },
+      // Room for the line dot and a clear gap after it before the text.
+      lineDecorationsWidth: 14,
+      lineNumbers: 'off',
+      glyphMargin: false,
+      folding: false,
+      minimap: { enabled: false },
+      overviewRulerLanes: 0,
+      scrollBeyondLastLine: false,
+      // Popups may overhang the box's frame instead of being clipped by it.
+      fixedOverflowWidgets: true,
+      // VS Code's own markdown defaults: no completion popups while typing, no boxes on curly quotes.
+      quickSuggestions: false,
+      unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false },
+      // The textarea input path: VS Code's webview host forwards copy and paste as execCommand,
+      // which lands on a focused textarea.
+      editContext: false,
+      // What typing into a sent prompt says.
+      readOnlyMessage: { value: 'Already sent. Ctrl-Enter clears the box for the next prompt.' },
+    };
+    // A dot in the gutter on the first row of each real line, so a wrapped line reads as one.
+    // Clicking a dot selects that line with its line break, like a line number in VS Code, and
+    // dragging from it selects every line passed over. Monaco leaves gutter clicks alone and keeps
+    // focus where it was, so the editor takes it here.
+    function addLineDots(editor) {
+      const model = editor.getModel();
+      const dots = editor.createDecorationsCollection();
+      const show = () => dots.set(Array.from({ length: model.getLineCount() }, (_, i) => ({
+        range: new monaco.Range(i + 1, 1, i + 1, 1),
+        options: { isWholeLine: true, firstLineDecorationClassName: 'line-dot' },
+      })));
+      model.onDidChangeContent(show);
+      show();
+      const selectLines = (from, to) => {
+        const top = Math.min(from, to), bottom = Math.max(from, to);
+        editor.setSelection(bottom < model.getLineCount() ? new monaco.Range(top, 1, bottom + 1, 1) : new monaco.Range(top, 1, bottom, model.getLineMaxColumn(bottom)));
+      };
+      // The line the drag started on and the pointer's height, while the button is down. Past the
+      // box's top or bottom edge it scrolls, faster the further out the pointer is, and the line
+      // taken is the one at that edge. Half a line in from the edge clears the padding.
+      let dragFrom = 0, dragY = 0;
+      const drag = () => {
+        if (!dragFrom) return;
+        const rect = editor.getDomNode().getBoundingClientRect();
+        const past = dragY < rect.top ? dragY - rect.top : dragY > rect.bottom ? dragY - rect.bottom : 0;
+        if (past) editor.setScrollTop(editor.getScrollTop() + past / 4);
+        const inset = editor.getOption(monaco.editor.EditorOption.lineHeight) / 2;
+        const target = editor.getTargetAtClientPoint(rect.left + rect.width / 2, Math.min(Math.max(dragY, rect.top + inset), rect.bottom - inset));
+        if (target && target.position) selectLines(dragFrom, target.position.lineNumber);
+        requestAnimationFrame(drag);
+      };
+      editor.onMouseDown((event) => {
+        if (!event.target.element || !event.target.element.closest('.line-dot')) return;
+        dragFrom = event.target.position.lineNumber;
+        dragY = event.event.browserEvent.clientY;
+        selectLines(dragFrom, dragFrom);
+        editor.focus();
+        requestAnimationFrame(drag);
+      });
+      window.addEventListener('pointermove', (event) => { dragY = event.clientY; });
+      window.addEventListener('pointerup', () => { dragFrom = 0; });
+    }
+`;
+}
+
+// The prompt box's and Snips tab's line dots, in Monaco's line gutter on the first row of each real line.
+function lineDotStyle(): string {
+  return `
+    .line-dot { cursor: pointer; }
+    .line-dot::after { content: ''; position: absolute; left: 2px; top: 50%; width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: #000; }
+`;
+}
+
 function zoomScript(initial: number): string {
   return `
     const MIN_ZOOM = 0.8;

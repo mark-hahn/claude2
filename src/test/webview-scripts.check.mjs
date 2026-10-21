@@ -9,11 +9,12 @@
 import assert from 'assert';
 import { createRequire } from 'module';
 
-const { sidebarHtml, conversationHtml, managementHtml } = createRequire(import.meta.url)('/tmp/webviews.cjs');
+const { sidebarHtml, conversationHtml, managementHtml, snipsHtml } = createRequire(import.meta.url)('/tmp/webviews.cjs');
 const webview = { cspSource: 'vscode-resource:' };
 const defaults = { model: 'claude-opus-5', effort: 'high', advisor: '', contextWindow: 256000, maxTurns: 10 };
 const pages = {
   sidebar: sidebarHtml(webview),
+  snips: snipsHtml(webview, 'vscode-resource:/dist', 1),
   conversation: conversationHtml(webview, 'vscode-resource:/dist', 'session-id', defaults, { models: { sonnet: ['low', 'high'], haiku: [] }, presets: [{ enabled: true, model: 'sonnet', effort: 'high' }], prefs: { haiku: { on: false, alias: '' } }, defaultPreset: 0, date: 0, seenDate: 0 }, 1),
   instructions: managementHtml(webview, 'instructions', 'UTC', 1),
   quota: managementHtml(webview, 'quota', 'UTC', 1),

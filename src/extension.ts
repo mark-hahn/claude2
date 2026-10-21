@@ -13,7 +13,7 @@ import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
 import { ANSWER_MARK, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
-import { conversationHtml, managementHtml, sidebarHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
+import { conversationHtml, managementHtml, sidebarHtml, snipsHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
 let controller: Claude2Controller | undefined;
@@ -97,6 +97,7 @@ class Claude2Controller implements vscode.Disposable {
   private sidebarProvider: ClaudeSidebarProvider | null = null;
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
+  private snipsPanel: vscode.WebviewPanel | null = null;
   // The load's `claude update` + model check; runs wait on it (see waitForUpdate).
   private modelsReady: Promise<void> = Promise.resolve();
   // The Settings pane's values as of this window's load; a Save here updates them too.
@@ -251,6 +252,7 @@ class Claude2Controller implements vscode.Disposable {
       panel.dispose();
     }
     this.managementPanel?.dispose();
+    this.snipsPanel?.dispose();
   }
 
   public sessions() {
@@ -303,13 +305,20 @@ class Claude2Controller implements vscode.Disposable {
       await this.copyToClipboard(stringOf(record?.text));
       return;
     }
+    // Snips are for pasting into a session, so the empty one waiting for that has to survive too.
+    if (type === "toggleSnips") {
+      this.toggleSnips();
+      return;
+    }
     // A session created by "+" that never got a prompt is scratch: drop it as soon as
     // attention moves to any other sidebar control or session card. "Close" keeps the
     // current tab, so its session survives the sweep even when it is still empty --
-    // unless it is the last one, where "Close" takes it down with the rest.
+    // unless it is the last one, where "Close" takes it down with the rest. While the Snips
+    // tab is still up, the last one is spared, since that click closes Snips instead.
     const requestedSessionId = stringOf(record?.sessionId);
     const sessionPaneCount = this.conversationPanels.size;
-    const keepId = requestedSessionId || (type === "closeOtherSessions" && sessionPaneCount > 1 ? this.activeConversationId() : "");
+    const lastId = sessionPaneCount === 1 && this.snipsPanel ? [...this.conversationPanels.keys()][0] : "";
+    const keepId = requestedSessionId || (type === "closeOtherSessions" ? (sessionPaneCount > 1 ? this.activeConversationId() : lastId) : "");
     await this.discardEmptySessions(keepId);
     if (type === "closeOtherSessions") {
       this.closeSessionPanes(keepId, sessionPaneCount);
@@ -344,8 +353,6 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "moveSessionToTop") {
       await this.store.touch(requestedSessionId);
       this.refreshSidebar();
-    } else if (type === "exportActive") {
-      void this.conversationPanels.get(requestedSessionId)?.webview.postMessage({ type: "exportSelected" });
     } else if (type === "searchChanged") {
       this.setSearch(stringOf(record?.text));
     } else if (type === "login") {
@@ -565,8 +572,6 @@ class Claude2Controller implements vscode.Disposable {
     this.lastConversationId = sessionId;
     panel.title = session.name;
     panel.reveal(vscode.ViewColumn.One);
-    // A brand-new panel drops it, but starts with the pad closed anyway.
-    void panel.webview.postMessage({ type: "closeSnips" });
     this.postConversationState(sessionId);
     this.refreshSidebar();
     if (focusPrompt) {
@@ -649,10 +654,14 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // "Close" works down a ladder: with several session tabs open it keeps the current one,
-  // with a single one left it closes that too, and once no session tab remains the click
-  // closes the management pane. `paneCount` is the count from before empty sessions were
-  // swept, so the sweep itself cannot promote a close into a management-pane close.
+  // then it closes the Snips tab, then the last session tab, and once no session tab remains
+  // the click closes the management pane. `paneCount` is the count from before empty sessions
+  // were swept, so the sweep itself cannot promote a close into a later rung.
   private closeSessionPanes(keepId: string, paneCount: number): void {
+    if (paneCount <= 1 && this.snipsPanel) {
+      this.snipsPanel.dispose();
+      return;
+    }
     if (paneCount === 0) {
       this.managementPanel?.dispose();
       return;
@@ -698,10 +707,6 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
     } else if (type === "sentPromptChanged") {
       await this.store.setBoxFlag(sessionId, "sentPrompt", record?.on === true);
-    } else if (type === "snipsLoad") {
-      void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "snips", text: this.context.globalState.get<string>(snipsKey, "") });
-    } else if (type === "snipsChanged") {
-      await this.context.globalState.update(snipsKey, stringOf(record?.text));
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
@@ -1053,7 +1058,7 @@ class Claude2Controller implements vscode.Disposable {
   // What the sidebar's Close button works down: a session tab, or the management pane once
   // none are left. With neither up there is nothing to close and the button greys out.
   public hasOpenPanes(): boolean {
-    return this.conversationPanels.size > 0 || this.managementPanel !== null;
+    return this.conversationPanels.size > 0 || this.managementPanel !== null || this.snipsPanel !== null;
   }
 
   // Resolves to the signed-in account summary, or null when the user cancelled the code box.
@@ -1631,6 +1636,45 @@ class Claude2Controller implements vscode.Disposable {
     return session.name === "New session" || this.draftNames.has(session.id);
   }
 
+  // The sidebar's Snips button: closes the Snips tab when it is up front, otherwise brings it up.
+  private toggleSnips(): void {
+    if (this.snipsPanel?.visible) {
+      this.snipsPanel.dispose();
+      return;
+    }
+    if (!this.snipsPanel) {
+      const panel = vscode.window.createWebviewPanel("claude2.snips", "Snips", vscode.ViewColumn.One, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      });
+      panel.iconPath = this.tabIcon();
+      const dist = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist")).toString();
+      panel.webview.html = snipsHtml(panel.webview, dist, this.zoomOf("snips"));
+      panel.webview.onDidReceiveMessage((message) => void this.handleSnipsMessage(message));
+      panel.onDidDispose(() => {
+        this.snipsPanel = null;
+        this.refreshSidebar();
+      });
+      this.snipsPanel = panel;
+      this.refreshSidebar();
+    }
+    this.snipsPanel.reveal(vscode.ViewColumn.One);
+  }
+
+  private async handleSnipsMessage(message: unknown): Promise<void> {
+    const record = recordOf(message);
+    const type = stringOf(record?.type);
+    if (type === "zoom") {
+      await this.noteZoom("snips", record?.zoom);
+    } else if (type === "snipsLoad") {
+      void this.snipsPanel?.webview.postMessage({ type: "snips", text: this.context.globalState.get<string>(snipsKey, "") });
+    } else if (type === "snipsChanged") {
+      await this.context.globalState.update(snipsKey, stringOf(record?.text));
+    } else if (type === "closeSnips") {
+      this.snipsPanel?.dispose();
+    }
+  }
+
   private async openManagement(pane: ManagementPane): Promise<void> {
     if (!(await this.mayLeaveManagement())) {
       return;
@@ -2090,11 +2134,11 @@ class Claude2Controller implements vscode.Disposable {
   // Ctrl-wheel / Ctrl-+ zoom is kept here rather than in webview state: nothing serializes these
   // panels, so a window reload builds a fresh webview whose own state is empty. Conversation and
   // management panes start from different font sizes, so each remembers its own factor.
-  private zoomOf(kind: "conversation" | "management"): number {
+  private zoomOf(kind: "conversation" | "management" | "snips"): number {
     return zoomFactor(this.context.globalState.get<number>(`zoom.${kind}`, 1));
   }
 
-  private async noteZoom(kind: "conversation" | "management", value: unknown): Promise<void> {
+  private async noteZoom(kind: "conversation" | "management" | "snips", value: unknown): Promise<void> {
     await this.context.globalState.update(`zoom.${kind}`, zoomFactor(value));
   }
 
@@ -2230,7 +2274,7 @@ const authNeededKey = "authNeeded";
 const draftsKey = "drafts";
 // Retired: an older build parked one draft here when its session went away. Cleared on load.
 const promptTextLostKey = "promptTextLost";
-// The Snips pad's text. globalState lives on the client, so every window -- windows, wsl, ssh -- shares it.
+// The Snips tab's text. globalState lives on the client, so every window -- windows, wsl, ssh -- shares it.
 const snipsKey = "snips";
 
 // A stray key would send the CLI to API-key auth instead of the subscription OAuth flow.
