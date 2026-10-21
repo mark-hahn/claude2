@@ -527,7 +527,10 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* Sized by the column, never by its own content, or a long line would widen the column. */
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
     .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
-    .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; }
+    /* Focusable (tabindex) so a click in a box lands focus here, not on body: VS Code's webview
+       host answers ctrl-c with execCommand('copy'), and first puts focus back on the last focused
+       element when body has it -- the prompt box, whose empty selection is then what gets copied. */
+    .history { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 10px 12px 4px; outline: none; }
     /* Scoped: Monaco puts an "empty" class on its find box input. */
     .history > .empty { color: var(--muted); height: 100%; display: grid; place-items: center; }
     .turn { margin-bottom: 4px; }
@@ -639,7 +642,7 @@ ${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="shell">
-    <div id="history" class="history"><div class="empty"></div></div>
+    <div id="history" class="history" tabindex="-1"><div class="empty"></div></div>
     <div class="dock">
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
@@ -839,6 +842,9 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
         render();
       } else if (message.type === 'focusPrompt') {
         promptBox.focus();
+      } else if (message.type === 'toggleBigPrompt') {
+        setBigPromptEditor(!bigPromptEditor);
+        promptBox.focus();
       } else if (message.type === 'stopDeclined') {
         stoppingTurn = null;
         stopButton.classList.remove('stopping');
@@ -899,6 +905,8 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       event.preventDefault();
       event.stopPropagation();
     }, true);
+    // Ctrl-Alt-Z does the same from anywhere in the tab: a VS Code keybinding (package.json) that
+    // posts 'toggleBigPrompt' here. VS Code forwards keys pressed in this webview to it.
     addTabKeys(promptBox);
     // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
     // newline to count, so the top line is the one where the caret's own Up didn't move it.

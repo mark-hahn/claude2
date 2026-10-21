@@ -216,6 +216,13 @@ class Claude2Controller implements vscode.Disposable {
       vscode.commands.registerCommand("claude2.openInstructions", () => void this.openManagement("instructions")),
       vscode.commands.registerCommand("claude2.openQuota", () => void this.openManagement("quota")),
       vscode.commands.registerCommand("claude2.simulateModelChange", () => void this.simulateModelChange()),
+      // Ctrl-Alt-Z: a workbench keybinding, so it works wherever focus sits in the tab; a key
+      // pressed inside the webview is forwarded here too.
+      vscode.commands.registerCommand("claude2.toggleBigPrompt", () => {
+        const sessionId = this.activeConversationId();
+        this.channel.appendLine(`toggleBigPrompt active=${sessionId.slice(0, 8) || "none"}`);
+        void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "toggleBigPrompt" });
+      }),
       // A click on a finished-session toast lands here, naming the session to bring up.
       vscode.window.registerUriHandler({
         handleUri: (uri) => void this.openConversation(new URLSearchParams(uri.query).get("session") ?? ""),

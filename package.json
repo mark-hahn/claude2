@@ -2,7 +2,7 @@
   "name": "claude2",
   "displayName": "Claude2",
   "description": "Claude Code VS Code extension rewrite with extra features",
-  "version": "0.0.209",
+  "version": "0.0.211",
   "publisher": "hahnca",
   "author": "Mark Hahn",
   "license": "MIT",
@@ -67,6 +67,18 @@
         "command": "claude2.openQuota",
         "title": "Open Quota",
         "category": "Claude2"
+      },
+      {
+        "command": "claude2.toggleBigPrompt",
+        "title": "Toggle Big Prompt Box",
+        "category": "Claude2"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claude2.toggleBigPrompt",
+        "key": "ctrl+alt+z",
+        "when": "activeWebviewPanelId == 'claude2.conversation'"
       }
     ],
     "menus": {
