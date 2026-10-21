@@ -933,6 +933,17 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       }
       if (reapply) requestAnimationFrame(reapply);
     }, true);
+    // Ctrl-C on text selected in the pane copies through the extension, the same way alt-click
+    // does. VS Code's own copy (the key sent out to the workbench, execCommand('copy') sent back in)
+    // puts nothing on the clipboard from here. Stopped, so that one can't follow it and overwrite it.
+    window.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key !== 'c') return;
+      const selection = window.getSelection();
+      if (selection.isCollapsed || !historyBox.contains(selection.anchorNode)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      vscode.postMessage({ type: 'copyText', sessionId, text: selection.toString() });
+    }, true);
     // Every keystroke crosses, undelayed: the extension holds the only copy that survives this
     // webview, and a debounce here is a window in which typing exists nowhere else. The message
     // is small and the receiving end only writes a map entry; the disk write is coalesced there.
