@@ -6,6 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import { captureScreen, notifyDesktop } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swapSessionTranscripts, truncateSessionTranscript, type RunLimits } from "./claudeCli";
+import { changesMessage, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
 import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
@@ -1205,6 +1206,58 @@ class Claude2Controller implements vscode.Disposable {
     return ok;
   }
 
+  // The Settings pane's "Git changes check". A new session's first prompt, sent while work sits
+  // uncommitted, may be the start of something that belongs in its own commit: Opus on the API
+  // judges, and only when it says unrelated does Opus on the CLI describe the waiting work for
+  // the warning. False only when the warning was answered Cancel; any failure lets the prompt
+  // through. Uses the settings as of this window's last prompt or Save, not a fresh fetch, to
+  // keep the round trip off every first prompt.
+  private async gitChangesCheckPasses(sessionId: string, prompt: string): Promise<boolean> {
+    await this.settingsReady;
+    const { gitChangesCheck, claudeApiKey, claudeWorkspaceId, timezone } = this.settings;
+    if (!gitChangesCheck || !claudeApiKey || (this.store.get(sessionId)?.turns.length ?? 1) > 0) {
+      return true;
+    }
+    const log = (line: string): void => this.channel.appendLine(line);
+    try {
+      const changes = await uncommittedChanges(this.workspacePath());
+      if (!changes) {
+        return true;
+      }
+      // The prompts sent since the last commit, from every other session, are what made the changes.
+      const earlier = this.store.all()
+        .filter((session) => session.id !== sessionId)
+        .flatMap((session) => session.turns)
+        .filter((turn) => turn.createdAt > changes.lastCommitMs)
+        .sort((left, right) => left.createdAt - right.createdAt)
+        .slice(-10)
+        .map((turn) => turn.prompt.slice(0, 500));
+      const verdict = checkPrompt({ apiKey: claudeApiKey, workspaceId: claudeWorkspaceId, changes: changes.text, earlier, prompt, timeoutMs: 8000 });
+      vscode.window.setStatusBarMessage("$(sync~spin) Checking git changes…", verdict);
+      const result = await verdict;
+      log(`git changes check: ${result.related ? "related" : "unrelated"} in ${result.ms}ms at ${result.speed} speed, $${result.costUsd.toFixed(4)}`);
+      const month = recordCheckCost(timezone, result.costUsd, log);
+      if (result.related) {
+        void month;
+        return true;
+      }
+      const describing = this.runner.describeChanges(changesMessage(changes.text, earlier), this.workspacePath()).catch((error: unknown) => {
+        log(`git changes check: no description: ${errorMessage(error)}`);
+        return "";
+      });
+      vscode.window.setStatusBarMessage("$(sync~spin) Describing uncommitted changes…", describing);
+      const [description, total] = await Promise.all([describing, month]);
+      const detail = [
+        `Uncommitted (${changes.summary}): ${description || "no description -- see the output log."}`,
+        total ? `Git changes checks this month: $${total.usd.toFixed(2)} (${total.count} checks).` : "This month's check charges are unknown: the stats server could not be reached.",
+      ].join("\n\n");
+      return await vscode.window.showWarningMessage("This prompt looks unrelated to the uncommitted changes. Commit them first?", { modal: true, detail }, "Continue") === "Continue";
+    } catch (error) {
+      log(`git changes check skipped: ${errorMessage(error)}`);
+      return true;
+    }
+  }
+
   private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false): Promise<void> {
     if (!prompt.trim()) {
       return;
@@ -1256,6 +1309,11 @@ class Claude2Controller implements vscode.Disposable {
       }
     } catch (error) {
       void vscode.window.showErrorMessage(`Prompt not sent: ${errorMessage(error)}`);
+      putBack();
+      this.postConversationState(sessionId);
+      return;
+    }
+    if (!followUp && !keepDraft && !await this.gitChangesCheckPasses(sessionId, prompt)) {
       putBack();
       this.postConversationState(sessionId);
       return;

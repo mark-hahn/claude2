@@ -2482,6 +2482,7 @@ function settingsHtml(webview: vscode.Webview, zoom: number, alert: boolean): st
     input, select { font: inherit; color: var(--ink); padding: 2px 6px; }
     input[type=number] { width: 8em; }
     input[type=text] { width: 14em; }
+    input[type=password], #claudeWorkspaceId { width: 24em; }
     .save-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 ${tabsStyle()}  </style>
 </head>
@@ -2498,6 +2499,9 @@ ${tabsStyle()}  </style>
         <tr><td>Long tool display</td><td><input id="longToolDisplay" type="checkbox"></td></tr>
         <tr><td>Fast mode ($)</td><td><input id="fastMode" type="checkbox"></td></tr>
         <tr><td>Prompt suggestions</td><td><input id="promptSuggestions" type="checkbox"></td></tr>
+        <tr><td>Git changes check</td><td><input id="gitChangesCheck" type="checkbox"></td></tr>
+        <tr><td>Claude API key</td><td><input id="claudeApiKey" type="password" autocomplete="off" spellcheck="false"></td></tr>
+        <tr><td>Claude workspace ID</td><td><input id="claudeWorkspaceId" type="text" autocomplete="off" spellcheck="false"></td></tr>
       </table>
       <div class="save-row"><button id="save">Save</button><span id="note"></span></div>
     </div>
@@ -2508,7 +2512,7 @@ ${tabsScript()}
 ${zoomScript(z)}
     const pending = new Map();
     const numbers = ['maxTurns', 'contextWindowTokens', 'maxBudgetUsd'];
-    const fields = numbers.concat(['permissionMode', 'timezone']);
+    const fields = numbers.concat(['permissionMode', 'timezone', 'claudeApiKey', 'claudeWorkspaceId']);
 
     window.addEventListener('message', (event) => {
       const message = event.data;
@@ -2519,7 +2523,8 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
-    for (const id of fields.concat(['longToolDisplay', 'fastMode', 'promptSuggestions'])) document.getElementById(id).addEventListener('input', () => note('Not saved'));
+    const checkboxes = ['longToolDisplay', 'fastMode', 'promptSuggestions', 'gitChangesCheck'];
+    for (const id of fields.concat(checkboxes)) document.getElementById(id).addEventListener('input', () => note('Not saved'));
     void load();
 
     function request(type, payload) {
@@ -2534,9 +2539,7 @@ ${zoomScript(z)}
         return;
       }
       for (const id of fields) document.getElementById(id).value = String(reply.payload[id]);
-      document.getElementById('longToolDisplay').checked = reply.payload.longToolDisplay === true;
-      document.getElementById('fastMode').checked = reply.payload.fastMode === true;
-      document.getElementById('promptSuggestions').checked = reply.payload.promptSuggestions === true;
+      for (const id of checkboxes) document.getElementById(id).checked = reply.payload[id] === true;
       note('');
     }
 
@@ -2546,9 +2549,7 @@ ${zoomScript(z)}
         const value = document.getElementById(id).value;
         settings[id] = numbers.includes(id) ? Number(value) : value;
       }
-      settings.longToolDisplay = document.getElementById('longToolDisplay').checked;
-      settings.fastMode = document.getElementById('fastMode').checked;
-      settings.promptSuggestions = document.getElementById('promptSuggestions').checked;
+      for (const id of checkboxes) settings[id] = document.getElementById(id).checked;
       const reply = await request('saveSettings', { settings });
       note(reply.ok ? 'Saved. Other windows use it after they reload.' : 'Save failed: ' + (reply.error || 'unknown error'));
     }

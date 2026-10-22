@@ -9,6 +9,8 @@ import { TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlag
 const DUMP_RAW_MESSAGES = false;
 
 const titleBudgetUsd = 0.25;
+// Opus reading ~5k tokens of diff and prompts costs a few cents at API rates.
+const describeBudgetUsd = 0.5;
 const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
 
 export interface RunLimits {
@@ -696,6 +698,38 @@ export class ClaudeCliRunner {
     } catch {
       return cleanTitle(output, prompt);
     }
+  }
+
+  // The Git changes check's reminder of what is waiting to be committed. Opus on the
+  // subscription, asked only once the warning is going to open; no tools, settings or MCP
+  // servers, so the CLI starts as fast as it can.
+  public async describeChanges(changesMessage: string, workspacePath: string): Promise<string> {
+    const args = [
+      "-p",
+      "--output-format",
+      "json",
+      "--model",
+      "claude-opus-5-5",
+      ...effortArgs("low"),
+      "--max-budget-usd",
+      String(describeBudgetUsd),
+      "--tools",
+      "",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--no-session-persistence",
+      "--system-prompt",
+      "You describe uncommitted git changes in one or two short plain sentences, the way a commit message would. Return only the description.",
+    ];
+    const output = await collectProcess("claude", args, workspacePath, 30000, `${changesMessage}Describe these uncommitted changes.`);
+    let result = output;
+    try {
+      const parsed = JSON.parse(output) as unknown;
+      result = isRecord(parsed) ? stringOf(parsed.result) : output;
+    } catch {}
+    return result.replace(/[*_`#]/g, "").replace(/\s+/g, " ").trim().slice(0, 400);
   }
 
   public async updateCli(workspacePath: string): Promise<void> {

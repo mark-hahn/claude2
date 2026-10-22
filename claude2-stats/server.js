@@ -16,6 +16,7 @@
 //   POST /models/<host>  body: { hours } -> merge { <model>: { <hour since epoch>: messages } }
 //   GET  /settings                       -> the Settings pane's values ({} until first saved)
 //   POST /settings  body: settings       -> replace them (the extension validates)
+//   POST /checks  body: { month, usd }   -> add one Git changes check's API cost -> { usd, count } for the month
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -51,10 +52,10 @@ const quotaFreshMs = 4.5 * 60 * 1000;
 const quotaClaimMs = 30 * 1000;
 const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
 
-let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {} };
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {}, checks: {} };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {} };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {}, checks: saved.checks || {} };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -232,6 +233,19 @@ async function handle(request, response) {
     data.settings = body;
     save();
     return json(200, { ok: true });
+  }
+  if (request.method === "POST" && url.pathname === "/checks") {
+    const body = JSON.parse((await readBody(request)) || "{}");
+    const usd = Number(body.usd);
+    // a single check costs cents; anything far past that is a client bug, not a charge
+    if (!/^\d{4}-\d{2}$/.test(String(body.month)) || !Number.isFinite(usd) || usd < 0 || usd > 5) {
+      return json(400, { error: "expected { month: YYYY-MM, usd }" });
+    }
+    const month = (data.checks[body.month] ||= { usd: 0, count: 0 });
+    month.usd += usd;
+    month.count += 1;
+    save();
+    return json(200, { month: body.month, usd: month.usd, count: month.count });
   }
   if (request.method === "GET" && url.pathname === "/models") {
     return json(200, { machines: data.models });

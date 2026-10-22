@@ -18,10 +18,19 @@ export interface Settings {
   fastMode: boolean;
   // After each turn the CLI's guess at the next prompt replaces the prompt box. Costs a little plan usage per turn.
   promptSuggestions: boolean;
+  // Before a new session's first prompt, warn when it looks unrelated to the uncommitted changes.
+  // The verdict is an Opus fast-mode API call billed to claudeApiKey's account.
+  gitChangesCheck: boolean;
+  // Anthropic API key for one-shot API calls outside the subscription. Lives here so every host
+  // type reads the one copy on the stats server; never put it in the environment, where it would
+  // move terminal claude runs off the subscription. The real values are never in the repo; empty
+  // means no key. The key is not scoped to a workspace, so each request also names this one.
+  claudeApiKey: string;
+  claudeWorkspaceId: string;
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false, gitChangesCheck: false, claudeApiKey: "", claudeWorkspaceId: "" };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -48,6 +57,15 @@ export function checkSettings(value: unknown): Settings {
   } catch {
     throw new Error(`"${timezone}" is not an IANA timezone.`);
   }
+  // A pasted key often carries a trailing newline; anything else that can't go in a header is a typo.
+  const claudeApiKey = String(record.claudeApiKey).trim();
+  if (claudeApiKey && !/^sk-ant-[\x21-\x7e]+$/.test(claudeApiKey)) {
+    throw new Error("The API key must be empty or start with sk-ant- and have no spaces.");
+  }
+  const claudeWorkspaceId = String(record.claudeWorkspaceId).trim();
+  if (claudeWorkspaceId && !/^wrkspc_[A-Za-z0-9]+$/.test(claudeWorkspaceId)) {
+    throw new Error("The workspace ID must be empty or start with wrkspc_.");
+  }
   return {
     maxTurns: whole("maxTurns", "The turn limit", 50, 250),
     // The CLI's auto-compact window takes 100k-1M.
@@ -58,6 +76,9 @@ export function checkSettings(value: unknown): Settings {
     longToolDisplay: record.longToolDisplay === true,
     fastMode: record.fastMode === true,
     promptSuggestions: record.promptSuggestions === true,
+    gitChangesCheck: record.gitChangesCheck === true,
+    claudeApiKey,
+    claudeWorkspaceId,
   };
 }
 
