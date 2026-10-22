@@ -144,3 +144,9 @@ export async function recordCheckCost(timezone: string, usd: number, log: (line:
   const reply = await httpJson("POST", "/checks", { month, usd }, 3000, log);
   return reply && typeof reply.usd === "number" && typeof reply.count === "number" ? { usd: reply.usd, count: reply.count } : null;
 }
+
+// Every month's check total, keyed YYYY-MM, for the quota pane. Null when the server can't be reached.
+export async function checkCosts(log: (line: string) => void): Promise<Record<string, { usd: number; count: number }> | null> {
+  const reply = await httpJson("GET", "/checks", undefined, 3000, log);
+  return reply && typeof reply.months === "object" && reply.months !== null ? reply.months as Record<string, { usd: number; count: number }> : null;
+}

@@ -17,6 +17,7 @@
 //   GET  /settings                       -> the Settings pane's values ({} until first saved)
 //   POST /settings  body: settings       -> replace them (the extension validates)
 //   POST /checks  body: { month, usd }   -> add one Git changes check's API cost -> { usd, count } for the month
+//   GET  /checks                         -> { months: { <YYYY-MM>: { usd, count } } }
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -246,6 +247,9 @@ async function handle(request, response) {
     month.count += 1;
     save();
     return json(200, { month: body.month, usd: month.usd, count: month.count });
+  }
+  if (request.method === "GET" && url.pathname === "/checks") {
+    return json(200, { months: data.checks });
   }
   if (request.method === "GET" && url.pathname === "/models") {
     return json(200, { machines: data.models });

@@ -3314,13 +3314,18 @@ ${zoomScript(z)}
           }
         }
       }
+      // The API key's spend (Git changes checks) is billed apart from the credits, so it sits beside
+      // the bar rather than in it. Months are keyed YYYY-MM; omitted when the stats server was out.
+      const costs = payload.apiCosts && typeof payload.apiCosts === 'object' ? payload.apiCosts : null;
+      const month = costs ? costs[new Date(start).toISOString().slice(0, 7)] : null;
+      const api = costs ? '<span title="Claude API key spend for the month: ' + (month ? month.count : 0) + ' Git changes checks">API ' + escapeHtml(money(month ? numeric(month.usd) || 0 : 0)) + '</span>' : '';
       if (spent === null || limit === null || limit <= 0) {
-        node.innerHTML = nav;
+        node.innerHTML = nav + api;
         return;
       }
       const pct = Math.max(0, Math.min(100, (spent / limit) * 100));
       const fill = pct <= 50 ? '#8f8' : (pct <= 75 ? '#ff8' : '#f88');
-      node.innerHTML = nav + '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>';
+      node.innerHTML = nav + '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>' + api;
     }
 
     function money(value) { return '$' + Number(value).toFixed(2); }

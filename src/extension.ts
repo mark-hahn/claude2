@@ -6,7 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import { captureScreen, notifyDesktop } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swapSessionTranscripts, truncateSessionTranscript, type RunLimits } from "./claudeCli";
-import { changesMessage, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
+import { changesMessage, checkCosts, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
 import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
@@ -2055,10 +2055,12 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, async () => await this.instructions.read());
     } else if (type === "saveInstructions") {
       await this.reply(requestId, async () => await this.instructions.write(stringOf(record?.text), stringOrNull(record?.version)));
-    } else if (type === "loadQuotaHistory") {
-      await this.reply(requestId, async () => await this.quota.history(false));
-    } else if (type === "forceQuotaHistory") {
-      await this.reply(requestId, async () => await this.quota.history(true));
+    } else if (type === "loadQuotaHistory" || type === "forceQuotaHistory") {
+      // The credits display shows the month's API-key spend (Git changes checks) beside the credits.
+      await this.reply(requestId, async () => {
+        const [history, apiCosts] = await Promise.all([this.quota.history(type === "forceQuotaHistory"), checkCosts((line) => this.channel.appendLine(line))]);
+        return { ...history, apiCosts };
+      });
     } else if (type === "loadPluginsReport") {
       await this.reply(requestId, async () => await this.pluginsReport());
     } else if (type === "setPluginFlag") {
