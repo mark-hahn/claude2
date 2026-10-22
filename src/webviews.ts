@@ -517,11 +517,13 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .dock-controls button, .dock-controls select { min-height: 0; padding: 3px 8px; }
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
-    #model, #effort, #advisor { padding-left: 6.5px; padding-right: 6.5px; width: calc((11.5ch - 2px) * 0.8); flex: 1 0 auto; }
+    #model, #effort, #advisor { padding-left: 6.5px; padding-right: 6.5px; width: calc((11.5ch - 2px) * 0.8); flex: none; }
     /* bigPromptEditor: the editor runs the window's full height on the left, and the pane and the
-       controls share the column to its right, the controls at their own two-row height. The dock
-       dissolves so its two children can sit in the shell's grid beside the pane. */
-    .shell.big-prompt-editor { grid-template-columns: minmax(0, 1fr) auto; }
+       controls share the column to its right, the controls at their own three-row height. The dock
+       dissolves so its two children can sit in the shell's grid beside the pane. The right column
+       takes at least half the window, more only if the controls need it, so the editor never
+       runs wider than half. */
+    .shell.big-prompt-editor { grid-template-columns: minmax(0, 1fr) minmax(max-content, 1fr); }
     .shell.big-prompt-editor .dock { display: contents; }
     .shell.big-prompt-editor #prompt { grid-column: 1; grid-row: 1 / 3; align-self: stretch; max-height: none; margin: 8px 0 8px 12px; }
     /* Sized by the column, never by its own content, or a long line would widen the column. */
@@ -582,11 +584,10 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
     .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
-    /* Both rows stretch to the wider one, so M and F line up on the left and the stats on the
-       right. Top-row slack widens the model and effort selects; bottom-row slack sits before the stats. */
-    .bar .group { flex: 1 0 auto; }
-    .footer .stats { margin-left: auto; }
-    .sep { color: var(--muted); }
+    /* The model and nav rows keep every control at its own size, left-aligned so M and F line up;
+       any slack the stats row leaves them sits at their right ends. The stats are spaced one
+       character apart rather than split by bars. */
+    .dock-controls > .stats { justify-content: flex-end; gap: 1ch; }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
@@ -607,11 +608,6 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
        streaming for a moment after the click. Red says "heard you, still winding down". */
     #stop.stopping:not(:disabled), #stop.stopping:hover:not(:disabled) { background: #ffd4d4; }
     .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-    /* Room for each stat's usual widest value, so gaining a digit (9 to 10 turns) does not widen the column and slide the pill. */
-    #quiet, #duration, #projected { min-width: 5ch; }
-    #pony { min-width: 6ch; }
-    #turns, #cost { min-width: 6ch; }
-    #context { min-width: 8ch; }
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
     #context { cursor: pointer; }
@@ -646,15 +642,14 @@ ${tooltipStyle()}  </style>
     <div class="dock">
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
-        <div class="bar">
-          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><select id="advisor" title="Advisor: a stronger model Claude can consult mid-task"></select></div>
-          <div class="stats"><div class="status" id="turns"></div><span class="sep">|</span><div class="status" id="context"></div><span class="sep" id="projected-sep">|</span><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div></div>
-        </div>
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
           <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
-          <div class="stats"><div class="status" id="cost"></div><span class="sep" id="pony-sep">|</span><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><span class="sep" id="quiet-sep">|</span><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><span class="sep">|</span><div class="status" id="duration"></div></div>
         </div>
+        <div class="bar">
+          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><select id="advisor" title="Advisor: a stronger model Claude can consult mid-task"></select></div>
+        </div>
+        <div class="stats"><div class="status" id="turns"></div><div class="status" id="context"></div><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div><div class="status" id="cost"></div><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><div class="status" id="duration"></div></div>
       </div>
     </div>
   </div>

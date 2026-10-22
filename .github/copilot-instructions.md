@@ -59,8 +59,8 @@
   - a pane is always the full width of the editor window
 - the prompt box is the text editor where prompt text is entered
 - the footer is the stats/buttons to the right of the prompt box
-  - the stats row is the top row in the footer with stats and no buttons
-  - the model row is the second row with presets button and model/effort selectors
-  - the nav row is the third bottom row with status indicator, stop, fork, load, and cap buttons
+  - the nav row is the top row in the footer with status indicator, stop, clr, cap, file, and export buttons
+  - the model row is the second row with presets button and model/effort/advisor selectors
+  - the stats row is the third bottom row with stats and no buttons
 
 # claude.md instructions are authorative and copilot-instructions.md should always be a copy of claude.md
