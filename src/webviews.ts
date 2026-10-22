@@ -3167,7 +3167,8 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     .figures { margin-top: 8px; color: var(--muted); font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
-    @media (max-width: 900px) { .graphs { grid-template-columns: 1fr; } .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
+    @media (max-width: 900px) { .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
+    @media (max-width: 640px) { .graphs { grid-template-columns: 1fr; } }
 ${tooltipStyle()}${tabsStyle()}  </style>
 </head>
 <body>
