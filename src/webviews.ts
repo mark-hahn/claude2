@@ -675,7 +675,7 @@ ${tooltipScript()}
     const defaultEffort = ${defaultEffort};
     const defaultAdvisor = ${defaultAdvisor};
     const contextWindow = ${contextWindow};
-    const compactAt = Math.max(1000, contextWindow - ${compactReserve});
+    const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
     const ANSWER_MARK = ${answerMark};
@@ -1834,6 +1834,8 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || (turn.cleared ? 0 : level), 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
+      // The newest turn's window: with Max context tokens at 0 it is that turn's model's own.
+      const compactAt = compactAtOf((latest && latest.contextWindow) || contextWindow);
       const contextBox = document.getElementById('context');
       contextBox.textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
       // Latched locally the moment a new compaction is reported: the run's status stops being
@@ -2487,7 +2489,7 @@ ${tabsStyle()}  </style>
     <div class="box">
       <table id="fields">
         <tr><td>Turn limit per prompt</td><td><input id="maxTurns" type="number" min="50" max="250" step="1"></td></tr>
-        <tr><td>Max context tokens</td><td><input id="contextWindowTokens" type="number" min="100000" max="1000000" step="1000"></td></tr>
+        <tr><td>Max context tokens (0 = the model's own)</td><td><input id="contextWindowTokens" type="number" min="0" max="1000000" step="1000"></td></tr>
         <tr><td>Max budget per prompt in USD (0 = no limit)</td><td><input id="maxBudgetUsd" type="number" min="0" step="0.01"></td></tr>
         <tr><td>Permission mode</td><td><select id="permissionMode">${modes}</select></td></tr>
         <tr><td>Quota pane timezone (IANA)</td><td><input id="timezone" type="text"></td></tr>
@@ -3135,13 +3137,11 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.4 Aptos, "Segoe UI", sans-serif; }
     .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 4px 32px 28px; }
     .pane.expanded { max-width: none; }
-    .title { display: flex; align-items: center; gap: 12px; flex: none; }
+    .title { display: flex; align-items: center; gap: 30px; flex: none; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
-    .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
-    .credits { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
+    .actions { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
+    .credits { display: flex; align-items: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
     .credits button { min-height: 26px; padding: 2px 5px; }
-    .credits .bar { display: block; width: min(170px, 20%); height: calc(12px * var(--z)); border: 1px solid var(--border); border-radius: 6px; background: #fff; overflow: hidden; }
-    .credits .fill { display: block; height: 100%; background: var(--blue); }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 34px; font: inherit; cursor: pointer; }
     button:hover:not(:disabled) { background: linear-gradient(var(--wash), var(--wash)), var(--surface); }
     button:disabled { background: var(--wash); cursor: default; }
@@ -3169,7 +3169,7 @@ ${tooltipStyle()}${tabsStyle()}  </style>
 </head>
 <body>
   <div id="pane" class="pane">
-    <div class="title">${tabsHtml("quota", alert)}<div id="credits" class="credits"></div><div class="actions"><span id="readTime"></span><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
+    <div class="title">${tabsHtml("quota", alert)}<div id="credits" class="credits"></div><div class="actions"><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
     <div id="error" class="error" hidden></div>
     <div id="graphs" class="graphs"></div>
   </div>
@@ -3278,54 +3278,47 @@ ${zoomScript(z)}
     }
 
     function renderAge() {
-      const readTime = document.getElementById('readTime');
       const age = document.getElementById('age');
       if (!payload.readAt) {
-        readTime.textContent = '';
         age.textContent = '';
         return;
       }
-      readTime.textContent = new Date(payload.readAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone });
       const ageMs = Math.max(0, Date.now() - payload.readAt);
       const minutes = Math.floor(ageMs / 60000);
       const seconds = Math.floor((ageMs % 60000) / 1000);
       age.textContent = minutes + ':' + String(seconds).padStart(2, '0');
     }
 
-    // The current month takes the live reading first; otherwise, and for past months, the newest
-    // row in that month with a credits block. Months are UTC: credits reset at 00:00 UTC on the 1st.
+    // The month selector drives both figures. Usage is the extra-usage credits spent: the current
+    // month takes the live reading first; otherwise, and for past months, the newest row in that
+    // month with a credits block. Months are UTC: credits reset at 00:00 UTC on the 1st.
     function renderCredits() {
       const node = document.getElementById('credits');
       const rows = Array.isArray(payload.rows) ? payload.rows : [];
       const now = new Date();
       const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - creditMonth, 1);
       const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - creditMonth + 1, 1);
+      const key = new Date(start).toISOString().slice(0, 7);
       const label = new Date(start).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
-      const nav = '<button data-month="older"' + (rows.length === 0 || rows[0].at >= start ? ' disabled' : '') + '>‹</button><span>' + label + '</span><button data-month="newer"' + (creditMonth === 0 ? ' disabled' : '') + '>›</button>';
+      // The API key's spend (Git changes checks) is billed apart from the credits, so it is its own
+      // figure. Months are keyed YYYY-MM; omitted when the stats server was out.
+      const costs = payload.apiCosts && typeof payload.apiCosts === 'object' ? payload.apiCosts : null;
+      const older = (rows.length > 0 && rows[0].at < start) || (costs !== null && Object.keys(costs).some((month) => month < key));
+      const nav = '<button data-month="older"' + (older ? '' : ' disabled') + '>‹</button><span>' + label + '</span><button data-month="newer"' + (creditMonth === 0 ? ' disabled' : '') + '>›</button>';
       const live = creditMonth === 0 && payload.state && payload.state.credits;
       let spent = live ? numeric(live.spentUsd) : null;
-      let limit = live ? numeric(live.limitUsd) : null;
-      if (spent === null || limit === null) {
+      if (spent === null) {
         for (let index = rows.length - 1; index >= 0; index -= 1) {
-          if (rows[index].at >= start && rows[index].at < end && numeric(rows[index].spent_usd) !== null && numeric(rows[index].limit_usd) !== null) {
+          if (rows[index].at >= start && rows[index].at < end && numeric(rows[index].spent_usd) !== null) {
             spent = numeric(rows[index].spent_usd);
-            limit = numeric(rows[index].limit_usd);
             break;
           }
         }
       }
-      // The API key's spend (Git changes checks) is billed apart from the credits, so it sits beside
-      // the bar rather than in it. Months are keyed YYYY-MM; omitted when the stats server was out.
-      const costs = payload.apiCosts && typeof payload.apiCosts === 'object' ? payload.apiCosts : null;
-      const month = costs ? costs[new Date(start).toISOString().slice(0, 7)] : null;
+      const usage = spent === null ? '' : '<span>Usage ' + escapeHtml(money(spent)) + '</span>';
+      const month = costs ? costs[key] : null;
       const api = costs ? '<span title="Claude API key spend for the month: ' + (month ? month.count : 0) + ' Git changes checks">API ' + escapeHtml(money(month ? numeric(month.usd) || 0 : 0)) + '</span>' : '';
-      if (spent === null || limit === null || limit <= 0) {
-        node.innerHTML = nav + api;
-        return;
-      }
-      const pct = Math.max(0, Math.min(100, (spent / limit) * 100));
-      const fill = pct <= 50 ? '#8f8' : (pct <= 75 ? '#ff8' : '#f88');
-      node.innerHTML = nav + '<span>' + escapeHtml(money(spent)) + '</span><span class="bar"><span class="fill" style="width:' + pct.toFixed(1) + '%;background:' + fill + '"></span></span><span>' + escapeHtml(money(limit)) + '</span>' + api;
+      node.innerHTML = nav + usage + api;
     }
 
     function money(value) { return '$' + Number(value).toFixed(2); }

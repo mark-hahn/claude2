@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import { httpJson } from "./pluginStats";
-import { CLAUDE2_CONTEXT_WINDOW } from "./types";
 
 // Everything the Settings pane sets. One copy lives on the stats server (hahnca.com), so a save
 // from any window on any host type -- windows, wsl, ssh -- reaches every other window at its
@@ -30,7 +29,7 @@ export interface Settings {
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: CLAUDE2_CONTEXT_WINDOW, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false, gitChangesCheck: false, claudeApiKey: "", claudeWorkspaceId: "" };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: 0, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false, gitChangesCheck: false, claudeApiKey: "", claudeWorkspaceId: "" };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -68,8 +67,8 @@ export function checkSettings(value: unknown): Settings {
   }
   return {
     maxTurns: whole("maxTurns", "The turn limit", 50, 250),
-    // The CLI's auto-compact window takes 100k-1M.
-    contextWindowTokens: whole("contextWindowTokens", "Max context tokens", 100000, 1000000),
+    // The CLI's auto-compact window takes 100k-1M; 0 uses each model's own window.
+    contextWindowTokens: Number(record.contextWindowTokens) === 0 ? 0 : whole("contextWindowTokens", "Max context tokens (or 0)", 100000, 1000000),
     maxBudgetUsd,
     permissionMode,
     timezone,

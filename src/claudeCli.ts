@@ -26,6 +26,8 @@ interface RunPromptOptions {
   model: string;
   effort: string;
   contextWindow: number;
+  // Handed to the CLI as its auto-compact window; null leaves the model's own window in charge.
+  compactWindow: number | null;
   workspacePath: string;
   hasPriorTurns: boolean;
   // Context is a level, not a total: a run inherits where the last one left off so the gauge
@@ -237,7 +239,7 @@ export class ClaudeCliRunner {
     }
     args.push("--settings", JSON.stringify(runSettings));
 
-    const env = childEnv(options.contextWindow, options.plugins.graft);
+    const env = childEnv(options.compactWindow, options.plugins.graft);
     if (!options.fastMode) {
       // Fast mode bills usage credits, so off is a hard off that outranks a fastMode in any settings file.
       env.CLAUDE_CODE_DISABLE_FAST_MODE = "1";
@@ -283,6 +285,7 @@ export class ClaudeCliRunner {
       let tokensOut = 0;
       let contextTokens = Math.max(0, options.priorContextTokens);
       let costUsd: number | null = null;
+      let modelWindow: number | null = null;
       let stopReason: string | null = null;
       let answer = "";
       let durationMs = 0;
@@ -400,6 +403,7 @@ export class ClaudeCliRunner {
           ponySkips,
           answer,
           clearedInto,
+          modelWindow,
         };
       };
 
@@ -630,6 +634,7 @@ export class ClaudeCliRunner {
           }
           const totalCost = numberOf(message.total_cost_usd);
           costUsd = totalCost === null ? null : totalCost - costBase;
+          modelWindow = mainModelWindow(recordOf(message.modelUsage), status.modelId) ?? modelWindow;
           durationMs += numberOf(message.duration_ms) ?? 0;
           reportedTurns += numberOf(message.num_turns) ?? 0;
           if (reportedTurns > 0) {
@@ -786,6 +791,17 @@ export class ClaudeCliRunner {
 // mount, every other host uses its own temp dir (see capture.ts).
 function capTempDir(): string {
   return process.platform === "linux" && fs.existsSync("/mnt/c/Windows/Temp") ? "/mnt/c/Windows/Temp" : os.tmpdir();
+}
+
+// The context window the CLI reports for the model the main conversation ran on. modelUsage also
+// lists subagent and side-task models, so the main one is picked out by the id the stream gave;
+// with no id yet, a lone entry is taken as it.
+function mainModelWindow(modelUsage: Record<string, unknown> | undefined, modelId: string): number | null {
+  const entries = Object.entries(modelUsage ?? {});
+  const main = entries.find(([key, usage]) => key === modelId || key.startsWith(`${modelId}[`) || stringOf(recordOf(usage)?.canonicalModel) === modelId)
+    ?? (entries.length === 1 ? entries[0] : undefined);
+  const window = main ? numberOf(recordOf(main[1])?.contextWindow) : null;
+  return window !== null && window > 0 ? window : null;
 }
 
 function claude2SystemPrompt(contextWindow: number): string {

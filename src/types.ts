@@ -169,6 +169,8 @@ export interface ClaudeRunResult {
   answer: string;
   // /clear moved Claude's conversation to this new CLI session; null when nothing was cleared.
   clearedInto: string | null;
+  // The context window the CLI reported for the main model; null when no result said.
+  modelWindow: number | null;
 }
 
 export interface QuotaReadingRow {

@@ -13,7 +13,7 @@ import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { ANSWER_MARK, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { ANSWER_MARK, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, snipsHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -36,6 +36,8 @@ type ProjectColumn = Omit<InstallStats, "host" | "path" | "updatedAt"> & { hosts
 type PluginsReport = { projects: ProjectColumn[]; offline: boolean };
 
 const PNG_DATA_URI = "data:image/png;base64,";
+// Model pick -> the context window the CLI last reported for it, for Max context tokens of 0.
+const modelWindowsKey = "modelWindows";
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Claude2");
@@ -1364,8 +1366,8 @@ class Claude2Controller implements vscode.Disposable {
     // Fresh from the server each prompt, so a save made in another window counts here too.
     await this.settingsReady;
     this.settings = await fetchSettings(this.context.globalState, (line) => this.channel.appendLine(line));
-    const defaults = this.conversationDefaults(sessionId);
     const selectedModel = model;
+    let contextWindow = this.contextWindowFor(selectedModel);
     // An empty effort is a pick, not a gap: that model takes no effort levels.
     const selectedEffort = effort;
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
@@ -1395,7 +1397,7 @@ class Claude2Controller implements vscode.Disposable {
       effort: selectedEffort,
       tokensIn: 0,
       tokensOut: 0,
-      contextWindow: defaults.contextWindow,
+      contextWindow,
       contextUsed: priorContext,
       cleared: false,
       finished: false,
@@ -1458,7 +1460,8 @@ class Claude2Controller implements vscode.Disposable {
         prompt,
         model: selectedModel,
         effort: selectedEffort,
-        contextWindow: defaults.contextWindow,
+        contextWindow,
+        compactWindow: this.settings.contextWindowTokens || null,
         workspacePath: this.workspacePath(),
         hasPriorTurns: !wasFirstPrompt,
         priorContextTokens: priorContext,
@@ -1496,12 +1499,18 @@ class Claude2Controller implements vscode.Disposable {
       // After /clear this session goes on resuming its own id, so that transcript has to become the
       // cleared conversation. If the swap fails Claude keeps its context, and so does the gauge.
       const cleared = result.clearedInto !== null && swapSessionTranscripts(this.workspacePath(), sessionId, result.clearedInto);
+      // With Max context tokens at 0 the turn's window is the model's own, which the CLI has just named.
+      if (result.modelWindow) {
+        await this.noteModelWindow(selectedModel, result.modelWindow);
+        contextWindow = this.contextWindowFor(selectedModel);
+      }
       if (result.clearedInto !== null && !cleared) {
         this.channel.appendLine(`Clear: transcript ${result.clearedInto} could not take the place of session ${sessionId}'s; Claude keeps its context.`);
       }
       this.store.patchTurn(sessionId, turn.id, {
         response: markAnswer(streamedResponse || result.text, result.stopped ? "" : result.answer),
         completedAt: Date.now(),
+        contextWindow,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         contextUsed: result.contextTokens,
@@ -1527,7 +1536,7 @@ class Claude2Controller implements vscode.Disposable {
         turnId: turn.id,
         model: selectedModel,
         effort: selectedEffort,
-        contextWindow: defaults.contextWindow,
+        contextWindow,
         contextTokens: result.contextTokens,
         cliTurns: result.turns,
         stopped: result.stopped,
@@ -1566,7 +1575,7 @@ class Claude2Controller implements vscode.Disposable {
           turnId: turn.id,
           model: selectedModel,
           effort: selectedEffort,
-          contextWindow: defaults.contextWindow,
+          contextWindow,
           contextTokens: lastContext,
           cliTurns: lastTurns,
           error: text.slice(0, 500),
@@ -2226,9 +2235,22 @@ class Claude2Controller implements vscode.Disposable {
       model: session?.model ?? "",
       effort: session?.effort ?? "",
       advisor: session?.advisor ?? "",
-      contextWindow: this.settings.contextWindowTokens,
+      contextWindow: this.contextWindowFor(session?.model ?? ""),
       maxTurns: this.settings.maxTurns,
     };
+  }
+
+  // Max context tokens, or with 0 there the window the CLI last reported for this model pick; a
+  // pick not yet run on this host takes CLAUDE2_CONTEXT_WINDOW until its first result says.
+  private contextWindowFor(model: string): number {
+    return this.settings.contextWindowTokens || this.context.globalState.get<Record<string, number>>(modelWindowsKey)?.[model] || CLAUDE2_CONTEXT_WINDOW;
+  }
+
+  private async noteModelWindow(model: string, window: number): Promise<void> {
+    const windows = this.context.globalState.get<Record<string, number>>(modelWindowsKey) ?? {};
+    if (windows[model] !== window) {
+      await this.context.globalState.update(modelWindowsKey, { ...windows, [model]: window });
+    }
   }
 
   private runLimits(): RunLimits {
