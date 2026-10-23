@@ -532,6 +532,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* Sized by the column, never by its own content, or a long line would widen the column. */
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
     .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
+    /* Left-aligned here, under the nav and model rows' left ends. */
+    .shell.big-prompt-editor .dock-controls > .stats { justify-content: flex-start; }
     /* Focusable (tabindex) so a click in a box lands focus here, not on body: VS Code's webview
        host answers ctrl-c with execCommand('copy'), and first puts focus back on the last focused
        element when body has it -- the prompt box, whose empty selection is then what gets copied. */
