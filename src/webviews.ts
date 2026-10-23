@@ -10,6 +10,8 @@ export interface ConversationDefaults {
   effort: string;
   advisor: string;
   contextWindow: number;
+  // Each listed pick's window, for the footer to follow the model picker.
+  contextWindows: Record<string, number>;
   maxTurns: number;
 }
 
@@ -491,6 +493,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   const defaultEffort = JSON.stringify(defaults.effort);
   const defaultAdvisor = JSON.stringify(defaults.advisor);
   const contextWindow = JSON.stringify(defaults.contextWindow);
+  const contextWindows = JSON.stringify(defaults.contextWindows);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
   const maxTurns = JSON.stringify(defaults.maxTurns);
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
@@ -611,6 +614,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The context gauge flags a just-finished compaction: the level it shows dropped because the
        conversation was summarised, not because the run shrank. Clears itself, or on a click. */
     #context { cursor: pointer; }
+    #context.over { background: #ffd0d0; border-radius: 4px; padding: 0 5px; margin: 0 -5px; }
     #context.compacted { background: var(--yellow); border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
     /* A plan window has crossed 95% since this was last acknowledged. Stays red until clicked. */
     #cost.quota-alert { background: #fbd9d9; border-radius: 4px; padding: 0 5px; margin: 0 -5px; cursor: pointer; }
@@ -675,6 +679,7 @@ ${tooltipScript()}
     const defaultEffort = ${defaultEffort};
     const defaultAdvisor = ${defaultAdvisor};
     const contextWindow = ${contextWindow};
+    let contextWindows = ${contextWindows};
     const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
@@ -791,7 +796,7 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
     let advisorOff = defaultAdvisor === '';
     // The pickers belong to the session, not the panel: every change is written back so
     // reopening this session later comes up on the same model, effort and advisor.
-    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); fillAdvisors(advisorSelect.value); sendPicks(); });
+    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); fillAdvisors(advisorSelect.value); sendPicks(); renderStatus(); });
     effortSelect.addEventListener('change', sendPicks);
     advisorSelect.addEventListener('change', () => { advisorOff = advisorSelect.value === ''; sendPicks(); });
     cycleButton.addEventListener('click', cyclePicks);
@@ -874,9 +879,11 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
         models = message.models;
         presets = Array.isArray(message.presets) ? message.presets : presets;
         prefs = message.prefs && typeof message.prefs === 'object' ? message.prefs : prefs;
+        contextWindows = message.windows && typeof message.windows === 'object' ? message.windows : contextWindows;
         fillSelect(modelSelect, pickableModels(), modelSelect.value, modelLabel);
         fillEfforts(effortSelect.value);
         fillAdvisors(advisorSelect.value);
+        renderStatus();
       }
     });
 
@@ -1834,10 +1841,13 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || (turn.cleared ? 0 : level), 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
-      // The newest turn's window: with Max context tokens at 0 it is that turn's model's own.
-      const compactAt = compactAtOf((latest && latest.contextWindow) || contextWindow);
+      // A running turn's own window; otherwise the picked model's, where the next prompt will run.
+      const compactAt = compactAtOf((active && latest && latest.contextWindow) || contextWindows[modelSelect.value] || contextWindow);
       const contextBox = document.getElementById('context');
       contextBox.textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
+      // Past the picked model's compaction point, as after switching to a smaller window. The next
+      // prompt compacts first, on the model the conversation last ran on.
+      contextBox.classList.toggle('over', (used || 0) > compactAt);
       // Latched locally the moment a new compaction is reported: the run's status stops being
       // posted once the turn ends, so the flag can't hang off it for its whole minute.
       if (active && status.compactedAt && status.compactedAt !== compactSeen) {

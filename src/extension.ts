@@ -13,7 +13,7 @@ import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { ANSWER_MARK, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, snipsHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -432,6 +432,11 @@ class Claude2Controller implements vscode.Disposable {
     }
     this.modelsSettled = true;
     this.postModelInfo();
+    // Each pick's own window, so a footer has the right compaction point before any run on it.
+    // Not awaited: runs wait on modelsReady, and this is only the footer's figure.
+    void this.runner.modelWindows(Object.keys(readModelInfo(this.context.globalState).models), this.workspacePath())
+      .then((windows) => this.noteModelWindows(windows))
+      .catch((error) => this.channel.appendLine(`model windows failed: ${errorMessage(error)}`));
   }
 
   // Test aid: drops the last stored model, then runs the load's refresh, which finds the CLI's
@@ -465,7 +470,7 @@ class Claude2Controller implements vscode.Disposable {
   private postModelInfo(): void {
     const info = readModelInfo(this.context.globalState);
     for (const panel of this.conversationPanels.values()) {
-      void panel.webview.postMessage({ type: "models", models: info.models, presets: info.presets, prefs: info.prefs });
+      void panel.webview.postMessage({ type: "models", models: info.models, presets: info.presets, prefs: info.prefs, windows: this.contextWindows(info.models) });
     }
     void this.managementPanel?.webview.postMessage({ type: "modelsAlert", on: this.modelsAlert() });
     this.refreshSidebar();
@@ -1320,7 +1325,25 @@ class Claude2Controller implements vscode.Disposable {
       this.postConversationState(sessionId);
       return;
     }
-    const run = this.runTurn(sessionId, prompt, model, effort, advisor, keepDraft).catch((error) => {
+    // /clear needs no room, and a follow-up stays on the model already running.
+    const compactOn = followUp || /^\/clear\b/.test(prompt.trim()) ? null : this.compactBeforeSwitch(sessionId, model);
+    const run = (async () => {
+      if (compactOn) {
+        // A /compact of the user's own is simply moved onto the model that can hold the conversation.
+        const ownCompact = /^\/compact\b/.test(prompt.trim());
+        this.channel.appendLine(`Model switch: ${model} can't hold this session's context, so ${compactOn.model} compacts it first.`);
+        await this.runTurn(sessionId, ownCompact ? prompt : "/compact", compactOn.model, compactOn.effort, "", ownCompact ? keepDraft : true, { ownPicks: false, quiet: !ownCompact });
+        const compacted = this.store.get(sessionId)?.turns.at(-1);
+        if (ownCompact || !compacted || compacted.stopped) {
+          return;
+        }
+        if (compacted.error) {
+          putBack();
+          return;
+        }
+      }
+      await this.runTurn(sessionId, prompt, model, effort, advisor, keepDraft);
+    })().catch((error) => {
       this.channel.appendLine(`Claude turn failed: ${errorMessage(error)}`);
     });
     this.runs.set(sessionId, run);
@@ -1330,7 +1353,10 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private async runTurn(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false): Promise<void> {
+  // ownPicks false: a run the extension starts on another model than the pickers show, which the
+  // session must not reopen on. quiet: a run with the user's prompt still to follow, so no
+  // finished notification.
+  private async runTurn(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false, aside: { ownPicks?: boolean; quiet?: boolean } = {}): Promise<void> {
     const session = this.store.get(sessionId);
     if (!session) {
       return;
@@ -1372,7 +1398,9 @@ class Claude2Controller implements vscode.Disposable {
     const selectedEffort = effort;
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
     // with is what the session reopens on.
-    await this.store.setPicks(sessionId, selectedModel, selectedEffort, advisor);
+    if (aside.ownPicks !== false) {
+      await this.store.setPicks(sessionId, selectedModel, selectedEffort, advisor);
+    }
     const wasFirstPrompt = session.turns.length === 0;
     // Where the conversation already sits in the window. A turn that errored never recorded a
     // level, so the newest turn that did is the one to carry forward.
@@ -1501,7 +1529,7 @@ class Claude2Controller implements vscode.Disposable {
       const cleared = result.clearedInto !== null && swapSessionTranscripts(this.workspacePath(), sessionId, result.clearedInto);
       // With Max context tokens at 0 the turn's window is the model's own, which the CLI has just named.
       if (result.modelWindow) {
-        await this.noteModelWindow(selectedModel, result.modelWindow);
+        await this.noteModelWindows({ [selectedModel]: result.modelWindow });
         contextWindow = this.contextWindowFor(selectedModel);
       }
       if (result.clearedInto !== null && !cleared) {
@@ -1595,7 +1623,7 @@ class Claude2Controller implements vscode.Disposable {
       // A run that handed its process to a follow-up prompt is not finished; that prompt's turn reports instead.
       // A session already in front of the user (window focused, its tab active) gets none.
       const watching = vscode.window.state.focused && this.conversationPanels.get(sessionId)?.active;
-      if (!this.runner.isRunning(sessionId) && !watching) {
+      if (!aside.quiet && !this.runner.isRunning(sessionId) && !watching) {
         // asExternalUri tacks on this window's id, so the click comes back to this window and not another.
         const name = this.store.get(sessionId)?.name || "New session";
         Promise.resolve(vscode.env.asExternalUri(vscode.Uri.parse(`${vscode.env.uriScheme}://hahnca.claude2/open?session=${encodeURIComponent(sessionId)}`)))
@@ -2058,6 +2086,8 @@ class Claude2Controller implements vscode.Disposable {
         const settings = checkSettings(record?.settings);
         await saveSettings(this.context.globalState, settings, (line) => this.channel.appendLine(line));
         this.settings = settings;
+        // Max context tokens moves every footer's compaction point.
+        this.postModelInfo();
         return settings;
       });
     } else if (type === "loadInstructions") {
@@ -2236,20 +2266,50 @@ class Claude2Controller implements vscode.Disposable {
       effort: session?.effort ?? "",
       advisor: session?.advisor ?? "",
       contextWindow: this.contextWindowFor(session?.model ?? ""),
+      contextWindows: this.contextWindows(readModelInfo(this.context.globalState).models),
       maxTurns: this.settings.maxTurns,
     };
   }
 
-  // Max context tokens, or with 0 there the window the CLI last reported for this model pick; a
-  // pick not yet run on this host takes CLAUDE2_CONTEXT_WINDOW until its first result says.
+  // Max context tokens, or with 0 there the window the CLI gave for this model pick (probed at
+  // load, corrected by each run's result); a pick it has not yet sized takes CLAUDE2_CONTEXT_WINDOW.
   private contextWindowFor(model: string): number {
     return this.settings.contextWindowTokens || this.context.globalState.get<Record<string, number>>(modelWindowsKey)?.[model] || CLAUDE2_CONTEXT_WINDOW;
   }
 
-  private async noteModelWindow(model: string, window: number): Promise<void> {
+  // A switch to a model with a smaller window while the conversation is already past that model's
+  // compaction point: the CLI would compact on the new model, and the request to do that is itself
+  // too long for it, which bug reports say leaves the session stuck. The model the conversation last
+  // ran on cleanly still holds it, so that one compacts first. Null when no switch needs it, or a
+  // window involved has not been sized.
+  private compactBeforeSwitch(sessionId: string, model: string): { model: string; effort: string } | null {
+    let level = 0;
+    let ranOn: ClaudeTurn | undefined;
+    for (const turn of this.store.get(sessionId)?.turns ?? []) {
+      level = turn.contextUsed || (turn.cleared ? 0 : level);
+      if (!turn.error && !turn.stopped) {
+        ranOn = turn;
+      }
+    }
     const windows = this.context.globalState.get<Record<string, number>>(modelWindowsKey) ?? {};
-    if (windows[model] !== window) {
-      await this.context.globalState.update(modelWindowsKey, { ...windows, [model]: window });
+    const next = windows[model];
+    const last = ranOn ? windows[ranOn.model] : undefined;
+    if (!ranOn || !next || !last || last <= next || level <= next - CLAUDE2_COMPACT_RESERVE) {
+      return null;
+    }
+    return { model: ranOn.model, effort: ranOn.effort };
+  }
+
+  // Every listed pick's window, so a footer follows its model picker.
+  private contextWindows(models: Record<string, unknown>): Record<string, number> {
+    return Object.fromEntries(Object.keys(models).map((model) => [model, this.contextWindowFor(model)]));
+  }
+
+  private async noteModelWindows(found: Record<string, number>): Promise<void> {
+    const windows = this.context.globalState.get<Record<string, number>>(modelWindowsKey) ?? {};
+    if (Object.entries(found).some(([model, window]) => windows[model] !== window)) {
+      await this.context.globalState.update(modelWindowsKey, { ...windows, ...found });
+      this.postModelInfo();
     }
   }
 

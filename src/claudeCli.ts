@@ -781,6 +781,66 @@ export class ClaudeCliRunner {
     throw new Error("the CLI returned no model list.");
   }
 
+  // Each model's context window as the CLI sizes it with no auto-compact override, asked over the
+  // control channel (set_model, then get_context_usage) without starting a turn. The CLI answers
+  // control requests concurrently, so each waits on the one before or it measures the wrong model.
+  public async modelWindows(models: string[], workspacePath: string): Promise<Record<string, number>> {
+    const child = spawn("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], { cwd: workspacePath, env: childEnv(), stdio: ["pipe", "pipe", "ignore"] });
+    const waiting = new Map<string, (response: Record<string, unknown> | undefined) => void>();
+    let closed = false;
+    const finish = (): void => {
+      closed = true;
+      for (const resolve of waiting.values()) {
+        resolve(undefined);
+      }
+      waiting.clear();
+    };
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 60000);
+    child.on("error", finish);
+    child.on("close", finish);
+    child.stdin.on("error", () => undefined);
+    let pending = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      const lines = (pending + chunk).split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines.filter((candidate) => candidate.includes('"control_response"'))) {
+        try {
+          const reply = recordOf(recordOf(JSON.parse(line))?.response);
+          const id = stringOf(reply?.request_id);
+          waiting.get(id)?.(stringOf(reply?.subtype) === "success" ? recordOf(reply?.response) ?? {} : undefined);
+          waiting.delete(id);
+        } catch {}
+      }
+    });
+    let sent = 0;
+    const ask = (request: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => new Promise((resolve) => {
+      if (closed) {
+        resolve(undefined);
+        return;
+      }
+      const id = `w${(sent += 1)}`;
+      waiting.set(id, resolve);
+      child.stdin.write(`${JSON.stringify({ type: "control_request", request_id: id, request })}\n`);
+    });
+    const windows: Record<string, number> = {};
+    try {
+      await ask({ subtype: "initialize" });
+      for (const model of models) {
+        if (await ask({ subtype: "set_model", model })) {
+          const window = numberOf((await ask({ subtype: "get_context_usage" }))?.maxTokens);
+          if (window !== null && window > 0) {
+            windows[model] = window;
+          }
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      child.stdin.end();
+    }
+    return windows;
+  }
+
   private snapshot(status: RunningStatus): RunningStatus {
     const now = Date.now();
     return { ...status, elapsedMs: now - status.startedAt, sinceEventMs: now - status.lastEventAt };
@@ -832,6 +892,9 @@ function childEnv(autoCompactWindow: number | null = null, graftEnabled = true):
   // (accepts 100k-1M tokens).
   if (autoCompactWindow !== null) {
     env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(Math.min(1000000, Math.max(100000, Math.floor(autoCompactWindow))));
+  } else {
+    // An inherited one would quietly overrule each model's own window.
+    delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   }
   return env;
 }
