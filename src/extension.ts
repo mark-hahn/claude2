@@ -1373,9 +1373,9 @@ class Claude2Controller implements vscode.Disposable {
       images = await this.keepImages(sessionId, turnId, pending);
       prompt = `${prompt}\n\n${images.map((image) => imageNote(image)).join("\n\n")}`;
       // A pane left showing one of those pictures follows it into the turn, where it is read-only.
+      // The pane is told once the turn is stored, below: until then the pointer resolves to nothing.
       if (this.paneImage?.sessionId === sessionId && this.paneImage.turnId === null) {
         this.paneImage = { sessionId, turnId, index: Math.min(this.paneImage.index, images.length - 1) };
-        void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
       }
     }
     // Attached files leave with this prompt too, but only the ones whose tag is still in the text:
@@ -1439,6 +1439,9 @@ class Claude2Controller implements vscode.Disposable {
       ponySkips: [],
     };
     await this.store.appendTurn(sessionId, turn);
+    if (this.paneImage?.turnId === turnId) {
+      void this.managementPanel?.webview.postMessage({ type: "captureChanged" });
+    }
     // Counted at the start so a stopped or crashed run still counts; the money and time land
     // in a second bump when the run settles.
     void this.stats.add({ sessions: wasFirstPrompt ? 1 : 0, turns: 1 });
