@@ -21,7 +21,12 @@ npx vsce package "$VERSION" --no-update-package-json --no-git-tag-version -o "$V
 ls -la "$VSIX"
 
 echo "== WSL =="
-code --install-extension "$VSIX" --force
+# Call the vscode-server binary directly: `code` is only on PATH (and only works) inside a
+# VS Code integrated terminal, so it fails when deploy runs from a plain WSL shell.
+WSL_BIN=$(ls -td ~/.vscode-server/bin/*/bin/code-server ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
+          | grep -v '\.staging/' | head -1 || true)
+[ -n "$WSL_BIN" ] || { echo "no vscode-server found in WSL"; exit 1; }
+"$WSL_BIN" --install-extension "$VSIX" --force
 
 echo "== Windows =="
 cp "$VSIX" "$WIN_HOME/$VSIX"

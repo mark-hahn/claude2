@@ -531,9 +531,10 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .shell.big-prompt-editor #prompt { grid-column: 1; grid-row: 1 / 3; align-self: stretch; max-height: none; margin: 8px 0 8px 12px; }
     /* Sized by the column, never by its own content, or a long line would widen the column. */
     .shell.big-prompt-editor #history { grid-column: 2; grid-row: 1; contain: inline-size; }
-    .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); }
-    /* Left-aligned here, under the nav and model rows' left ends. */
-    .shell.big-prompt-editor .dock-controls > .stats { justify-content: flex-start; }
+    .shell.big-prompt-editor .dock-controls { grid-column: 2; grid-row: 2; min-height: 0; margin: 0; padding: 8px 16px 8px 12px; border-top: 1px solid var(--border); }
+    /* All three rows centered here, in the column inside the 16px right padding. */
+    .shell.big-prompt-editor .footer, .shell.big-prompt-editor .bar { justify-content: center; }
+    .shell.big-prompt-editor .dock-controls > .stats { justify-content: center; margin-right: 0; }
     /* Focusable (tabindex) so a click in a box lands focus here, not on body: VS Code's webview
        host answers ctrl-c with execCommand('copy'), and first puts focus back on the last focused
        element when body has it -- the prompt box, whose empty selection is then what gets copied. */
@@ -592,7 +593,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The model and nav rows keep every control at its own size, left-aligned so M and F line up;
        any slack the stats row leaves them sits at their right ends. The stats are spaced one
        character apart rather than split by bars. */
-    .dock-controls > .stats { justify-content: flex-end; gap: 1ch; }
+    .dock-controls > .stats { justify-content: flex-end; gap: 1ch; margin-left: 8px; }
     .group { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
     button, select { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); min-height: 31px; padding: 5px 10px; font: inherit; }
     button { cursor: pointer; }
