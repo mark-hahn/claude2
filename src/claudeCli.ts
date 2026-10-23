@@ -1120,7 +1120,9 @@ function toolUseLine(block: Record<string, unknown>): string {
   const name = stringOf(block.name) || "tool";
   const input = recordOf(block.input);
   const detailKeys = ["description", "command", "file_path", "path", "pattern", "query", "prompt", "url"];
-  const detail = input ? detailKeys.map((key) => stringOf(input[key])).find((value) => value.trim()) ?? "" : "";
+  // A Skill call has no detail field, just the skill's name and any args, as in the Long form.
+  const skillDetail = name === "Skill" && input ? [stringOf(input.skill).replace(/^\//, ""), stringOf(input.args)].filter(Boolean).join(" ") : "";
+  const detail = skillDetail || (input ? detailKeys.map((key) => stringOf(input[key])).find((value) => value.trim()) ?? "" : "");
   const oneLine = detail.replace(/\s+/g, " ").trim();
   if (!oneLine) {
     return `**${name}**`;
