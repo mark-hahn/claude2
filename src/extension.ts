@@ -2105,7 +2105,7 @@ class Claude2Controller implements vscode.Disposable {
       });
     } else if (type === "loadSpeechmatics") {
       // Asked a month at a time: tv-srvr takes seconds per month, too slow to hold up the history.
-      await this.reply(requestId, () => speechmaticsCost(stringOf(record?.month), (line) => this.channel.appendLine(line)));
+      await this.reply(requestId, () => speechmaticsCost(stringOf(record?.month), record?.rescan === true, (line) => this.channel.appendLine(line)));
     } else if (type === "loadPluginsReport") {
       await this.reply(requestId, async () => await this.pluginsReport());
     } else if (type === "setPluginFlag") {

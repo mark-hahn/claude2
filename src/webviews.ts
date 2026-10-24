@@ -3150,9 +3150,12 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     body { margin: 0; height: 100vh; overflow: hidden; background: var(--page); color: var(--ink); font: calc(16px * var(--z))/1.4 Aptos, "Segoe UI", sans-serif; }
     .pane { height: 100vh; display: flex; flex-direction: column; gap: 16px; padding: 4px 32px 28px; }
     .pane.expanded { max-width: none; }
-    .title { display: flex; align-items: center; gap: 30px; flex: none; }
+    /* The tabs and actions on the first line, the month's costs and the reading's age on the second. */
+    .title { display: flex; flex-direction: column; align-items: flex-start; gap: 15px; flex: none; }
+    .title-row { display: flex; align-items: center; gap: 15px 30px; }
     h1 { font-size: calc(18px * var(--z)); font-weight: 600; margin: 0; letter-spacing: 0; }
     .actions { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: calc(14px * var(--z)); }
+    #age { font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
     .credits { display: flex; align-items: center; gap: 8px; font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; }
     .credits button { min-height: 26px; padding: 2px 5px; }
     button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 7px 8px; min-height: 34px; font: inherit; cursor: pointer; }
@@ -3176,13 +3179,13 @@ function quotaHtml(webview: vscode.Webview, timezone: string, zoom: number, aler
     .figures { margin-top: 8px; color: var(--muted); font-size: calc(14px * var(--z)); font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; }
     .empty, .error { border: 1px dashed var(--border); border-radius: 8px; padding: 18px; color: var(--muted); }
     .error { background: #fdecec; color: #731b1b; border-style: solid; }
-    @media (max-width: 900px) { .title, .actions { align-items: flex-start; flex-wrap: wrap; } }
+    @media (max-width: 900px) { .title-row, .actions { align-items: flex-start; flex-wrap: wrap; } }
     @media (max-width: 640px) { .graphs { grid-template-columns: 1fr; } }
 ${tooltipStyle()}${tabsStyle()}  </style>
 </head>
 <body>
   <div id="pane" class="pane">
-    <div class="title">${tabsHtml("quota", alert)}<div id="credits" class="credits"></div><div class="actions"><span id="age"></span><button id="update">Update</button><button id="close">Close</button></div></div>
+    <div class="title"><div class="title-row">${tabsHtml("quota", alert)}<div class="actions"><button id="update">Update</button><button id="close">Close</button></div></div><div class="title-row"><div id="credits" class="credits"></div><span id="age"></span></div></div>
     <div id="error" class="error" hidden></div>
     <div id="graphs" class="graphs"></div>
   </div>
@@ -3196,7 +3199,8 @@ ${zoomScript(z)}
     // Months back from the current one that the credits bar shows.
     let creditMonth = 0;
     // The tv project's Speechmatics spend by month, asked for as the selector reaches the month:
-    // { usd, hrs }, null when it could not be read, undefined while the first ask is out.
+    // { usd, hrs, at, error }, undefined while an ask is out. A failed read keeps the last
+    // figure with error set, and with no figure yet is { error: true } alone.
     const speechmatics = {};
     let payload = { readAt: null, rows: [], state: { error: null } };
     let expanded = null;
@@ -3238,8 +3242,9 @@ ${zoomScript(z)}
 
     async function load(force) {
       updating = force;
-      // The first render asks for the current month itself; later loads refresh it.
-      if (!loading) loadSpeechmatics(new Date().toISOString().slice(0, 7));
+      // The first render asks for the current month itself; later loads refresh it, and only the
+      // Update button makes the server rescan Speechmatics' job list instead of serving its copy.
+      if (force || !loading) loadSpeechmatics(new Date().toISOString().slice(0, 7), force);
       render();
       const reply = await request(force ? 'forceQuotaHistory' : 'loadQuotaHistory', {});
       loading = false;
@@ -3254,11 +3259,12 @@ ${zoomScript(z)}
       return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, data)); });
     }
 
-    // A failed refresh keeps the figure already shown.
-    function loadSpeechmatics(month) {
-      if (!(month in speechmatics)) speechmatics[month] = undefined;
-      void request('loadSpeechmatics', { month }).then((reply) => {
-        speechmatics[month] = reply.ok && reply.payload ? reply.payload : speechmatics[month] || null;
+    // A rescan shows "..." while it runs.
+    function loadSpeechmatics(month, rescan) {
+      const prior = speechmatics[month];
+      if (rescan || !(month in speechmatics)) speechmatics[month] = undefined;
+      void request('loadSpeechmatics', { month, rescan: rescan === true }).then((reply) => {
+        speechmatics[month] = reply.ok && reply.payload ? reply.payload : Object.assign({}, prior, { error: true });
         renderCredits();
       });
     }
@@ -3305,15 +3311,14 @@ ${zoomScript(z)}
     }
 
     function renderAge() {
-      const age = document.getElementById('age');
-      if (!payload.readAt) {
-        age.textContent = '';
-        return;
-      }
-      const ageMs = Math.max(0, Date.now() - payload.readAt);
-      const minutes = Math.floor(ageMs / 60000);
-      const seconds = Math.floor((ageMs % 60000) / 1000);
-      age.textContent = minutes + ':' + String(seconds).padStart(2, '0');
+      document.getElementById('age').textContent = payload.readAt ? elapsed(payload.readAt) : '';
+      const asrAge = document.getElementById('asr-age');
+      if (asrAge) asrAge.textContent = elapsed(Number(asrAge.dataset.at));
+    }
+
+    function elapsed(at) {
+      const ageMs = Math.max(0, Date.now() - at);
+      return Math.floor(ageMs / 60000) + ':' + String(Math.floor((ageMs % 60000) / 1000)).padStart(2, '0');
     }
 
     // The month selector drives all three figures. Usage is the extra-usage credits spent: the current
@@ -3345,11 +3350,19 @@ ${zoomScript(z)}
       const usage = spent === null ? '' : '<span>Sub ' + escapeHtml(money(spent)) + '</span>';
       const month = costs ? costs[key] : null;
       const api = costs ? '<span title="Claude API key spend for the month: ' + (month ? month.count : 0) + ' Git changes checks">API ' + escapeHtml(money(month ? numeric(month.usd) || 0 : 0)) + '</span>' : '';
-      // Speechmatics months are Los Angeles time (tv-srvr keeps them that way); omitted when it was out.
+      // Speechmatics months are Los Angeles time (tv-srvr keeps them that way). ERR marks a failed
+      // latest read; the age is since the last good one, which a kept past month doesn't carry.
       if (!(key in speechmatics)) loadSpeechmatics(key);
       const asr = speechmatics[key];
-      const speech = asr === null ? '' : asr === undefined ? '<span>ASR ...</span>'
-        : '<span title="tv ASR on Speechmatics: ' + escapeHtml(asr.hrs.toFixed(1)) + ' audio hours">ASR ' + escapeHtml(money(asr.usd)) + '</span>';
+      let speech = '<span>ASR ...</span>';
+      if (asr !== undefined) {
+        const parts = ['ASR'];
+        if (asr.error) parts.push('ERR');
+        if (typeof asr.usd === 'number') parts.push(escapeHtml(money(asr.usd)));
+        if (typeof asr.at === 'number') parts.push('<span id="asr-age" data-at="' + asr.at + '">' + elapsed(asr.at) + '</span>');
+        const hours = typeof asr.hrs === 'number' ? escapeHtml(asr.hrs.toFixed(1)) + ' audio hours' : 'never read';
+        speech = '<span title="tv ASR on Speechmatics: ' + hours + '">' + parts.join(' ') + '</span>';
+      }
       node.innerHTML = nav + usage + api + speech;
     }
 

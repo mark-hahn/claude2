@@ -328,11 +328,15 @@ export async function modelUsage(log: (line: string) => void): Promise<ModelUsag
 }
 
 // The tv project's Speechmatics spend for a month (YYYY-MM, Los Angeles), which the stats server
-// reads from tv-srvr. Null when either can't be reached.
-export async function speechmaticsCost(month: string, log: (line: string) => void): Promise<{ usd: number; hrs: number } | null> {
+// reads from tv-srvr; rescan skips the server's hourly copy. at is when the figure was read (null
+// for a past month the server keeps), and error says the latest read failed. Null when either
+// server can't be reached, or the month has never been read.
+export async function speechmaticsCost(month: string, rescan: boolean, log: (line: string) => void): Promise<{ usd: number; hrs: number; at: number | null; error: boolean } | null> {
   if (!/^\d{4}-\d{2}$/.test(month)) {
     throw new Error(`bad month ${JSON.stringify(month)}`);
   }
-  const reply = await httpJson("GET", `/speechmatics/${month}`, undefined, 30000, log);
-  return reply && typeof reply.usd === "number" && typeof reply.hrs === "number" ? { usd: reply.usd, hrs: reply.hrs } : null;
+  const reply = await httpJson("GET", `/speechmatics/${month}${rescan ? "?rescan=1" : ""}`, undefined, 30000, log);
+  return reply && typeof reply.usd === "number" && typeof reply.hrs === "number"
+    ? { usd: reply.usd, hrs: reply.hrs, at: typeof reply.at === "number" ? reply.at : null, error: reply.error === true }
+    : null;
 }

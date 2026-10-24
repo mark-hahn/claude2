@@ -18,7 +18,7 @@
 //   POST /settings  body: settings       -> replace them (the extension validates)
 //   POST /checks  body: { month, usd }   -> add one Git changes check's API cost -> { usd, count } for the month
 //   GET  /checks                         -> { months: { <YYYY-MM>: { usd, count } } }
-//   GET  /speechmatics/<YYYY-MM>         -> { usd, hrs } : the tv project's Speechmatics spend
+//   GET  /speechmatics/<YYYY-MM>[?rescan=1] -> { usd, hrs, at?, error? } : the tv project's Speechmatics spend
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -54,10 +54,10 @@ const quotaFreshMs = 4.5 * 60 * 1000;
 const quotaClaimMs = 30 * 1000;
 const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
 
-let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {}, checks: {} };
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {}, checks: {}, speechmatics: {} };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {}, checks: saved.checks || {} };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {}, checks: saved.checks || {}, speechmatics: saved.speechmatics || {} };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -166,22 +166,55 @@ function readBody(request, limit = 32768) {
 }
 
 // The tv project's ASR runs on Speechmatics, and tv-srvr on this box keeps the job record: it
-// answers audio hours per Los Angeles day of a month. A past month no longer changes, so it is
-// asked once; the current month is asked every time. The price is tv's ASR_USD_PER_HOUR.
+// answers audio hours per Los Angeles day of a month. Every answer costs tv-srvr a walk of
+// Speechmatics' job list, which is rate-limited per account and shared with tv's own ASR -- a
+// window re-asking every five minutes drew 429s. So windows never reach tv-srvr directly: a
+// past month is asked once and kept in data.json, the current month at most hourly, a failure
+// holds off asking again for half an hour (the last figure is served meanwhile, flagged as an
+// error until a read succeeds), and concurrent asks share one request. A rescan -- the quota
+// pane's Update button, pressed by hand -- asks tv-srvr regardless. A month not yet kept also
+// answers when it was last read. The price is tv's ASR_USD_PER_HOUR.
 const tvAsrCostUrl = "http://127.0.0.1:8739/api/asr/cost";
 const speechmaticsUsdPerHour = 0.38;
-const speechmaticsMonths = {};
+const speechmaticsFreshMs = 60 * 60 * 1000;
+const speechmaticsRetryMs = 30 * 60 * 1000;
+// month -> { result, at, failedAt, error, pending } for months not yet kept in data.json
+const speechmaticsLive = {};
 
-async function speechmatics(month) {
-  if (speechmaticsMonths[month]) return speechmaticsMonths[month];
+async function speechmatics(month, rescan) {
+  if (data.speechmatics[month]) return data.speechmatics[month];
+  const entry = (speechmaticsLive[month] ||= { result: null, at: 0, failedAt: 0, error: "", pending: null });
+  const now = Date.now();
+  const fresh = entry.result && now - entry.at < speechmaticsFreshMs;
+  const holding = !entry.pending && now - entry.failedAt < speechmaticsRetryMs;
+  if (rescan || !(fresh || holding)) {
+    entry.pending ||= askTvAsrCost(month).then((result) => {
+      entry.result = result;
+      entry.at = Date.now();
+      const current = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit" }).format(new Date());
+      if (month < current) {
+        data.speechmatics[month] = result;
+        save();
+      }
+    }, (error) => {
+      entry.failedAt = Date.now();
+      entry.error = String(error.message || error);
+      console.log(`speechmatics ${month}: ${entry.error}; not asking again for ${speechmaticsRetryMs / 60000} minutes`);
+    }).finally(() => {
+      entry.pending = null;
+    });
+    await entry.pending;
+  }
+  if (!entry.result) throw new Error(entry.error);
+  return { ...entry.result, at: entry.at, error: entry.failedAt > entry.at };
+}
+
+async function askTvAsrCost(month) {
   const response = await fetch(`${tvAsrCostUrl}?month=${month}`, { signal: AbortSignal.timeout(25000) });
   const text = await response.text();
   if (!response.ok) throw new Error(`tv-srvr ${tvAsrCostUrl} HTTP ${response.status}: ${text.slice(0, 200)}`);
   const hrs = JSON.parse(text).hrs.reduce((sum, day) => sum + day, 0);
-  const result = { usd: hrs * speechmaticsUsdPerHour, hrs };
-  const current = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit" }).format(new Date());
-  if (month < current) speechmaticsMonths[month] = result;
-  return result;
+  return { usd: hrs * speechmaticsUsdPerHour, hrs };
 }
 
 const server = http.createServer((request, response) => {
@@ -272,7 +305,7 @@ async function handle(request, response) {
     return json(200, { months: data.checks });
   }
   if (request.method === "GET" && parts[0] === "speechmatics" && /^\d{4}-\d{2}$/.test(parts[1] || "")) {
-    return json(200, await speechmatics(parts[1]));
+    return json(200, await speechmatics(parts[1], url.searchParams.get("rescan") === "1"));
   }
   if (request.method === "GET" && url.pathname === "/models") {
     return json(200, { machines: data.models });
