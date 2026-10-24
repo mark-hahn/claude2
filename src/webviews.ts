@@ -3195,6 +3195,9 @@ ${zoomScript(z)}
     const backs = { five: 0, seven: 0 };
     // Months back from the current one that the credits bar shows.
     let creditMonth = 0;
+    // The tv project's Speechmatics spend by month, asked for as the selector reaches the month:
+    // { usd, hrs }, null when it could not be read, undefined while the first ask is out.
+    const speechmatics = {};
     let payload = { readAt: null, rows: [], state: { error: null } };
     let expanded = null;
     let loading = true;
@@ -3235,6 +3238,8 @@ ${zoomScript(z)}
 
     async function load(force) {
       updating = force;
+      // The first render asks for the current month itself; later loads refresh it.
+      if (!loading) loadSpeechmatics(new Date().toISOString().slice(0, 7));
       render();
       const reply = await request(force ? 'forceQuotaHistory' : 'loadQuotaHistory', {});
       loading = false;
@@ -3247,6 +3252,15 @@ ${zoomScript(z)}
     function request(type, data) {
       const requestId = String(Date.now()) + '-' + String(Math.random()).slice(2);
       return new Promise((resolve) => { pending.set(requestId, resolve); vscode.postMessage(Object.assign({ type, requestId }, data)); });
+    }
+
+    // A failed refresh keeps the figure already shown.
+    function loadSpeechmatics(month) {
+      if (!(month in speechmatics)) speechmatics[month] = undefined;
+      void request('loadSpeechmatics', { month }).then((reply) => {
+        speechmatics[month] = reply.ok && reply.payload ? reply.payload : speechmatics[month] || null;
+        renderCredits();
+      });
     }
 
     function render() {
@@ -3302,7 +3316,7 @@ ${zoomScript(z)}
       age.textContent = minutes + ':' + String(seconds).padStart(2, '0');
     }
 
-    // The month selector drives both figures. Usage is the extra-usage credits spent: the current
+    // The month selector drives all three figures. Usage is the extra-usage credits spent: the current
     // month takes the live reading first; otherwise, and for past months, the newest row in that
     // month with a credits block. Months are UTC: credits reset at 00:00 UTC on the 1st.
     function renderCredits() {
@@ -3328,10 +3342,15 @@ ${zoomScript(z)}
           }
         }
       }
-      const usage = spent === null ? '' : '<span>Usage ' + escapeHtml(money(spent)) + '</span>';
+      const usage = spent === null ? '' : '<span>Sub ' + escapeHtml(money(spent)) + '</span>';
       const month = costs ? costs[key] : null;
       const api = costs ? '<span title="Claude API key spend for the month: ' + (month ? month.count : 0) + ' Git changes checks">API ' + escapeHtml(money(month ? numeric(month.usd) || 0 : 0)) + '</span>' : '';
-      node.innerHTML = nav + usage + api;
+      // Speechmatics months are Los Angeles time (tv-srvr keeps them that way); omitted when it was out.
+      if (!(key in speechmatics)) loadSpeechmatics(key);
+      const asr = speechmatics[key];
+      const speech = asr === null ? '' : asr === undefined ? '<span>ASR ...</span>'
+        : '<span title="tv ASR on Speechmatics: ' + escapeHtml(asr.hrs.toFixed(1)) + ' audio hours">ASR ' + escapeHtml(money(asr.usd)) + '</span>';
+      node.innerHTML = nav + usage + api + speech;
     }
 
     function money(value) { return '$' + Number(value).toFixed(2); }

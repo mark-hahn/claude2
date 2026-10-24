@@ -8,7 +8,7 @@ import { captureScreen, notifyDesktop } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swapSessionTranscripts, truncateSessionTranscript, type RunLimits } from "./claudeCli";
 import { changesMessage, checkCosts, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
 import { InstructionsFile } from "./instructionsFile";
-import { modelUsage, PluginStats, type StatsDelta } from "./pluginStats";
+import { modelUsage, PluginStats, speechmaticsCost, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
@@ -2103,6 +2103,9 @@ class Claude2Controller implements vscode.Disposable {
         const [history, apiCosts] = await Promise.all([this.quota.history(type === "forceQuotaHistory"), checkCosts((line) => this.channel.appendLine(line))]);
         return { ...history, apiCosts };
       });
+    } else if (type === "loadSpeechmatics") {
+      // Asked a month at a time: tv-srvr takes seconds per month, too slow to hold up the history.
+      await this.reply(requestId, () => speechmaticsCost(stringOf(record?.month), (line) => this.channel.appendLine(line)));
     } else if (type === "loadPluginsReport") {
       await this.reply(requestId, async () => await this.pluginsReport());
     } else if (type === "setPluginFlag") {

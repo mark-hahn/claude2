@@ -326,3 +326,13 @@ export async function modelUsage(log: (line: string) => void): Promise<ModelUsag
   }
   return { hours: summed, machines: reply ? Object.fromEntries(Object.entries(reply).map(([name, machine]) => [name, machine.updatedAt])) : {} };
 }
+
+// The tv project's Speechmatics spend for a month (YYYY-MM, Los Angeles), which the stats server
+// reads from tv-srvr. Null when either can't be reached.
+export async function speechmaticsCost(month: string, log: (line: string) => void): Promise<{ usd: number; hrs: number } | null> {
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error(`bad month ${JSON.stringify(month)}`);
+  }
+  const reply = await httpJson("GET", `/speechmatics/${month}`, undefined, 30000, log);
+  return reply && typeof reply.usd === "number" && typeof reply.hrs === "number" ? { usd: reply.usd, hrs: reply.hrs } : null;
+}

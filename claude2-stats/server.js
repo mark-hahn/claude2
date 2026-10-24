@@ -18,6 +18,7 @@
 //   POST /settings  body: settings       -> replace them (the extension validates)
 //   POST /checks  body: { month, usd }   -> add one Git changes check's API cost -> { usd, count } for the month
 //   GET  /checks                         -> { months: { <YYYY-MM>: { usd, count } } }
+//   GET  /speechmatics/<YYYY-MM>         -> { usd, hrs } : the tv project's Speechmatics spend
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
 // per account, not per machine, so with a window open on three boxes the fleet would spend its
@@ -164,6 +165,25 @@ function readBody(request, limit = 32768) {
   });
 }
 
+// The tv project's ASR runs on Speechmatics, and tv-srvr on this box keeps the job record: it
+// answers audio hours per Los Angeles day of a month. A past month no longer changes, so it is
+// asked once; the current month is asked every time. The price is tv's ASR_USD_PER_HOUR.
+const tvAsrCostUrl = "http://127.0.0.1:8739/api/asr/cost";
+const speechmaticsUsdPerHour = 0.38;
+const speechmaticsMonths = {};
+
+async function speechmatics(month) {
+  if (speechmaticsMonths[month]) return speechmaticsMonths[month];
+  const response = await fetch(`${tvAsrCostUrl}?month=${month}`, { signal: AbortSignal.timeout(25000) });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`tv-srvr ${tvAsrCostUrl} HTTP ${response.status}: ${text.slice(0, 200)}`);
+  const hrs = JSON.parse(text).hrs.reduce((sum, day) => sum + day, 0);
+  const result = { usd: hrs * speechmaticsUsdPerHour, hrs };
+  const current = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit" }).format(new Date());
+  if (month < current) speechmaticsMonths[month] = result;
+  return result;
+}
+
 const server = http.createServer((request, response) => {
   void handle(request, response).catch((error) => {
     response.writeHead(400, { "Content-Type": "application/json" });
@@ -250,6 +270,9 @@ async function handle(request, response) {
   }
   if (request.method === "GET" && url.pathname === "/checks") {
     return json(200, { months: data.checks });
+  }
+  if (request.method === "GET" && parts[0] === "speechmatics" && /^\d{4}-\d{2}$/.test(parts[1] || "")) {
+    return json(200, await speechmatics(parts[1]));
   }
   if (request.method === "GET" && url.pathname === "/models") {
     return json(200, { machines: data.models });
