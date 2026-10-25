@@ -17,6 +17,9 @@ export interface Settings {
   fastMode: boolean;
   // After each turn the CLI's guess at the next prompt replaces the prompt box. Costs a little plan usage per turn.
   promptSuggestions: boolean;
+  // Every session's runs get an advisor: the family one step stronger than the prompt's model
+  // (advisorFor). The conversation footer shows which, or None.
+  useAdvisor: boolean;
   // Before a new session's first prompt, warn when it looks unrelated to the uncommitted changes.
   // The verdict is an Opus fast-mode API call billed to claudeApiKey's account.
   gitChangesCheck: boolean;
@@ -29,7 +32,7 @@ export interface Settings {
 }
 
 export const permissionModes = ["acceptEdits", "auto", "bypassPermissions", "dontAsk", "plan"];
-const defaults: Settings = { maxTurns: 50, contextWindowTokens: 0, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false, gitChangesCheck: false, claudeApiKey: "", claudeWorkspaceId: "" };
+const defaults: Settings = { maxTurns: 50, contextWindowTokens: 0, maxBudgetUsd: 0, permissionMode: "auto", timezone: "America/Los_Angeles", longToolDisplay: false, fastMode: false, promptSuggestions: false, useAdvisor: false, gitChangesCheck: false, claudeApiKey: "", claudeWorkspaceId: "" };
 const settingsKey = "settings";
 
 // Throws on the first bad field, worded for the Settings pane's note.
@@ -75,6 +78,7 @@ export function checkSettings(value: unknown): Settings {
     longToolDisplay: record.longToolDisplay === true,
     fastMode: record.fastMode === true,
     promptSuggestions: record.promptSuggestions === true,
+    useAdvisor: record.useAdvisor === true,
     gitChangesCheck: record.gitChangesCheck === true,
     claudeApiKey,
     claudeWorkspaceId,

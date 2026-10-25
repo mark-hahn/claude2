@@ -8,7 +8,8 @@ export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "
 export interface ConversationDefaults {
   model: string;
   effort: string;
-  advisor: string;
+  // The Use advisor setting; the footer shows the advisor it gives this session's model.
+  useAdvisor: boolean;
   contextWindow: number;
   // Each listed pick's window, for the footer to follow the model picker.
   contextWindows: Record<string, number>;
@@ -491,7 +492,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   const safeSessionId = JSON.stringify(sessionId);
   const defaultModel = JSON.stringify(defaults.model);
   const defaultEffort = JSON.stringify(defaults.effort);
-  const defaultAdvisor = JSON.stringify(defaults.advisor);
+  const useAdvisor = JSON.stringify(defaults.useAdvisor);
   const contextWindow = JSON.stringify(defaults.contextWindow);
   const contextWindows = JSON.stringify(defaults.contextWindows);
   const compactReserve = JSON.stringify(CLAUDE2_COMPACT_RESERVE);
@@ -521,6 +522,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .dock-controls .indicator { padding: 2px 8px; }
     /* Three pixels narrower than the rest of the model row, taken off the side padding. */
     #model, #effort, #advisor { padding-left: 6.5px; padding-right: 6.5px; width: calc((11.5ch - 2px) * 0.8); flex: none; }
+    /* A display, not a picker: boxed like its neighbours so the row keeps its columns. */
+    #advisor { align-self: stretch; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); white-space: nowrap; overflow: hidden; }
     /* bigPromptEditor: the editor runs the window's full height on the left, and the pane and the
        controls share the column to its right, the controls at their own three-row height. The dock
        dissolves so its two children can sit in the shell's grid beside the pane. The right column
@@ -654,7 +657,7 @@ ${tooltipStyle()}  </style>
           <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
         </div>
         <div class="bar">
-          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><select id="advisor" title="Advisor: a stronger model Claude can consult mid-task"></select></div>
+          <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><div id="advisor" title="Advisor: the model Claude can consult mid-task, one step stronger than the model picked. Use advisor in Settings turns it on for every session."></div></div>
         </div>
         <div class="stats"><div class="status" id="turns"></div><div class="status" id="context"></div><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div><div class="status" id="cost"></div><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><div class="status" id="duration"></div></div>
       </div>
@@ -680,7 +683,7 @@ ${tooltipScript()}
     const fallbackEffort = ${JSON.stringify(DEFAULT_EFFORT)};
     const defaultModel = ${defaultModel};
     const defaultEffort = ${defaultEffort};
-    const defaultAdvisor = ${defaultAdvisor};
+    let useAdvisor = ${useAdvisor};
     const contextWindow = ${contextWindow};
     let contextWindows = ${contextWindows};
     const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
@@ -780,12 +783,12 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
     }).observe(promptHost);
     // Clr: /clear, sent like the gauge's /compact so the draft in the box stays.
     const clrButton = document.getElementById('clr');
-    clrButton.addEventListener('click', () => vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/clear', model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value, keepDraft: true }));
+    clrButton.addEventListener('click', () => vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/clear', model: modelSelect.value, effort: effortSelect.value, keepDraft: true }));
     // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
     new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
     const effortSelect = document.getElementById('effort');
-    const advisorSelect = document.getElementById('advisor');
+    const advisorBox = document.getElementById('advisor');
     const stopButton = document.getElementById('stop');
     const capButton = document.getElementById('cap');
     const finish = document.getElementById('finish');
@@ -793,15 +796,11 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
 
     fillSelect(modelSelect, pickableModels(), defaultModel, modelLabel);
     fillEfforts(defaultEffort);
-    fillAdvisors(defaultAdvisor);
-    // None picked by hand is sticky through presets. A none forced by a model nothing outranks
-    // (fable) is not, so the next preset brings an advisor back.
-    let advisorOff = defaultAdvisor === '';
+    showAdvisor();
     // The pickers belong to the session, not the panel: every change is written back so
-    // reopening this session later comes up on the same model, effort and advisor.
-    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); fillAdvisors(advisorSelect.value); sendPicks(); renderStatus(); });
+    // reopening this session later comes up on the same model and effort.
+    modelSelect.addEventListener('change', () => { fillEfforts(effortSelect.value); showAdvisor(); sendPicks(); renderStatus(); });
     effortSelect.addEventListener('change', sendPicks);
-    advisorSelect.addEventListener('change', () => { advisorOff = advisorSelect.value === ''; sendPicks(); });
     cycleButton.addEventListener('click', cyclePicks);
     describePicks();
 
@@ -885,8 +884,11 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
         contextWindows = message.windows && typeof message.windows === 'object' ? message.windows : contextWindows;
         fillSelect(modelSelect, pickableModels(), modelSelect.value, modelLabel);
         fillEfforts(effortSelect.value);
-        fillAdvisors(advisorSelect.value);
+        showAdvisor();
         renderStatus();
+      } else if (message.type === 'useAdvisor') {
+        useAdvisor = message.on === true;
+        showAdvisor();
       }
     });
 
@@ -1144,24 +1146,23 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       fillSelect(effortSelect, list, list.includes(selected) ? selected : list.includes(fallbackEffort) ? fallbackEffort : list[0]);
     }
 
-    // Each family stronger than the selected model's that the CLI lists, strongest first. A model
-    // in none of them (haiku) is the weakest and gets all three.
-    function advisorChoices() {
+    // The next family up from the selected model's that the CLI lists, empty when none outranks
+    // it (fable). A model in none of them (haiku) is the weakest, so it gets sonnet. The
+    // extension's advisorFor picks the run's advisor by the same rule; this only shows it.
+    function advisorFor() {
       const families = ['fable', 'opus', 'sonnet'];
       const own = families.findIndex((family) => modelSelect.value.includes(family));
-      return families.slice(0, own === -1 ? families.length : own).filter((family) => Object.keys(models).some((model) => model.includes(family)));
+      return families.slice(0, own === -1 ? families.length : own).filter((family) => Object.keys(models).some((model) => model.includes(family))).pop() || '';
     }
 
-    // The advisor picker offers none, then advisorChoices. A pick the new model outranks falls
-    // back to none.
-    function fillAdvisors(selected) {
-      const offered = advisorChoices();
-      fillSelect(advisorSelect, ['', ...offered], offered.includes(selected) ? selected : '', (family) => (family ? family[0].toUpperCase() + family.slice(1) : 'none'));
+    function showAdvisor() {
+      const family = useAdvisor ? advisorFor() : '';
+      advisorBox.textContent = family ? family[0].toUpperCase() + family.slice(1) : 'None';
     }
 
     function sendPicks() {
       describePicks();
-      vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value });
+      vscode.postMessage({ type: 'picksChanged', sessionId, model: modelSelect.value, effort: effortSelect.value });
     }
 
     // Step to the next enabled preset (set in the Models pane). A pairing set by hand through the
@@ -1173,8 +1174,7 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       const next = enabled[(at + 1) % enabled.length];
       fillSelect(modelSelect, pickableModels(), next.model, modelLabel);
       fillEfforts(next.effort);
-      // The advisor moves to the next family up from the preset's model, unless none is sticky.
-      fillAdvisors(advisorOff ? '' : advisorChoices().pop());
+      showAdvisor();
       sendPicks();
     }
 
@@ -1313,7 +1313,7 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
       // prompt instead, so Ctrl-Enter never has to wait for an answer that is no longer wanted.
       if (!prompt.trim() && !imageCount) return setBigPromptEditor(!bigPromptEditor);
       markStopping();
-      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value });
+      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt, model: modelSelect.value, effort: effortSelect.value });
       // The text stays, read-only, and the extension drops its draft copy on its own.
       draftSent = '';
       imageCount = 0;
@@ -1826,7 +1826,7 @@ ${monacoScript(dist)}    // promptSent's: the same, on the prompt bar's yellow. 
     document.getElementById('context').addEventListener('click', (event) => {
       if (event.currentTarget.classList.contains('compacted')) return clearCompaction();
       if ((status && status.active) || !session.turns.length) return;
-      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/compact', model: modelSelect.value, effort: effortSelect.value, advisor: advisorSelect.value, keepDraft: true });
+      vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/compact', model: modelSelect.value, effort: effortSelect.value, keepDraft: true });
     });
 
     // Acknowledging the quota warning is durable: the extension clears the stored flag and
@@ -2509,6 +2509,7 @@ ${tabsStyle()}  </style>
         <tr><td>Long tool display</td><td><input id="longToolDisplay" type="checkbox"></td></tr>
         <tr><td>Fast mode ($)</td><td><input id="fastMode" type="checkbox"></td></tr>
         <tr><td>Prompt suggestions</td><td><input id="promptSuggestions" type="checkbox"></td></tr>
+        <tr><td>Use advisor</td><td><input id="useAdvisor" type="checkbox"></td></tr>
         <tr><td>Git changes check</td><td><input id="gitChangesCheck" type="checkbox"></td></tr>
         <tr><td>Claude API key</td><td><input id="claudeApiKey" type="password" autocomplete="off" spellcheck="false"></td></tr>
         <tr><td>Claude workspace ID</td><td><input id="claudeWorkspaceId" type="text" autocomplete="off" spellcheck="false"></td></tr>
@@ -2533,7 +2534,7 @@ ${zoomScript(z)}
     });
     document.getElementById('close').addEventListener('click', () => vscode.postMessage({ type: 'closeManagement' }));
     document.getElementById('save').addEventListener('click', () => void save());
-    const checkboxes = ['longToolDisplay', 'fastMode', 'promptSuggestions', 'gitChangesCheck'];
+    const checkboxes = ['longToolDisplay', 'fastMode', 'promptSuggestions', 'useAdvisor', 'gitChangesCheck'];
     for (const id of fields.concat(checkboxes)) document.getElementById(id).addEventListener('input', () => note('Not saved'));
     void load();
 

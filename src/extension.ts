@@ -12,7 +12,7 @@ import { modelUsage, PluginStats, speechmaticsCost, type StatsDelta } from "./pl
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
-import { cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
+import { advisorFor, cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
 import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, snipsHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
@@ -466,6 +466,22 @@ class Claude2Controller implements vscode.Disposable {
     );
   }
 
+  // The server's settings, and every footer's advisor when another window flipped Use advisor.
+  private async refreshSettings(): Promise<void> {
+    await this.settingsReady;
+    const useAdvisor = this.settings.useAdvisor;
+    this.settings = await fetchSettings(this.context.globalState, (line) => this.channel.appendLine(line));
+    if (this.settings.useAdvisor !== useAdvisor) {
+      this.postUseAdvisor();
+    }
+  }
+
+  private postUseAdvisor(): void {
+    for (const panel of this.conversationPanels.values()) {
+      void panel.webview.postMessage({ type: "useAdvisor", on: this.settings.useAdvisor });
+    }
+  }
+
   // Every footer, the sidebar's Mngmnt button, and the Models tab follow the stored info.
   private postModelInfo(): void {
     const info = readModelInfo(this.context.globalState);
@@ -718,9 +734,9 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "deleteFile") {
       await this.deleteFile(sessionId, stringOf(record?.name), numberOf(record?.start));
     } else if (type === "submitPrompt") {
-      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), stringOf(record?.advisor), record?.keepDraft === true);
+      await this.submitPrompt(sessionId, stringOf(record?.prompt), stringOf(record?.model), stringOf(record?.effort), record?.keepDraft === true);
     } else if (type === "picksChanged") {
-      await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort), stringOf(record?.advisor));
+      await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "bigPromptChanged") {
       await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
     } else if (type === "sentPromptChanged") {
@@ -1265,7 +1281,7 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, advisor: string, keepDraft = false): Promise<void> {
+  private async submitPrompt(sessionId: string, prompt: string, model: string, effort: string, keepDraft = false): Promise<void> {
     if (!prompt.trim()) {
       return;
     }
@@ -1285,6 +1301,10 @@ class Claude2Controller implements vscode.Disposable {
     if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
+    // Fresh from the server each prompt, so a save made in another window counts here too.
+    await this.refreshSettings();
+    // Use advisor is global; which advisor is the session's own, from its model.
+    const advisor = this.settings.useAdvisor ? advisorFor(model, readModelInfo(this.context.globalState).models) : "";
     const pending = this.runs.get(sessionId);
     // While the CLI waits on a background task (the B pill) the prompt joins that process
     // instead, so the task keeps running and its result still comes back.
@@ -1389,9 +1409,6 @@ class Claude2Controller implements vscode.Disposable {
         prompt = `${prompt}\n\n${sent.map((file) => fileNote(file)).join("\n\n")}`;
       }
     }
-    // Fresh from the server each prompt, so a save made in another window counts here too.
-    await this.settingsReady;
-    this.settings = await fetchSettings(this.context.globalState, (line) => this.channel.appendLine(line));
     const selectedModel = model;
     let contextWindow = this.contextWindowFor(selectedModel);
     // An empty effort is a pick, not a gap: that model takes no effort levels.
@@ -1399,7 +1416,7 @@ class Claude2Controller implements vscode.Disposable {
     // Belt and braces with the picker's own change event: whatever a prompt actually ran
     // with is what the session reopens on.
     if (aside.ownPicks !== false) {
-      await this.store.setPicks(sessionId, selectedModel, selectedEffort, advisor);
+      await this.store.setPicks(sessionId, selectedModel, selectedEffort);
     }
     const wasFirstPrompt = session.turns.length === 0;
     // Where the conversation already sits in the window. A turn that errored never recorded a
@@ -2091,6 +2108,7 @@ class Claude2Controller implements vscode.Disposable {
         this.settings = settings;
         // Max context tokens moves every footer's compaction point.
         this.postModelInfo();
+        this.postUseAdvisor();
         return settings;
       });
     } else if (type === "loadInstructions") {
@@ -2270,7 +2288,7 @@ class Claude2Controller implements vscode.Disposable {
     return {
       model: session?.model ?? "",
       effort: session?.effort ?? "",
-      advisor: session?.advisor ?? "",
+      useAdvisor: this.settings.useAdvisor,
       contextWindow: this.contextWindowFor(session?.model ?? ""),
       contextWindows: this.contextWindows(readModelInfo(this.context.globalState).models),
       maxTurns: this.settings.maxTurns,

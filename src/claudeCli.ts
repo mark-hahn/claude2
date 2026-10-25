@@ -37,7 +37,7 @@ interface RunPromptOptions {
   // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
   longTools: boolean;
   fastMode: boolean;
-  // The footer's Advisor pick: empty for none, else the model the advisor tool consults.
+  // Empty for none, else the family the advisor tool consults (the Use advisor setting, advisorFor).
   advisor: string;
   // The Prompt suggestions setting: the CLI predicts the next prompt after the turn and
   // onSuggestion gets it. Not every turn has one; the CLI skips a cold cache, for one.

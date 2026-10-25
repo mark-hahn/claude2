@@ -121,8 +121,6 @@ export interface ClaudeSession {
   // Empty means the session never picked and the configured default applies.
   model: string;
   effort: string;
-  // The Advisor picker: empty for none, else the model family passed as the run's advisorModel.
-  advisor: string;
   // The conversation pane's big-prompt layout, so a reload comes back the way it was left.
   bigPrompt: boolean;
   // The prompt box is showing the prompt just sent, read-only, rather than an editable draft.

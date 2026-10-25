@@ -128,6 +128,15 @@ export function cheapestModel(models: ModelMap): string {
   throw new Error(`no known model family in the CLI's list (${Object.keys(models).join(", ")}).`);
 }
 
+// The Use advisor setting's advisor: the next family up from the model's that the CLI lists,
+// empty when none outranks it (fable). A model in none of them (haiku) is the weakest, so it
+// gets sonnet. The conversation footer's advisorFor shows the same rule.
+export function advisorFor(model: string, models: ModelMap): string {
+  const families = ["fable", "opus", "sonnet"];
+  const own = families.findIndex((family) => model.includes(family));
+  return families.slice(0, own === -1 ? families.length : own).filter((family) => Object.keys(models).some((id) => id.includes(family))).pop() ?? "";
+}
+
 // Only entries for models the CLI still lists, each field forced to a boolean or string.
 export function prefsOf(value: unknown, models: ModelMap): ModelPrefs {
   const rows = Object.entries((value ?? {}) as Record<string, unknown>).filter(([model]) => model in models);
