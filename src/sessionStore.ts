@@ -45,7 +45,7 @@ function normalizeSession(session: Partial<ClaudeSession>): ClaudeSession {
     model: typeof session.model === "string" ? session.model : "",
     effort: typeof session.effort === "string" ? session.effort : "",
     bigPrompt: session.bigPrompt === true,
-    sentPrompt: session.sentPrompt === true,
+    restoredPrompt: session.restoredPrompt === true,
     turns: Array.isArray(session.turns) ? session.turns.map((turn) => normalizeTurn(turn)) : [],
   };
 }
@@ -86,7 +86,7 @@ export class SessionStore {
       model,
       effort,
       bigPrompt: false,
-      sentPrompt: false,
+      restoredPrompt: false,
       turns: [],
     };
     this.sessions.unshift(session);
@@ -168,7 +168,7 @@ export class SessionStore {
 
   // The prompt box's size and mode. Layout, not activity: leaves updatedAt alone for the same
   // reason setPicks does.
-  public async setBoxFlag(sessionId: string, flag: "bigPrompt" | "sentPrompt", on: boolean): Promise<void> {
+  public async setBoxFlag(sessionId: string, flag: "bigPrompt" | "restoredPrompt", on: boolean): Promise<void> {
     const session = this.get(sessionId);
     if (!session || session[flag] === on) {
       return;

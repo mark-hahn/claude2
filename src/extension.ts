@@ -739,8 +739,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.setPicks(sessionId, stringOf(record?.model), stringOf(record?.effort));
     } else if (type === "bigPromptChanged") {
       await this.store.setBoxFlag(sessionId, "bigPrompt", record?.on === true);
-    } else if (type === "sentPromptChanged") {
-      await this.store.setBoxFlag(sessionId, "sentPrompt", record?.on === true);
+    } else if (type === "restoredPromptChanged") {
+      await this.store.setBoxFlag(sessionId, "restoredPrompt", record?.on === true);
     } else if (type === "draftChanged") {
       this.noteDraft(sessionId, stringOf(record?.draft));
     } else if (type === "draftBlur") {
@@ -894,7 +894,7 @@ class Claude2Controller implements vscode.Disposable {
     if (!file) {
       return;
     }
-    // A pick, not the click, is what takes a sent prompt out of the box.
+    // A pick, not the click, is what takes a restored prompt out of the box.
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "filePicked" });
     // A picture picked here is a picture, not a file reference: it goes the way a pasted one does,
     // so it gets a 🖼️ char, the Image pane, and a place in the turn's record. The tag route would
@@ -1290,8 +1290,8 @@ class Claude2Controller implements vscode.Disposable {
         this.returnPrompt(sessionId, prompt);
       }
     };
-    // The box went read-only on the prompt the moment Send was pressed, so every way out of this
-    // method short of running the prompt has to hand the text back as a draft.
+    // The box emptied the moment Send was pressed, so every way out of this method short of
+    // running the prompt has to hand the text back as a draft.
     if (!this.store.get(sessionId)) {
       putBack();
       return;
@@ -1423,7 +1423,7 @@ class Claude2Controller implements vscode.Disposable {
     // level, so the newest turn that did is the one to carry forward.
     const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || (prior.cleared ? 0 : level), 0);
     // The text is on its way to the CLI, so the saved draft goes now: what is stored has to
-    // match the box, which holds no draft once Send is pressed (just the sent prompt, read-only).
+    // match the box, which is emptied the moment Send is pressed.
     if (!keepDraft && this.drafts.delete(sessionId)) {
       this.saveDrafts();
     }
@@ -1672,11 +1672,12 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  // A prompt that never ran is a draft again, and a box still showing it read-only goes back to
-  // editing it.
+  // A prompt that never ran is a draft again, and the box the send emptied takes it back. Its
+  // pictures are still waiting unless the turn took them, and the send zeroed the box's count.
   private returnPrompt(sessionId: string, prompt: string): void {
     this.noteDraft(sessionId, prompt);
     void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "promptReturned", prompt });
+    this.postImages(sessionId);
   }
 
   // The Prompt suggestions setting: the CLI's guess at the next prompt, for a box with nothing
