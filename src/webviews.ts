@@ -595,6 +595,9 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     #prompt.restored { background: var(--yellow); }
     /* Inset just past the rounded corners, so the editor's square ones stay inside the border. */
     #prompt > div { position: absolute; inset: 3px; }
+    /* promptMarkdown: the big box's text rendered as a markdown box, read-only, in the editor's
+       place. On the frame's own background, so a restored prompt stays yellow. */
+    #prompt-md { margin: 0; border-left: none; padding: 7px 10px 3px 14px; background: transparent; overflow-y: auto; outline: none; }
     .bar { display: flex; gap: 8px; align-items: center; }
     /* Every digit one width, so a ticking stat does not resize the column and slide the pill sideways. */
     .stats { display: flex; gap: 6px; align-items: center; margin-right: 2px; font-variant-numeric: tabular-nums; }
@@ -678,7 +681,7 @@ ${tooltipStyle()}  </style>
     <div id="history" class="history" tabindex="-1"><div class="empty"></div></div>
     <div id="ctx-pop" hidden></div>
     <div class="dock">
-      <div id="prompt"><div></div></div>
+      <div id="prompt"><div></div><div id="prompt-md" class="response markdown" tabindex="-1" hidden></div></div>
       <div class="dock-controls">
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
@@ -1003,7 +1006,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         searchText = typeof message.text === 'string' ? message.text : '';
         render();
       } else if (message.type === 'focusPrompt') {
-        promptBox.focus();
+        (promptMarkdown ? promptMd : promptBox).focus();
       } else if (message.type === 'toggleBigPrompt') {
         setBigPromptEditor(!bigPromptEditor);
         promptBox.focus();
@@ -1229,7 +1232,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     window.addEventListener('keydown', (event) => {
       if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'Enter') return;
-      if (event.target.closest && event.target.closest('textarea, input, select, .dock-controls')) return;
+      if (event.target.closest && event.target.closest('textarea, input, select, .dock-controls, #prompt-md')) return;
       event.preventDefault();
       if (event.key === 'Enter') selectBottomBlock(); else arrowScroll(event.key === 'ArrowUp');
     });
@@ -1414,10 +1417,48 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     function setBigPromptEditor(on) {
       if (on === bigPromptEditor) return;
       bigPromptEditor = on;
+      setPromptMarkdown(false);
       document.querySelector('.shell').classList.toggle('big-prompt-editor', on);
       resyncSelectedBlock();
       vscode.postMessage({ type: 'bigPromptChanged', sessionId, on });
     }
+
+    // promptMarkdown: the big box's text shown rendered, read-only, in the editor's place.
+    // Ctrl-Alt-X toggles it from anywhere in the tab, while the box is big; leaving the big box
+    // leaves it too. Text that arrives meanwhile (a File tag, a suggestion) is rendered again.
+    // Ctrl-Enter there sends, as it would from the text.
+    let promptMarkdown = false;
+    const promptMd = document.getElementById('prompt-md');
+    function setPromptMarkdown(on) {
+      if (on === promptMarkdown) return;
+      promptMarkdown = on;
+      promptHost.firstElementChild.hidden = on;
+      promptMd.hidden = !on;
+      if (!on) return;
+      promptMd.innerHTML = renderMarkdown(promptModel.getValue());
+      promptMd.scrollTop = 0;
+      promptMd.focus();
+    }
+    promptModel.onDidChangeContent(() => {
+      if (promptMarkdown) promptMd.innerHTML = renderMarkdown(promptModel.getValue());
+    });
+    // Capture phase, so neither Monaco nor the webview host, which forwards keys to VS Code, sees the press.
+    window.addEventListener('keydown', (event) => {
+      if (!bigPromptEditor || !event.ctrlKey || !event.altKey || event.metaKey || event.shiftKey || event.code !== 'KeyX') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const on = !promptMarkdown;
+      setPromptMarkdown(on);
+      if (!on) promptBox.focus();
+    }, true);
+    promptMd.addEventListener('keydown', (event) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key !== 'Enter') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPromptMarkdown(false);
+      promptBox.focus();
+      submitPrompt();
+    });
 
     // promptRestored: Ctrl-Enter on an empty box shows the last bar's prompt again, read-only and
     // yellow, to be read against the answer; it is never sent. Ctrl-Enter empties the box again,
