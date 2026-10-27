@@ -6,6 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import { captureScreen, notifyDesktop } from "./capture";
 import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swapSessionTranscripts, truncateSessionTranscript, type RunLimits } from "./claudeCli";
+import { contextTable } from "./contextStats";
 import { changesMessage, checkCosts, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
 import { InstructionsFile } from "./instructionsFile";
 import { modelUsage, PluginStats, speechmaticsCost, type StatsDelta } from "./pluginStats";
@@ -759,6 +760,8 @@ class Claude2Controller implements vscode.Disposable {
       await this.forkTurn(sessionId, stringOf(record?.turnId));
     } else if (type === "exportSession") {
       await this.exportSession(stringOf(record?.markdown));
+    } else if (type === "ctxStats") {
+      await this.postContextStats(sessionId, numberOf(record?.ask));
     } else if (type === "boxScrollsChanged") {
       const scrolls = recordOf(record?.boxScrolls);
       if (scrolls) {
@@ -814,6 +817,38 @@ class Claude2Controller implements vscode.Disposable {
     }
     this.postConversationState(sessionId);
     this.refreshSidebar();
+  }
+
+  // The Ctx popup's table, posted twice: at once from the transcript alone, then again with the
+  // CLI's own count of the system prompt and tools, which takes it about a second to start up for.
+  // `ask` goes back with both, so the pane can drop replies to a popup it has since reopened.
+  private async postContextStats(sessionId: string, ask: number): Promise<void> {
+    const session = this.store.get(sessionId);
+    if (!session) {
+      return;
+    }
+    const workspacePath = this.workspacePath();
+    const post = (table: Awaited<ReturnType<typeof contextTable>>, done: boolean): void => {
+      void this.conversationPanels.get(sessionId)?.webview.postMessage({ type: "ctxStats", ask, table, done });
+    };
+    post(await contextTable(workspacePath, sessionId, null), false);
+    const model = session.turns.at(-1)?.model || session.model;
+    let usage: Record<string, unknown> | null = null;
+    try {
+      usage = await this.runner.contextUsage({
+        sessionId,
+        workspacePath,
+        model,
+        contextWindow: this.contextWindowFor(model),
+        compactWindow: this.settings.contextWindowTokens || null,
+        permissionMode: this.settings.permissionMode,
+        advisor: this.settings.useAdvisor && model ? advisorFor(model, readModelInfo(this.context.globalState).models) : "",
+        plugins: await this.stats.flags(),
+      });
+    } catch (error) {
+      this.channel.appendLine(`Ctx: the CLI's context count failed: ${errorMessage(error)}`);
+    }
+    post(await contextTable(workspacePath, sessionId, usage), true);
   }
 
   // The sidebar's → button: the markdown the pane built is written to the project root as

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
+import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -52,6 +53,19 @@ interface RunPromptOptions {
 }
 
 type SessionMode = "new" | "resume";
+
+// What contextUsage needs to start the CLI the way a run of the session would.
+export interface ContextProbeOptions {
+  sessionId: string;
+  workspacePath: string;
+  // Empty leaves the CLI on its own default model.
+  model: string;
+  contextWindow: number;
+  compactWindow: number | null;
+  permissionMode: string;
+  advisor: string;
+  plugins: PluginFlags;
+}
 
 interface RunningProcess {
   child: ChildProcess;
@@ -785,66 +799,123 @@ export class ClaudeCliRunner {
   // control channel (set_model, then get_context_usage) without starting a turn. The CLI answers
   // control requests concurrently, so each waits on the one before or it measures the wrong model.
   public async modelWindows(models: string[], workspacePath: string): Promise<Record<string, number>> {
-    const child = spawn("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose"], { cwd: workspacePath, env: childEnv(), stdio: ["pipe", "pipe", "ignore"] });
-    const waiting = new Map<string, (response: Record<string, unknown> | undefined) => void>();
-    let closed = false;
-    const finish = (): void => {
-      closed = true;
-      for (const resolve of waiting.values()) {
-        resolve(undefined);
-      }
-      waiting.clear();
-    };
-    const timeout = setTimeout(() => child.kill("SIGTERM"), 60000);
-    child.on("error", finish);
-    child.on("close", finish);
-    child.stdin.on("error", () => undefined);
-    let pending = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      const lines = (pending + chunk).split("\n");
-      pending = lines.pop() ?? "";
-      for (const line of lines.filter((candidate) => candidate.includes('"control_response"'))) {
-        try {
-          const reply = recordOf(recordOf(JSON.parse(line))?.response);
-          const id = stringOf(reply?.request_id);
-          waiting.get(id)?.(stringOf(reply?.subtype) === "success" ? recordOf(reply?.response) ?? {} : undefined);
-          waiting.delete(id);
-        } catch {}
-      }
-    });
-    let sent = 0;
-    const ask = (request: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => new Promise((resolve) => {
-      if (closed) {
-        resolve(undefined);
-        return;
-      }
-      const id = `w${(sent += 1)}`;
-      waiting.set(id, resolve);
-      child.stdin.write(`${JSON.stringify({ type: "control_request", request_id: id, request })}\n`);
-    });
+    const channel = controlChannel([], childEnv(), workspacePath, 60000);
     const windows: Record<string, number> = {};
     try {
-      await ask({ subtype: "initialize" });
+      await channel.ask({ subtype: "initialize" });
       for (const model of models) {
-        if (await ask({ subtype: "set_model", model })) {
-          const window = numberOf((await ask({ subtype: "get_context_usage" }))?.maxTokens);
+        if (await channel.ask({ subtype: "set_model", model })) {
+          const window = numberOf((await channel.ask({ subtype: "get_context_usage" }))?.maxTokens);
           if (window !== null && window > 0) {
             windows[model] = window;
           }
         }
       }
     } finally {
-      clearTimeout(timeout);
-      child.stdin.end();
+      channel.close();
     }
     return windows;
+  }
+
+  // The CLI's own count of what fills the session's context (its /context, as data), without
+  // starting a turn. It resumes a throwaway copy of the transcript: resuming the real one appends
+  // the CLI's bookkeeping lines to it. Started with a run's flags, so the system prompt and tools
+  // it measures are the ones a run sends. Null when the session has no transcript or the CLI fails.
+  public async contextUsage(options: ContextProbeOptions): Promise<Record<string, unknown> | null> {
+    const probeId = randomUUID();
+    const runSettings: Record<string, unknown> = { advisorModel: options.advisor ? sanitizeModel(options.advisor) : "" };
+    if (!options.plugins.ponytail) {
+      runSettings.enabledPlugins = { "ponytail@ponytail": false };
+    }
+    const args = [
+      ...(options.model ? ["--model", sanitizeModel(options.model)] : []),
+      "--resume",
+      probeId,
+      "--permission-mode",
+      sanitizePermissionMode(options.permissionMode),
+      "--add-dir",
+      capTempDir(),
+      "--append-system-prompt",
+      claude2SystemPrompt(options.contextWindow),
+      "--settings",
+      JSON.stringify(runSettings),
+    ];
+    // Copied only once the flags are known good, so nothing can throw between the copy and its removal.
+    if (!copySessionTranscript(options.workspacePath, options.sessionId, probeId)) {
+      return null;
+    }
+    const channel = controlChannel(args, childEnv(options.compactWindow, options.plugins.graft), options.workspacePath, 30000);
+    // The CLI writes the copy's last lines as it exits, so the copy goes only once it has.
+    void channel.exited.then(() => fs.promises.rm(transcriptPath(options.workspacePath, probeId), { force: true })).catch(() => undefined);
+    try {
+      return (await channel.ask({ subtype: "initialize" })) ? (await channel.ask({ subtype: "get_context_usage" })) ?? null : null;
+    } finally {
+      channel.close();
+    }
   }
 
   private snapshot(status: RunningStatus): RunningStatus {
     const now = Date.now();
     return { ...status, elapsedMs: now - status.startedAt, sinceEventMs: now - status.lastEventAt };
   }
+}
+
+// A CLI process driven only over its control channel: no prompt goes in, so no turn runs and
+// nothing is billed. The CLI answers control requests concurrently, so a caller that needs them
+// in order awaits each before sending the next.
+function controlChannel(args: string[], env: NodeJS.ProcessEnv, workspacePath: string, timeoutMs: number): {
+  ask: (request: Record<string, unknown>) => Promise<Record<string, unknown> | undefined>;
+  close: () => void;
+  exited: Promise<void>;
+} {
+  const child = spawn("claude", ["-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", ...args], { cwd: workspacePath, env, stdio: ["pipe", "pipe", "ignore"] });
+  const waiting = new Map<string, (response: Record<string, unknown> | undefined) => void>();
+  let closed = false;
+  let markExited = (): void => undefined;
+  const exited = new Promise<void>((resolve) => {
+    markExited = resolve;
+  });
+  const finish = (): void => {
+    closed = true;
+    for (const resolve of waiting.values()) {
+      resolve(undefined);
+    }
+    waiting.clear();
+    markExited();
+  };
+  const timeout = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
+  child.on("error", finish);
+  child.on("close", finish);
+  child.stdin.on("error", () => undefined);
+  let pending = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    const lines = (pending + chunk).split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines.filter((candidate) => candidate.includes('"control_response"'))) {
+      try {
+        const reply = recordOf(recordOf(JSON.parse(line))?.response);
+        const id = stringOf(reply?.request_id);
+        waiting.get(id)?.(stringOf(reply?.subtype) === "success" ? recordOf(reply?.response) ?? {} : undefined);
+        waiting.delete(id);
+      } catch {}
+    }
+  });
+  let sent = 0;
+  const ask = (request: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => new Promise((resolve) => {
+    if (closed) {
+      resolve(undefined);
+      return;
+    }
+    const id = `w${(sent += 1)}`;
+    waiting.set(id, resolve);
+    child.stdin.write(`${JSON.stringify({ type: "control_request", request_id: id, request })}\n`);
+  });
+  const close = (): void => {
+    clearTimeout(timeout);
+    child.stdin.end();
+  };
+  return { ask, close, exited };
 }
 
 // Where Cap screenshots are read from: the WSL host reads them off the Windows side of the
@@ -924,7 +995,7 @@ function sanitizePermissionMode(mode: string): string {
 }
 
 // Claude Code stores transcripts under <config dir>/projects/<cwd with non-alphanumerics as "-">/<session id>.jsonl.
-function transcriptPath(workspacePath: string, sessionId: string): string {
+export function transcriptPath(workspacePath: string, sessionId: string): string {
   const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
   const projectKey = workspacePath.replace(/[^a-zA-Z0-9]/g, "-");
   return path.join(configDir, "projects", projectKey, `${sessionId}.jsonl`);
@@ -1011,18 +1082,18 @@ export function truncateSessionTranscript(workspacePath: string, sessionId: stri
   } catch {
     return false;
   }
-  // Line numbers of the real prompts, in order. Tool results and subagent traffic are user entries
-  // too, so a prompt is the narrower thing: top-level, plain text, and sourced from a caller.
-  const promptLines: number[] = [];
+  // The real prompts, in order, with their text. Tool results and subagent traffic are user entries
+  // too, so a prompt is the narrower thing: top-level, text only, and sourced from a caller.
+  const prompts: { index: number; text: string }[] = [];
   lines.forEach((line, index) => {
     if (!line.trim()) {
       return;
     }
     try {
       const entry = JSON.parse(line) as Record<string, unknown>;
-      const message = entry.message as { content?: unknown } | undefined;
-      if (entry.type === "user" && entry.isSidechain !== true && entry.promptSource && typeof message?.content === "string") {
-        promptLines.push(index);
+      const text = promptText((entry.message as { content?: unknown } | undefined)?.content);
+      if (entry.type === "user" && entry.isSidechain !== true && entry.promptSource && text !== null) {
+        prompts.push({ index, text });
       }
     } catch {
       // A half-written line is not a prompt; the scan carries on past it.
@@ -1030,28 +1101,32 @@ export function truncateSessionTranscript(workspacePath: string, sessionId: stri
   });
   // The prompt at the keep boundary, unless the transcript disagrees with the pane's count — then
   // the first later prompt whose text matches the run being dropped.
-  let cut = promptLines.length > keepPrompts ? promptLines[keepPrompts] : -1;
-  const textAt = (index: number): string => {
-    try {
-      return String((JSON.parse(lines[index]) as { message?: { content?: unknown } }).message?.content ?? "");
-    } catch {
-      return "";
-    }
-  };
-  if (droppedPrompt && (cut < 0 || textAt(cut) !== droppedPrompt)) {
-    const match = promptLines.find((index) => textAt(index) === droppedPrompt);
-    cut = match === undefined ? -1 : match;
+  let cut = prompts.length > keepPrompts ? prompts[keepPrompts] : undefined;
+  if (droppedPrompt && cut?.text !== droppedPrompt) {
+    cut = prompts.find((prompt) => prompt.text === droppedPrompt);
   }
-  if (cut < 0) {
+  if (!cut) {
     return false;
   }
   try {
     fs.copyFileSync(file, `${file}.bak`);
-    fs.writeFileSync(file, lines.slice(0, cut).join("\n") + "\n", "utf8");
+    fs.writeFileSync(file, lines.slice(0, cut.index).join("\n") + "\n", "utf8");
     return true;
   } catch {
     return false;
   }
+}
+
+// A prompt's text as the transcript holds it: a plain string, or a list of blocks (the form
+// userMessage sends) whose text blocks are joined. Null for content with a tool result in it, or
+// no text at all: that entry is not a prompt.
+function promptText(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+  const blocks = Array.isArray(content) ? content.map(recordOf) : [];
+  const text = blocks.filter((block) => stringOf(block?.type) === "text");
+  return text.length && !blocks.some((block) => stringOf(block?.type) === "tool_result") ? text.map((block) => stringOf(block?.text)).join("") : null;
 }
 
 function userMessage(text: string): string {

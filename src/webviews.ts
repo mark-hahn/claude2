@@ -643,18 +643,33 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     /* The 🖼️ chars leading a prompt bar. One per attached picture, all alike on purpose: which
        one is which is answered by clicking it, not by reading it. */
     .img-char { cursor: pointer; }
+    /* The Ctx popup: tokens by source, opening upward from its button. Placed by script, which
+       also caps its height to the room above the button; a long table scrolls inside it. */
+    #ctx-pop { position: fixed; z-index: 50; max-width: calc(100vw - 16px); overflow: auto; padding: 8px 10px; border: 1px solid #000; border-radius: 8px; background: #fff; color: #000; font-size: clamp(14px, calc(14px * var(--z)), 18px); box-shadow: 0 4px 14px rgba(0,0,0,0.2); }
+    #ctx-pop table { border-collapse: collapse; }
+    #ctx-pop th, #ctx-pop td { padding: 1px 8px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+    #ctx-pop th:first-child, #ctx-pop td:first-child { text-align: left; }
+    #ctx-pop th { font-weight: 700; vertical-align: bottom; }
+    #ctx-pop thead tr:last-child th, #ctx-pop th[rowspan] { border-bottom: 1px solid #000; }
+    #ctx-pop tr.top td { border-top: 1px solid var(--border); }
+    /* The top-level rows: the yellow rows are exactly the ones the Total adds up. */
+    #ctx-pop tr.subtotal td { background: var(--yellow); }
+    #ctx-pop tr.total td { font-weight: 700; border-top: 1px solid #000; }
+    #ctx-pop .ctx-head { margin-bottom: 6px; font-weight: 700; }
+    #ctx-pop .ctx-note { margin-top: 6px; max-width: 64ch; white-space: normal; }
 ${monacoStyle()}    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
 <body>
   <div class="shell">
     <div id="history" class="history" tabindex="-1"><div class="empty"></div></div>
+    <div id="ctx-pop" hidden></div>
     <div class="dock">
       <div id="prompt"><div></div></div>
       <div class="dock-controls">
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="clr" title="Clear Claude&#39;s context, as /clear does: later prompts start a fresh conversation. The blocks stay.">Clr</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="ctx" title="Tokens by source, for the last prompt and the whole conversation, in and out">Ctx</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
         </div>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><div id="advisor" title="Advisor: the model Claude can consult mid-task, one step stronger than the model picked. Use advisor in Settings turns it on for every session."></div></div>
@@ -786,9 +801,89 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         big: bigPromptEditor, dpr: devicePixelRatio, zoom,
       }) });
     }).observe(promptHost);
-    // Clr: /clear, sent like the gauge's /compact so the draft in the box stays.
-    const clrButton = document.getElementById('clr');
-    clrButton.addEventListener('click', () => vscode.postMessage({ type: 'submitPrompt', sessionId, prompt: '/clear', model: modelSelect.value, effort: effortSelect.value, keepDraft: true }));
+    // Ctx: a popup of tokens by source. The extension answers twice, from the transcript at once
+    // and then with the CLI's own counts folded in; ctxAsk drops answers to an earlier opening.
+    const ctxButton = document.getElementById('ctx');
+    const ctxPop = document.getElementById('ctx-pop');
+    let ctxAsk = 0;
+    // Every count is whole thousands, with no unit letters: 345 tokens reads 0, 543 reads 1.
+    // Only a true zero is left blank.
+    const fmtCtx = (n) => !n ? '' : String(Math.round(n / 1000));
+    function placeCtxPop() {
+      const rect = ctxButton.getBoundingClientRect();
+      ctxPop.style.right = Math.max(8, innerWidth - rect.right) + 'px';
+      ctxPop.style.bottom = (innerHeight - rect.top + 6) + 'px';
+      ctxPop.style.maxHeight = Math.max(120, rect.top - 14) + 'px';
+    }
+    function ctxLine(text, className) {
+      const line = document.createElement('div');
+      line.className = className;
+      line.textContent = text;
+      ctxPop.append(line);
+    }
+    function showCtx(table, done) {
+      ctxPop.replaceChildren();
+      if (!table) {
+        ctxLine('Nothing to count yet: Claude has no transcript for this session.', 'ctx-head');
+        return;
+      }
+      ctxLine((table.contextNow ? 'In context now: ' + fmtCtx(table.contextNow.used) + ' of ' + fmtCtx(table.contextNow.max) + '. ' : '') + 'All counts are thousands of tokens.', 'ctx-head');
+      const grid = document.createElement('table');
+      const head = grid.createTHead();
+      const spans = head.insertRow();
+      const unit = head.insertRow();
+      const th = (row, text, cols, rows) => {
+        const cell = document.createElement('th');
+        cell.textContent = text;
+        if (cols) cell.colSpan = cols;
+        if (rows) cell.rowSpan = rows;
+        row.append(cell);
+      };
+      th(spans, 'Source', 0, 2);
+      th(spans, 'Last prompt', 2);
+      th(spans, 'Conversation', 2);
+      for (const text of ['in', 'out', 'in', 'out']) th(unit, text);
+      const body = grid.createTBody();
+      table.rows.forEach((row, index) => {
+        const line = body.insertRow();
+        line.className = index === table.rows.length - 1 ? 'total' : row.depth === 0 && index > 0 ? 'top' : '';
+        if (index < table.rows.length - 1 && row.depth === 0) line.classList.add('subtotal');
+        const name = line.insertCell();
+        name.textContent = row.label;
+        name.style.paddingLeft = 'calc(8px + ' + (row.depth * 1.2) + 'em)';
+        for (const value of [row.lastIn, row.lastOut, row.allIn, row.allOut]) line.insertCell().textContent = fmtCtx(value);
+      });
+      ctxPop.append(grid);
+      const subagents = table.rows.some((row) => row.depth === 0 && row.label === 'Subagents');
+      ctxLine('API calls: ' + table.calls.last + ' in the last prompt, ' + table.calls.all + ' in the conversation. Input counts each call’s whole context again, cache reads included. Totals and thinking are exact; the rest of the split is estimated.'
+        + (subagents ? ' Subagents are conversations of their own, left out of the session’s token stats.' : '')
+        + (!done ? ' Asking the CLI for its own counts…' : table.measured ? '' : ' The CLI gave no counts of its own, so the system prompt and tool rows are estimates too.'), 'ctx-note');
+      placeCtxPop();
+    }
+    ctxButton.addEventListener('click', () => {
+      if (!ctxPop.hidden) {
+        ctxPop.hidden = true;
+        return;
+      }
+      ctxAsk += 1;
+      ctxPop.replaceChildren();
+      ctxLine('Reading the transcript…', 'ctx-head');
+      ctxPop.hidden = false;
+      placeCtxPop();
+      vscode.postMessage({ type: 'ctxStats', sessionId, ask: ctxAsk });
+    });
+    document.addEventListener('mousedown', (event) => {
+      if (!ctxPop.hidden && !ctxPop.contains(event.target) && !ctxButton.contains(event.target)) ctxPop.hidden = true;
+    }, true);
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !ctxPop.hidden) {
+        ctxPop.hidden = true;
+        event.stopPropagation();
+      }
+    }, true);
+    window.addEventListener('resize', () => {
+      if (!ctxPop.hidden) placeCtxPop();
+    });
     // Monaco sizes its own text, so a zoom step reaches it here rather than through --z.
     new MutationObserver(() => promptBox.updateOptions({ fontSize: 14 * zoom })).observe(document.documentElement, { attributeFilter: ['style'] });
     const modelSelect = document.getElementById('model');
@@ -842,6 +937,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         }
         document.title = session.name || 'Claude2';
         render();
+      } else if (message.type === 'ctxStats') {
+        if (message.ask === ctxAsk && !ctxPop.hidden) showCtx(message.table, message.done);
       } else if (message.type === 'turnDelta') {
         applyTurnDelta(message);
       } else if (message.type === 'searchState') {
@@ -1644,8 +1741,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       // Nav row enablement, once the selection has settled: each button greys out when the move
       // it offers would do nothing. Cap is the exception -- it is always live.
       stopButton.disabled = !active;
-      // Clr sends /clear, which would stop a running turn, and has nothing to clear before one.
-      clrButton.disabled = active || !session.turns.length;
+      // Ctx reads the transcript, so it works mid-run too, but has nothing to count before a prompt.
+      ctxButton.disabled = !session.turns.length;
       exportButton.disabled = !session.turns.length;
       // The stopped turn has ended (or a Ctrl-Enter replacement has started in its place).
       if (stoppingTurn && (!active || status.turnId !== stoppingTurn)) {
