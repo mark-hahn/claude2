@@ -82,7 +82,8 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   level. Thinking blocks are kept and re-sent on later calls.
 - The child env drops `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, so billing stays on the
   subscription. The advisor is set only per run through `--settings advisorModel`, never by
-  `/advisor`.
+  `/advisor`. How often it's called has no setting: `claude2SystemPrompt` adds a line asking
+  for fewer calls whenever a run has an advisor.
 - Graft is turned off per project by pointing `GRAFT_DIR` at an empty dir, ponytail by
   `enabledPlugins` in `--settings`.
 - `--max-turns` is counted by the CLI (`num_turns`), not by `message_start` events.

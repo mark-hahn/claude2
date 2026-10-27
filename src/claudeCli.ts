@@ -227,7 +227,7 @@ export class ClaudeCliRunner {
       "--add-dir",
       capTempDir(),
       "--append-system-prompt",
-      claude2SystemPrompt(options.contextWindow),
+      claude2SystemPrompt(options.contextWindow, options.advisor),
     ];
     if (options.limits.maxBudgetUsd > 0) {
       args.push("--max-budget-usd", String(options.limits.maxBudgetUsd));
@@ -836,7 +836,7 @@ export class ClaudeCliRunner {
       "--add-dir",
       capTempDir(),
       "--append-system-prompt",
-      claude2SystemPrompt(options.contextWindow),
+      claude2SystemPrompt(options.contextWindow, options.advisor),
       "--settings",
       JSON.stringify(runSettings),
     ];
@@ -935,7 +935,7 @@ function mainModelWindow(modelUsage: Record<string, unknown> | undefined, modelI
   return window !== null && window > 0 ? window : null;
 }
 
-function claude2SystemPrompt(contextWindow: number): string {
+function claude2SystemPrompt(contextWindow: number, advisor: string): string {
   return [
     "You are running in the Claude2 VS Code extension.",
     `The UI tracks a ${contextWindow.toLocaleString()} token context window for this session.`,
@@ -946,6 +946,9 @@ function claude2SystemPrompt(contextWindow: number): string {
     // Also read by the CLI's prompt-suggestion request, which otherwise favours "commit this" or
     // "push it" once a task is done.
     "The user does all git commits and pushes themselves and never asks Claude to. Never predict a commit or push prompt.",
+    // The CLI's own advisor guidance asks for a call before and after every multi-step task, which
+    // the user finds far too often. There is no setting for how often; only the prompt can say.
+    ...(advisor ? ["The user finds advisor calls too frequent. This overrides the default advisor guidance: do not call the advisor before starting or after finishing routine work, on short tasks, or to answer questions. Call it only when stuck (errors recurring, an approach not converging) or before a large or hard-to-reverse change."] : []),
   ].join("\n");
 }
 
