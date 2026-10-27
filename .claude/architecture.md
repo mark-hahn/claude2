@@ -75,6 +75,13 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   strings `\'` comes out as a bare `'` and breaks the script: use `’` or `\\'`. `${` interpolates.
 - claude2 sends prompts as a list of text blocks (`userMessage`), so transcript prompts are
   arrays, not strings. A real prompt is a top-level user entry with `promptSource`.
+- A tool line in a response is a `TOOL_LINE_MARK` line. Its detail follows on lines that also
+  carry `TOOL_DETAIL_MARK` (`toolDetail`: the long form, plus Edit's old/new and Write's content,
+  each text capped at 4k chars); with Long tool display on, only Skill and advisor lines get one.
+  Skill and advisor details arrive late (the skill's synthetic user message, the
+  `advisor_tool_result`) and are added only while their line is still the response's last
+  thing. A click on the line in any box, the streaming one too, swaps line and detail
+  (`openToolCalls` in the conversation webview). Copy and export drop the detail lines.
 - Transcript replies are written one line per content block, every line carrying the same
   `message.id` and usage: dedupe by id. Subagents have their own files under
   `<session id>/subagents/`.

@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { ModelMap } from "./modelInfo";
-import { TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
+import { TOOL_DETAIL_MARK, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -320,6 +320,9 @@ export class ClaudeCliRunner {
       let turnEnded = false;
       // Tool calls are announced once each; the CLI can repeat an assistant message, so key off the block id.
       const seenToolUses = new Set<string>();
+      // The advisor and Skill lines still waiting on the detail that only their result brings.
+      let advisorWait: LateDetail | null = null;
+      let skillWait: LateDetail | null = null;
 
       // Everything the pane shows goes through here. Only a chunk with something visible in it
       // restarts the footer's quiet timer: a bare separator newline shows nothing.
@@ -333,13 +336,28 @@ export class ClaudeCliRunner {
       // Tool lines stack one per line with no blank line between them; the blank lines go around the batch.
       // Each carries the mark and the local wall-clock time it arrived, "hh:mm:ss ", ahead of its text.
       // A long tool line's continuation lines carry the mark too, so they stay in its tool group.
-      const appendToolLine = (text: string, now = new Date()): void => {
+      // A detail follows on lines that also carry the detail mark, its first one with the same time.
+      // Returns where the line's chunk ends and its time, for a detail that arrives later.
+      const appendToolLine = (text: string, now = new Date(), detail = ""): LateDetail => {
         const gap = toolBatchOpen || !responseText || responseText.endsWith("\n\n") ? "" : responseText.endsWith("\n") ? "\n" : "\n\n";
         const t = laParts(now);
-        const chunk = `${gap}${TOOL_LINE_MARK}${t.hour}:${t.minute}:${t.second} ${text.replace(/\n/g, `\n${TOOL_LINE_MARK}`)}\n`;
+        const stamp = `${t.hour}:${t.minute}:${t.second} `;
+        const chunk = `${gap}${TOOL_LINE_MARK}${stamp}${text.replace(/\n/g, `\n${TOOL_LINE_MARK}`)}\n${detail ? detailLines(stamp + detail) : ""}`;
         responseText += chunk;
         show(chunk);
         toolBatchOpen = true;
+        return { id: "", end: responseText.length, stamp, startedAt: now.getTime() };
+      };
+
+      // A detail that only comes after its line (an advisor's answer, a skill's text) joins it only
+      // while that line is still the last thing in the response: anything between would split them.
+      const appendLateDetail = (line: LateDetail, detail: string): void => {
+        if (!toolBatchOpen || responseText.length !== line.end) {
+          return;
+        }
+        const chunk = detailLines(detail);
+        responseText += chunk;
+        show(chunk);
       };
 
       // Closes an open batch with the blank line that separates it from the prose that follows.
@@ -473,6 +491,8 @@ export class ClaudeCliRunner {
         sawTextDelta = false;
         toolBatchOpen = false;
         turnEnded = false;
+        advisorWait = null;
+        skillWait = null;
         const now = new Date();
         appendToolLine(startedLine(now), now);
         Object.assign(status, { turnId: next.turnId, turns: 0, costUsd: null, ponySkips: [], codeLines: 0, phase: "working", compactedAt: null, startedAt: Date.now(), lastEventAt: Date.now() });
@@ -560,6 +580,12 @@ export class ClaudeCliRunner {
           if (Array.isArray(content)) {
             for (const entry of content) {
               const block = recordOf(entry);
+              // The advisor's answer comes back as a block of its own once it is done.
+              if (stringOf(block?.type) === "advisor_tool_result" && advisorWait && stringOf(block?.tool_use_id) === advisorWait.id) {
+                appendLateDetail(advisorWait, advisorWait.stamp + advisorDetail(options.advisor, block ?? {}, Date.now() - advisorWait.startedAt, recordOf(message.message)?.usage));
+                advisorWait = null;
+                continue;
+              }
               // The advisor runs on the API side: its call is a server_tool_use with no input.
               const advisorCall = stringOf(block?.type) === "server_tool_use" && stringOf(block?.name) === "advisor";
               if (!block || (stringOf(block.type) !== "tool_use" && !advisorCall)) {
@@ -570,8 +596,26 @@ export class ClaudeCliRunner {
                 continue;
               }
               seenToolUses.add(blockId);
-              appendToolLine(advisorCall ? advisorLine(options.advisor) : options.longTools ? longToolUseLine(block) : toolUseLine(block));
+              if (advisorCall) {
+                advisorWait = { ...appendToolLine(advisorLine(options.advisor)), id: blockId };
+                continue;
+              }
+              const skillCall = stringOf(block.name) === "Skill";
+              const toolLine = options.longTools ? longToolUseLine(block) : toolUseLine(block);
+              // A short line keeps the call's long form as its detail, unless that would say nothing more.
+              // A Skill line always has one, since the skill's text is added to it when it loads.
+              const detail = skillCall ? longToolUseLine(block) : options.longTools ? "" : toolDetail(block);
+              const line = appendToolLine(toolLine, undefined, detail === toolLine && !skillCall ? "" : detail);
+              skillWait = skillCall ? { ...line, id: blockId } : null;
             }
+          }
+        } else if (messageType === "user") {
+          // A skill's text reaches the conversation as a synthetic user message, right after its Skill call's result.
+          const content = recordOf(message.message)?.content;
+          const skillText = message.isSynthetic === true && Array.isArray(content) ? content.map((entry) => stringOf(recordOf(entry)?.text)).join("") : "";
+          if (skillWait && skillText.trim()) {
+            appendLateDetail(skillWait, cappedText(skillText.trim()).replace(/^/gm, "    "));
+            skillWait = null;
           }
         } else if (messageType === "system") {
           // Compaction runs between API calls, so nothing else on the stream moves while it works.
@@ -1208,6 +1252,65 @@ function toolUseLine(block: Record<string, unknown>): string {
   return `**${name}:** ${oneLine.length > 160 ? `${oneLine.slice(0, 159)}…` : oneLine}`;
 }
 
+// Where a tool line's chunk ended and its time, kept for a detail that only arrives later, and
+// the call it was for.
+interface LateDetail {
+  id: string;
+  end: number;
+  stamp: string;
+  startedAt: number;
+}
+
+// Detail lines carry both marks; a blank one is the two marks alone.
+function detailLines(detail: string): string {
+  return `${detail.replace(/^/gm, TOOL_LINE_MARK + TOOL_DETAIL_MARK)}\n`;
+}
+
+// A tool line's detail is stored with the response, so each long text in it (a command, a prompt,
+// an Edit's old or new text, a Write's content, a skill's text) is cut short, at a line end when
+// there is one in the second half of what is kept.
+const DETAIL_CAP = 4000;
+
+function cappedText(text: string, indent = ""): string {
+  if (text.length <= DETAIL_CAP) {
+    return text;
+  }
+  const lineEnd = text.lastIndexOf("\n", DETAIL_CAP);
+  const cut = lineEnd > DETAIL_CAP / 2 ? lineEnd : DETAIL_CAP;
+  return `${text.slice(0, cut)}\n${indent}… ${(text.length - cut).toLocaleString()} more characters`;
+}
+
+// A short line's detail: its long form, plus the text an Edit takes out (-) and puts in (+), or the
+// content a Write puts down.
+function toolDetail(block: Record<string, unknown>): string {
+  const input = recordOf(block.input) ?? {};
+  const body = (value: unknown, prefix: string): string => (stringOf(value) ? `\n${cappedText(stringOf(value)).replace(/^/gm, prefix)}` : "");
+  switch (stringOf(block.name)) {
+    case "Edit":
+      return longToolUseLine(block) + body(input.old_string, "    - ") + body(input.new_string, "    + ");
+    case "Write":
+      return longToolUseLine(block) + body(input.content, "    ");
+    default:
+      return cappedText(longToolUseLine(block), "    ");
+  }
+}
+
+// The advisor's answer is encrypted, for Claude alone, so its detail is what can be seen around it:
+// how long it took, and what it read and wrote when the message's usage already counts it.
+function advisorDetail(advisor: string, block: Record<string, unknown>, tookMs: number, usage: unknown): string {
+  const seconds = Math.round(tookMs / 1000);
+  const lines = [advisorLine(advisor), `    answered in ${seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`}`];
+  const iterations = recordOf(usage)?.iterations;
+  const counted = Array.isArray(iterations) ? iterations.map(recordOf).find((entry) => stringOf(entry?.type) === "advisor_message") : undefined;
+  if (counted) {
+    lines.push(`    ${stringOf(counted.model) || "advisor"} read ${(numberOf(counted.input_tokens) ?? 0).toLocaleString()} tokens and wrote ${(numberOf(counted.output_tokens) ?? 0).toLocaleString()}`);
+  }
+  const result = recordOf(block.content);
+  const text = stringOf(result?.text);
+  lines.push(text ? cappedText(text).replace(/^/gm, "    ") : "    the advice comes back encrypted: only Claude can read it");
+  return lines.join("\n");
+}
+
 // The Long tool display form: what the official Claude Code extension shows for the call -- its
 // header detail, and the input it lists under IN -- with that input indented on the lines below.
 // Tool results are not shown.
@@ -1293,8 +1396,10 @@ function usageTotals(usage: Record<string, unknown>): { prompt: number; output: 
   return { prompt, output, context: prompt + output };
 }
 
+// Fences inside tool lines (a command or prompt in a long form or a detail) are not the response's code.
 function countCodeLines(text: string): number {
-  const codeMatches = text.match(/```[\s\S]*?```/g);
+  const prose = text.split("\n").filter((line) => !line.startsWith(TOOL_LINE_MARK)).join("\n");
+  const codeMatches = prose.match(/```[\s\S]*?```/g);
   if (!codeMatches) {
     return 0;
   }

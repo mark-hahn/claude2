@@ -11,6 +11,10 @@ export const DEFAULT_EFFORT = "high";
 // **bold** runs too. Zero width, so it shows as nothing wherever a response is read as plain text.
 export const TOOL_LINE_MARK = "⁣";
 
+// U+2062 INVISIBLE TIMES, after the tool mark on a tool line's detail lines: the call's long form,
+// stored under its short line. A finished box shows them in the line's place when it is clicked.
+export const TOOL_DETAIL_MARK = "⁢";
+
 // A line of just this, put in when the run ends, is where the closing answer starts; the
 // conversation view draws a rule there. Zero width like the tool mark, and a different character.
 export const ANSWER_MARK = "⁤";

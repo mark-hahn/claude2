@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { ModelInfo } from "./modelInfo";
 import { permissionModes } from "./settings";
-import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_LINE_MARK } from "./types";
+import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, DEFAULT_EFFORT, GRAFT_TALLY_MARK, TOOL_DETAIL_MARK, TOOL_LINE_MARK } from "./types";
 
 export type ManagementPane = "instructions" | "quota" | "plugins" | "models" | "settings" | "cap";
 
@@ -500,6 +500,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
+  const toolDetailMark = `'\\u${TOOL_DETAIL_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   const answerMark = `'\\u${ANSWER_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   const graftTallyMark = JSON.stringify(GRAFT_TALLY_MARK);
   return `<!doctype html>
@@ -572,6 +573,10 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .response.markdown th { background: rgba(0,0,0,0.05); }
     /* A run of tool lines between the prose, shown only while the box's tool groups are. */
     .response.markdown .tool-group { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; margin: 0 0 8px; }
+    /* A tool line with a stored detail: a click shows the detail in its place. */
+    .response.markdown .tool-call:not(.open) > .tool-long, .response.markdown .tool-call.has-detail.open > .tool-short { display: none; }
+    .response.markdown .tool-call.has-detail { cursor: pointer; }
+    .response.markdown .tool-call.has-detail:hover { background: var(--wash); }
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
@@ -712,6 +717,7 @@ ${tooltipScript()}
     const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_LINE_MARK = ${toolLineMark};
+    const TOOL_DETAIL_MARK = ${toolDetailMark};
     const ANSWER_MARK = ${answerMark};
     const GRAFT_TALLY_MARK = ${graftTallyMark};
     let session = { id: sessionId, name: 'New session', turns: [] };
@@ -725,6 +731,8 @@ ${tooltipScript()}
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
     let expandedPrompts = new Set();
+    // Tool lines showing their detail, as turn id + ':' + the line's place among the box's tool calls.
+    const openToolCalls = new Set();
     // Every box is markdown. The one open box hides its tool groups by default and a ctrl-click
     // toggles them. The streaming box always shows them and ignores clicks.
     let toolsBox = false;
@@ -1507,10 +1515,12 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
 
     // Fills a box with the response. Where the run marked the start of its closing answer, the
     // answer sits under a rule of its own.
-    function fillBox(box, text, tools) {
+    function fillBox(box, text, tools, turnId) {
       box.replaceChildren();
       const parts = text.split('\\n' + ANSWER_MARK + '\\n');
-      appendResponse(box, parts[0], tools);
+      // Tool calls are numbered across both parts, so each keeps one key in openToolCalls.
+      const calls = { turnId, count: 0 };
+      appendResponse(box, parts[0], tools, calls);
       if (parts.length > 1) {
         // With tools hidden, a run whose work was all tool calls leaves nothing above the rule.
         if (box.textContent.trim()) {
@@ -1518,20 +1528,22 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
           rule.className = 'answer-rule';
           box.appendChild(rule);
         }
-        appendResponse(box, parts.slice(1).join('\\n'), tools);
+        appendResponse(box, parts.slice(1).join('\\n'), tools, calls);
       }
     }
 
     // Adds response text to a box as markdown. With tools, each run of tool lines sits
     // between the prose around it as a monospace group; tool lines are plain text except
     // for a leading **bold** tool name. Blank lines do not end a group.
-    function appendResponse(box, text, tools) {
+    function appendResponse(box, text, tools, calls) {
       if (!tools) {
         box.insertAdjacentHTML('beforeend', renderMarkdown(strippedText(text)));
         return;
       }
       let prose = [];
       let group = null;
+      // The tool call whose detail lines, if it has any, come next.
+      let call = null;
       const flushProse = () => {
         const kept = strippedText(prose.join('\\n'));
         if (kept) box.insertAdjacentHTML('beforeend', renderMarkdown(kept));
@@ -1541,16 +1553,39 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         if (!isToolLine(line)) {
           prose.push(line);
           if (line.trim() && !line.startsWith(GRAFT_TALLY_MARK)) group = null;
+          call = null;
           continue;
         }
         flushProse();
+        // A call is its short line plus a hidden copy of its detail; the .open class swaps which shows.
+        if (isDetailLine(line)) {
+          if (!call) continue;
+          let long = call.querySelector('.tool-long');
+          if (long) long.appendChild(document.createTextNode('\\n'));
+          else {
+            long = document.createElement('span');
+            long.className = 'tool-long';
+            call.appendChild(long);
+            call.classList.add('has-detail');
+          }
+          appendFormattedLine(long, line.slice(TOOL_LINE_MARK.length + TOOL_DETAIL_MARK.length));
+          continue;
+        }
         if (group) group.appendChild(document.createTextNode('\\n'));
         else {
           group = document.createElement('div');
           group.className = 'tool-group';
           box.appendChild(group);
         }
-        appendFormattedLine(group, line);
+        call = document.createElement('span');
+        call.className = 'tool-call';
+        call.dataset.call = String(calls.count++);
+        if (openToolCalls.has(calls.turnId + ':' + call.dataset.call)) call.classList.add('open');
+        const short = document.createElement('span');
+        short.className = 'tool-short';
+        appendFormattedLine(short, line);
+        call.appendChild(short);
+        group.appendChild(call);
       }
       flushProse();
     }
@@ -1586,6 +1621,16 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     // opens its own prose with **bold** runs too, and those are answer text that must never hide.
     function isToolLine(line) {
       return line.startsWith(TOOL_LINE_MARK);
+    }
+
+    // A line of the stored detail under a tool line, which carries the detail mark after the tool mark.
+    function isDetailLine(line) {
+      return line.startsWith(TOOL_LINE_MARK + TOOL_DETAIL_MARK);
+    }
+
+    // A response without the stored tool-line details: what a box shows with every call closed.
+    function withoutDetails(text) {
+      return text.split('\\n').filter((line) => !isDetailLine(line)).join('\\n');
     }
 
     // What the markdown box renders: the response without its tool lines — no leading blanks,
@@ -1923,29 +1968,48 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
           // arriving invisibly.
           if (boxShown) {
             // The streaming box keeps its tool groups up — they are the run's progress
-            // display — and does not answer clicks.
+            // display — and answers no clicks but a tool line's.
             const locked = isActiveTurn;
             const tools = locked || (index === anchorIndex && toolsBox);
             const response = document.createElement('div');
             response.className = 'response markdown' + (turn.error ? ' error' : '');
             // A run that failed part way still wrote everything up to that point, so the text stays
             // and the reason goes underneath it rather than in its place.
-            fillBox(response, turn.response || '', tools);
+            fillBox(response, turn.response || '', tools, turn.id);
             if (turn.error) {
               const note = document.createElement('div');
               note.className = 'error-note';
               note.textContent = turn.error;
               response.appendChild(note);
             }
+            // The tool line a press landed on. The streaming box is rebuilt as text arrives, so by
+            // the click that line can have been swapped for a fresh copy.
+            let pressedCall = null;
+            response.addEventListener('mousedown', (event) => {
+              pressedCall = event.target.closest ? event.target.closest('.tool-call.has-detail') : null;
+            });
             response.addEventListener('click', (event) => {
               if (event.altKey) {
                 // The whole box, as shown: a failed turn keeps its partial text and gains the reason.
                 const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
-                vscode.postMessage({ type: 'copyText', sessionId, text: tools ? body : strippedText(body) });
+                vscode.postMessage({ type: 'copyText', sessionId, text: tools ? withoutDetails(body) : strippedText(body) });
                 response.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
                 return;
               }
-              // A plain click is left to text selection; only a ctrl-click toggles.
+              // A plain click on a tool line with a detail swaps the two, unless it ended a drag
+              // that selected text. The set keeps the choice through rebuilds.
+              const hit = event.target.closest ? event.target.closest('.tool-call.has-detail') : null;
+              const pressed = hit || (pressedCall && !pressedCall.isConnected ? pressedCall : null);
+              pressedCall = null;
+              if (pressed && !event.ctrlKey) {
+                if (!window.getSelection().isCollapsed) return;
+                const key = turn.id + ':' + pressed.dataset.call;
+                if (openToolCalls.has(key)) openToolCalls.delete(key); else openToolCalls.add(key);
+                const call = response.querySelector('.tool-call[data-call="' + pressed.dataset.call + '"]');
+                if (call) call.classList.toggle('open', openToolCalls.has(key));
+                return;
+              }
+              // Any other plain click is left to text selection; only a ctrl-click toggles.
               // toolsBox is the selected box's view, so a box shown only by allOpen has no toggle.
               if (locked || !event.ctrlKey || index !== anchorIndex) return;
               // A click on a rendered link is the link, not the toggle; a drag that selected
@@ -2146,7 +2210,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       if (message.delta) {
         const atBottom = response.scrollHeight - response.scrollTop - response.clientHeight < 18;
         const savedTop = response.scrollTop;
-        fillBox(response, turn.response || '', true);
+        fillBox(response, turn.response || '', true, turn.id);
         if (Number(node.dataset.index) === anchorIndex) {
           requestAnimationFrame(() => syncSelectedBlock(atBottom ? 'bottom' : savedTop));
         }
