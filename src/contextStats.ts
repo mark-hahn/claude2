@@ -8,23 +8,35 @@ import { transcriptPath } from "./claudeCli";
 export interface ContextRow {
   label: string;
   depth: number;
+  // In the latest API call: its whole input plus the reply it wrote, the level the footer's
+  // context gauge shows.
+  now: number;
   lastIn: number;
   lastOut: number;
   allIn: number;
   allOut: number;
 }
 
+// How input was billed: read from the prompt cache, written to it, or sent with no caching.
+export interface CacheSplit {
+  read: number;
+  write: number;
+  fresh: number;
+}
+
 export interface ContextTable {
   // The last row is the total.
   rows: ContextRow[];
   calls: { last: number; all: number };
-  // What the CLI counts in the context right now; null when it has not been asked or did not answer.
-  contextNow: { used: number; max: number } | null;
+  // The API reports caching per call, never per source, so it is split by column only: the
+  // latest call, the last prompt, and the conversation.
+  cache: { now: CacheSplit; last: CacheSplit; all: CacheSplit };
   // The system prompt and tool rows are the CLI's own counts, not sizes guessed from the transcript.
   measured: boolean;
 }
 
 interface Node {
+  now: number;
   lastIn: number;
   lastOut: number;
   allIn: number;
@@ -84,6 +96,16 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
   for (const label of TOP_ROWS) {
     root.children.set(label, node());
   }
+  // The latest call's shares, kept apart until the end, when they are all that is left in them.
+  let nowIn: [string[], number][] = [];
+  let nowOut: [string[], number][] = [];
+  const addNow = (route: string[], amount: number): void => {
+    let at = root;
+    for (const label of route) {
+      at = at.children.get(label) ?? at.children.set(label, node()).get(label)!;
+      at.now += amount;
+    }
+  };
   const add = (route: string[], inLast: boolean, input: number, output: number): void => {
     let at = root;
     for (const label of route) {
@@ -116,6 +138,20 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
   const seen = new Set<string>();
   const seenSidechain = new Set<string>();
   const calls = { last: 0, all: 0 };
+  const cache = { now: cacheOf({}), last: cacheOf({}), all: cacheOf({}) };
+  const noteCache = (callUsage: Record<string, unknown>, inLast: boolean): void => {
+    const one = cacheOf(callUsage);
+    for (const scope of inLast ? [cache.last, cache.all] : [cache.all]) {
+      scope.read += one.read;
+      scope.write += one.write;
+      scope.fresh += one.fresh;
+    }
+  };
+  // A subagent's call is billed like any other, but none of its context is the session's own.
+  const subagentCall = (route: string[], inLast: boolean, callUsage: Record<string, unknown>): void => {
+    add(route, inLast, inputOf(callUsage), numberOf(callUsage.output_tokens));
+    noteCache(callUsage, inLast);
+  };
   let open: Call | null = null;
 
   // A call's output is only whole once its last line is in, so it is shared out when the next
@@ -127,18 +163,23 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
     const pool = call.blocks.filter((block) => call.thinking === 0 || block.path[0] !== "Thinking");
     const chars = pool.reduce((sum, block) => sum + block.chars, 0);
     const rest = Math.max(0, call.output - call.thinking);
+    nowOut = [];
+    const out = (route: string[], amount: number): void => {
+      add(route, call.inLast, 0, amount);
+      nowOut.push([route, amount]);
+    };
     if (call.thinking > 0) {
-      add(["Thinking"], call.inLast, 0, call.thinking);
+      out(["Thinking"], call.thinking);
       present.push({ path: ["Thinking"], weight: call.thinking });
     }
     if (chars > 0) {
       for (const block of pool) {
         const share = (rest * block.chars) / chars;
-        add(block.path, call.inLast, 0, share);
+        out(block.path, share);
         present.push({ path: block.path, weight: share });
       }
     } else if (rest > 0) {
-      add(["Claude's text"], call.inLast, 0, rest);
+      out(["Claude's text"], rest);
       present.push({ path: ["Claude's text"], weight: rest });
     }
   };
@@ -158,7 +199,7 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
       if (entry.isSidechain === true) {
         if (!seenSidechain.has(id)) {
           seenSidechain.add(id);
-          add(["Subagents", "subagent"], inLast, inputOf(callUsage), numberOf(callUsage.output_tokens));
+          subagentCall(["Subagents", "subagent"], inLast, callUsage);
         }
         return;
       }
@@ -172,11 +213,18 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
         open = { id, output: 0, thinking: 0, inLast, blocks: [] };
         calls.all += 1;
         calls.last += inLast ? 1 : 0;
+        noteCache(callUsage, inLast);
+        cache.now = cacheOf(callUsage);
         const input = inputOf(callUsage);
+        nowIn = [];
+        const take = (route: string[], amount: number): void => {
+          add(route, inLast, amount, 0);
+          nowIn.push([route, amount]);
+        };
         // Estimates can overshoot a small call; the parts outside the messages never exceed it.
         const scale = fixedTotal > input ? input / fixedTotal : 1;
         for (const [label, size] of fixed) {
-          add([label], inLast, size * scale, 0);
+          take([label], size * scale);
         }
         const budget = input - fixedTotal * scale;
         // Whatever this input holds beyond what the last call carried and wrote is what arrived
@@ -192,10 +240,10 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
         const weight = present.reduce((sum, item) => sum + item.weight, 0);
         if (weight > 0) {
           for (const item of present) {
-            add(item.path, inLast, (budget * item.weight) / weight, 0);
+            take(item.path, (budget * item.weight) / weight);
           }
         } else {
-          add(["Other messages"], inLast, budget, 0);
+          take(["Other messages"], budget);
         }
       }
       const call: Call = open!;
@@ -275,11 +323,15 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
     }
   });
   settle(open);
-  await addSubagents(path.join(path.dirname(file), sessionId, "subagents"), lastToolUses, add);
+  for (const [route, amount] of [...nowIn, ...nowOut]) {
+    addNow(route, amount);
+  }
+  await addSubagents(path.join(path.dirname(file), sessionId, "subagents"), lastToolUses, subagentCall);
 
   const rows: ContextRow[] = [];
-  const total: ContextRow = { label: "Total", depth: 0, lastIn: 0, lastOut: 0, allIn: 0, allOut: 0 };
+  const total: ContextRow = { label: "Total", depth: 0, now: 0, lastIn: 0, lastOut: 0, allIn: 0, allOut: 0 };
   for (const [label, top] of root.children) {
+    total.now += top.now;
     total.lastIn += top.lastIn;
     total.lastOut += top.lastOut;
     total.allIn += top.allIn;
@@ -287,9 +339,7 @@ export async function contextTable(workspacePath: string, sessionId: string, usa
     flatten(label, top, 0, rows);
   }
   rows.push(rounded(total));
-  const used = numberOf(usage?.totalTokens);
-  const max = numberOf(usage?.maxTokens);
-  return { rows, calls, contextNow: used > 0 && max > 0 ? { used, max } : null, measured: measuredFixed !== null };
+  return { rows, calls, cache, measured: measuredFixed !== null };
 }
 
 // The CLI's counts for what every request carries outside its messages. Memory files, skills
@@ -316,7 +366,7 @@ function fixedFromShape(entries: Record<string, unknown>[]): [string, number][] 
 
 // Each subagent is a conversation of its own, in a file of its own beside the session's; its
 // meta file names the agent type and the tool call that started it.
-async function addSubagents(dir: string, lastToolUses: Set<string>, add: (route: string[], inLast: boolean, input: number, output: number) => void): Promise<void> {
+async function addSubagents(dir: string, lastToolUses: Set<string>, onCall: (route: string[], inLast: boolean, callUsage: Record<string, unknown>) => void): Promise<void> {
   const names = await fs.readdir(dir).catch(() => [] as string[]);
   for (const name of names.filter((one) => one.endsWith(".jsonl"))) {
     const meta = recordOf(parseLine(await fs.readFile(path.join(dir, name.replace(/\.jsonl$/, ".meta.json")), "utf8").catch(() => "")));
@@ -329,7 +379,7 @@ async function addSubagents(dir: string, lastToolUses: Set<string>, add: (route:
       const id = stringOf(message?.id);
       if (callUsage && id && !seen.has(id) && stringOf(message?.model) !== "<synthetic>") {
         seen.add(id);
-        add(route, inLast, inputOf(callUsage), numberOf(callUsage.output_tokens));
+        onCall(route, inLast, callUsage);
       }
     }
   }
@@ -346,8 +396,8 @@ function toolRoute(name: string, input: Record<string, unknown> | undefined, wor
 }
 
 function flatten(label: string, at: Node, depth: number, rows: ContextRow[]): void {
-  const row = rounded({ label, depth, lastIn: at.lastIn, lastOut: at.lastOut, allIn: at.allIn, allOut: at.allOut });
-  if (!row.lastIn && !row.lastOut && !row.allIn && !row.allOut) {
+  const row = rounded({ label, depth, now: at.now, lastIn: at.lastIn, lastOut: at.lastOut, allIn: at.allIn, allOut: at.allOut });
+  if (!row.now && !row.lastIn && !row.lastOut && !row.allIn && !row.allOut) {
     return;
   }
   rows.push(row);
@@ -358,7 +408,8 @@ function flatten(label: string, at: Node, depth: number, rows: ContextRow[]): vo
     flatten(childLabel, child, depth + 1, rows);
   }
   if (children.length > shown) {
-    const rest = children.slice(CHILD_ROWS).reduce((sum, [, child]) => {
+    const rest = children.slice(shown).reduce((sum, [, child]) => {
+      sum.now += child.now;
       sum.lastIn += child.lastIn;
       sum.lastOut += child.lastOut;
       sum.allIn += child.allIn;
@@ -370,11 +421,11 @@ function flatten(label: string, at: Node, depth: number, rows: ContextRow[]): vo
 }
 
 function rounded(row: ContextRow): ContextRow {
-  return { ...row, lastIn: Math.round(row.lastIn), lastOut: Math.round(row.lastOut), allIn: Math.round(row.allIn), allOut: Math.round(row.allOut) };
+  return { ...row, now: Math.round(row.now), lastIn: Math.round(row.lastIn), lastOut: Math.round(row.lastOut), allIn: Math.round(row.allIn), allOut: Math.round(row.allOut) };
 }
 
 function node(): Node {
-  return { lastIn: 0, lastOut: 0, allIn: 0, allOut: 0, children: new Map() };
+  return { now: 0, lastIn: 0, lastOut: 0, allIn: 0, allOut: 0, children: new Map() };
 }
 
 // A prompt the user sent, as opposed to the tool results and notices that are user entries too.
@@ -385,6 +436,10 @@ function isPrompt(entry: Record<string, unknown>): boolean {
 // The whole of a call's input: the uncached part plus what was read from and written to the cache.
 function inputOf(usage: Record<string, unknown>): number {
   return numberOf(usage.input_tokens) + numberOf(usage.cache_read_input_tokens) + numberOf(usage.cache_creation_input_tokens);
+}
+
+function cacheOf(usage: Record<string, unknown>): CacheSplit {
+  return { read: numberOf(usage.cache_read_input_tokens), write: numberOf(usage.cache_creation_input_tokens), fresh: numberOf(usage.input_tokens) };
 }
 
 // Rough tokens in a piece of message content: four characters to a token, a flat rate per picture.

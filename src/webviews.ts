@@ -648,15 +648,23 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     #ctx-pop { position: fixed; z-index: 50; max-width: calc(100vw - 16px); overflow: auto; padding: 8px 10px; border: 1px solid #000; border-radius: 8px; background: #fff; color: #000; font-size: clamp(14px, calc(14px * var(--z)), 18px); box-shadow: 0 4px 14px rgba(0,0,0,0.2); }
     #ctx-pop table { border-collapse: collapse; }
     #ctx-pop th, #ctx-pop td { padding: 1px 8px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-    #ctx-pop th:first-child, #ctx-pop td:first-child { text-align: left; }
+    /* Only Source reads left: the second header row's in/out sit over right-aligned numbers, and
+       Last prompt and Conversation are centred over the pair of columns each one spans. */
+    #ctx-pop thead tr:first-child th:first-child, #ctx-pop td:first-child { text-align: left; }
+    #ctx-pop th[colspan] { text-align: center; }
     #ctx-pop th { font-weight: 700; vertical-align: bottom; }
     #ctx-pop thead tr:last-child th, #ctx-pop th[rowspan] { border-bottom: 1px solid #000; }
     #ctx-pop tr.top td { border-top: 1px solid var(--border); }
     /* The top-level rows: the yellow rows are exactly the ones the Total adds up. */
     #ctx-pop tr.subtotal td { background: var(--yellow); }
     #ctx-pop tr.total td { font-weight: 700; border-top: 1px solid #000; }
+    #ctx-pop tr.cache-first td { padding-top: 6px; }
     #ctx-pop .ctx-head { margin-bottom: 6px; font-weight: 700; }
-    #ctx-pop .ctx-note { margin-top: 6px; max-width: 64ch; white-space: normal; }
+    /* The Notes button, top right, and the notes it opens above the table. */
+    #ctx-pop .ctx-bar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+    #ctx-pop .ctx-bar button { min-height: 0; padding: 2px 8px; }
+    #ctx-pop .ctx-notes { margin-bottom: 8px; max-width: 64ch; white-space: normal; }
+    #ctx-pop .ctx-notes > div { margin-bottom: 4px; }
 ${monacoStyle()}    @media (max-width: 760px) { .stats { flex-wrap: wrap; } .status { white-space: normal; } }
 ${tooltipStyle()}  </style>
 </head>
@@ -806,6 +814,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     const ctxButton = document.getElementById('ctx');
     const ctxPop = document.getElementById('ctx-pop');
     let ctxAsk = 0;
+    let ctxNotesOpen = false;
     // Every count is whole thousands, with no unit letters: 345 tokens reads 0, 543 reads 1.
     // Only a true zero is left blank.
     const fmtCtx = (n) => !n ? '' : String(Math.round(n / 1000));
@@ -827,7 +836,35 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         ctxLine('Nothing to count yet: Claude has no transcript for this session.', 'ctx-head');
         return;
       }
-      ctxLine((table.contextNow ? 'In context now: ' + fmtCtx(table.contextNow.used) + ' of ' + fmtCtx(table.contextNow.max) + '. ' : '') + 'All counts are thousands of tokens.', 'ctx-head');
+      // What the numbers mean, behind the Notes button; open stays open through the second answer.
+      const subagents = table.rows.some((row) => row.depth === 0 && row.label === 'Subagents');
+      const notes = document.createElement('div');
+      notes.className = 'ctx-notes';
+      notes.hidden = !ctxNotesOpen;
+      for (const text of [
+        'All counts are thousands of tokens.',
+        'Now is the latest API call’s whole context, split by source. Its total is the footer’s figure, which counts towards ' + Math.round(gaugeLimit() / 1000) + ', where the conversation is compacted.',
+        'In counts each call’s whole context again, cache reads included. API calls: ' + table.calls.last + ' in the last prompt, ' + table.calls.all + ' in the conversation.',
+        'The cache rows split each column’s input by how it was billed: a cache read costs about a tenth of fresh input, a cache write more than fresh input.',
+        'Totals and thinking are exact; the rest of the split is estimated.',
+        ...(subagents ? ['Subagents are conversations of their own, left out of the session’s token stats.'] : []),
+        ...(!done ? ['Asking the CLI for its own counts…'] : table.measured ? [] : ['The CLI gave no counts of its own, so the system prompt and tool rows are estimates too.']),
+      ]) {
+        const line = document.createElement('div');
+        line.textContent = text;
+        notes.append(line);
+      }
+      const bar = document.createElement('div');
+      bar.className = 'ctx-bar';
+      const notesButton = document.createElement('button');
+      notesButton.textContent = 'Notes';
+      notesButton.addEventListener('click', () => {
+        ctxNotesOpen = !ctxNotesOpen;
+        notes.hidden = !ctxNotesOpen;
+        placeCtxPop();
+      });
+      bar.append(notesButton);
+      ctxPop.append(bar, notes);
       const grid = document.createElement('table');
       const head = grid.createTHead();
       const spans = head.insertRow();
@@ -840,6 +877,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         row.append(cell);
       };
       th(spans, 'Source', 0, 2);
+      th(spans, 'Now', 0, 2);
       th(spans, 'Last prompt', 2);
       th(spans, 'Conversation', 2);
       for (const text of ['in', 'out', 'in', 'out']) th(unit, text);
@@ -851,13 +889,20 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         const name = line.insertCell();
         name.textContent = row.label;
         name.style.paddingLeft = 'calc(8px + ' + (row.depth * 1.2) + 'em)';
-        for (const value of [row.lastIn, row.lastOut, row.allIn, row.allOut]) line.insertCell().textContent = fmtCtx(value);
+        for (const value of [row.now, row.lastIn, row.lastOut, row.allIn, row.allOut]) line.insertCell().textContent = fmtCtx(value);
+      });
+      // How each column's input was billed, as shares of it; the out columns have no caching.
+      const pct = (split, key) => {
+        const whole = split.read + split.write + split.fresh;
+        return whole ? (100 * split[key] / whole).toFixed(1) + '%' : '';
+      };
+      [['Cache read', 'read'], ['Cache write', 'write'], ['Uncached', 'fresh']].forEach(([label, key], index) => {
+        const line = body.insertRow();
+        line.className = index === 0 ? 'cache-first' : '';
+        line.insertCell().textContent = label;
+        for (const value of [pct(table.cache.now, key), pct(table.cache.last, key), '', pct(table.cache.all, key), '']) line.insertCell().textContent = value;
       });
       ctxPop.append(grid);
-      const subagents = table.rows.some((row) => row.depth === 0 && row.label === 'Subagents');
-      ctxLine('API calls: ' + table.calls.last + ' in the last prompt, ' + table.calls.all + ' in the conversation. Input counts each call’s whole context again, cache reads included. Totals and thinking are exact; the rest of the split is estimated.'
-        + (subagents ? ' Subagents are conversations of their own, left out of the session’s token stats.' : '')
-        + (!done ? ' Asking the CLI for its own counts…' : table.measured ? '' : ' The CLI gave no counts of its own, so the system prompt and tool rows are estimates too.'), 'ctx-note');
       placeCtxPop();
     }
     ctxButton.addEventListener('click', () => {
@@ -866,13 +911,16 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         return;
       }
       ctxAsk += 1;
+      ctxNotesOpen = false;
       ctxPop.replaceChildren();
       ctxLine('Reading the transcript…', 'ctx-head');
       ctxPop.hidden = false;
       placeCtxPop();
       vscode.postMessage({ type: 'ctxStats', sessionId, ask: ctxAsk });
     });
+    // A ctrl-click on Cap is a picture of the window as it stands, so it leaves the popup up.
     document.addEventListener('mousedown', (event) => {
+      if (event.ctrlKey && capButton.contains(event.target)) return;
       if (!ctxPop.hidden && !ctxPop.contains(event.target) && !ctxButton.contains(event.target)) ctxPop.hidden = true;
     }, true);
     window.addEventListener('keydown', (event) => {
@@ -891,6 +939,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     const advisorBox = document.getElementById('advisor');
     const stopButton = document.getElementById('stop');
     const capButton = document.getElementById('cap');
+    // A ctrl-Cap taken while the box shows a restored prompt: the box goes back to a draft once the shot is in.
+    let leaveAfterShot = false;
     const finish = document.getElementById('finish');
     const cycleButton = document.getElementById('cycle');
 
@@ -956,6 +1006,10 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         imageCount = typeof message.count === 'number' ? message.count : 0;
         capButton.disabled = false;
         showImageChars();
+        if (leaveAfterShot) {
+          leaveAfterShot = false;
+          leaveRestored();
+        }
       } else if (message.type === 'insertFile') {
         insertFileTag(message.name);
       } else if (message.type === 'removeFile') {
@@ -1105,7 +1159,9 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       vscode.postMessage({ type: 'stopPrompt', sessionId });
     });
     document.getElementById('cap').addEventListener('click', (event) => {
-      leaveRestored();
+      // A ctrl-click's picture is of this window, so a restored prompt stays in the box until the
+      // shot is taken (imagesState); a plain click's window is out of the way, so it goes now.
+      if (event.ctrlKey) leaveAfterShot = true; else leaveRestored();
       // Every click takes another picture and adds it to the ones already waiting. The button
       // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
       capButton.disabled = true;
@@ -1958,6 +2014,14 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       if (footer.quotaAlert) vscode.postMessage({ type: 'clearQuotaAlert' });
     });
 
+    // The context gauge's ceiling: a running turn's own window; otherwise the picked model's, where
+    // the next prompt will run.
+    function gaugeLimit() {
+      const turns = Array.isArray(session.turns) ? session.turns : [];
+      const latest = turns[turns.length - 1];
+      return compactAtOf((status && status.active && latest && latest.contextWindow) || contextWindows[modelSelect.value] || contextWindow);
+    }
+
     function renderStatus() {
       const active = status && status.active;
       const turns = Array.isArray(session.turns) ? session.turns : [];
@@ -1967,8 +2031,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       const used = active ? status.contextTokens : turns.reduce((level, turn) => turn.contextUsed || (turn.cleared ? 0 : level), 0);
       // Against the compaction point, not the window: the conversation is summarised there, so that
       // is the ceiling the level is really climbing towards. Only the denominator carries the K.
-      // A running turn's own window; otherwise the picked model's, where the next prompt will run.
-      const compactAt = compactAtOf((active && latest && latest.contextWindow) || contextWindows[modelSelect.value] || contextWindow);
+      const compactAt = gaugeLimit();
       const contextBox = document.getElementById('context');
       contextBox.textContent = Math.round((used || 0) / 1000) + '/' + inK(compactAt);
       // Past the picked model's compaction point, as after switching to a smaller window. The next
