@@ -33,7 +33,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - `src/modelInfo.ts`: the CLI's model list, the M-button presets, per-model prefs, `advisorFor`.
 - `src/capture.ts`: Cap screenshots by three routes. Windows uses PowerShell directly; WSL uses
   the same PowerShell through `/mnt/c`; the server asks the `claude2-cap/` UI-side extension
-  on the client.
+  on the client. Its PowerShell is duplicated in `claude2-cap/extension.js`; keep both in step.
+  Gotcha: hide-window restore needs an empty `mouse_event` before `SetForegroundWindow`, or
+  the Windows foreground lock leaves VS Code behind whatever window was under it.
 - `src/gitCheck.ts`: the optional "Git changes check": one API call (the `claudeApiKey`
   setting, not the subscription) before a new session's first prompt.
 - `src/instructionsFile.ts`: the Instructions pane edits the project CLAUDE.md and keeps

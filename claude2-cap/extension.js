@@ -22,7 +22,8 @@ const winApi =
   '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); ' +
   '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); ' +
   '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd); ' +
-  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); }\'';
+  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); ' +
+  '[DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e); }\'';
 
 function activate(context) {
   context.subscriptions.push(
@@ -74,11 +75,15 @@ function captureScript(target, hideWindow) {
   }
   // The foreground window is the one the user just clicked Cap in. Restoring happens in a finally
   // so a capture that throws still gives the window back rather than leaving it in the taskbar.
+  // Once minimized, the window behind it (Firefox, say) owns the foreground, and Windows refuses
+  // SetForegroundWindow from a process that isn't the foreground one, so VS Code came back behind
+  // it. A process that sent the last input event is exempt, hence an empty mouse event just before.
+  // Another VS Code window behind never showed this: Code's own process restores its window there.
   return lines.concat([
     "$hwnd = [Claude2Win]::GetForegroundWindow()",
     `[void][Claude2Win]::ShowWindow($hwnd, ${swMinimize})`,
     `try { Start-Sleep -Milliseconds ${hideSettleMs}; ${shot.join("; ")} } ` +
-      `finally { [void][Claude2Win]::ShowWindow($hwnd, ${swRestore}); [void][Claude2Win]::SetForegroundWindow($hwnd) }`,
+      `finally { [void][Claude2Win]::ShowWindow($hwnd, ${swRestore}); [Claude2Win]::mouse_event(0, 0, 0, 0, [UIntPtr]::Zero); [void][Claude2Win]::SetForegroundWindow($hwnd) }`,
   ]);
 }
 
