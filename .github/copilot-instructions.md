@@ -47,3 +47,4 @@
   - the nav row is the top row in the footer with status indicator, stop, ctx, cap, file, and export buttons
   - the model row is the second row with presets button and model/effort/advisor selectors
   - the stats row is the third bottom row with stats and no buttons
+- the stats pane is the management-window pane the Stats button opens (the code calls it `plugins`)

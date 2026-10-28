@@ -21,8 +21,8 @@ const turnEventsKey = "plugin.turnEvents";
 const tallyKey = "pony.tally";
 
 // Every field of a record that is a running counter; the rest are identity, a gauge, or a stamp.
-const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
-  "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
+const counterFields = ["sessions", "turns", "wallMs", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
+  "pricedTurns", "pricedUsd"] as const;
 const gaugeFields = ["ponyCeilings", "srcFiles", "srcLines"] as const;
 const numericFields = [...counterFields, ...gaugeFields, "updatedAt"] as const;
 
@@ -97,7 +97,6 @@ export class PluginStats {
       sessions: 0,
       turns: 0,
       wallMs: 0,
-      costUsd: 0,
       tokensIn: 0,
       tokensOut: 0,
       ponySkips: 0,
@@ -105,14 +104,8 @@ export class PluginStats {
       graftCalls: 0,
       graftTokensSaved: 0,
       graftUsdSaved: 0,
-      turnsPonyOn: 0,
-      turnsPonyOff: 0,
-      costPonyOn: 0,
-      costPonyOff: 0,
-      turnsGraftOn: 0,
-      turnsGraftOff: 0,
-      costGraftOn: 0,
-      costGraftOff: 0,
+      pricedTurns: 0,
+      pricedUsd: 0,
       srcFiles: 0,
       srcLines: 0,
       updatedAt: 0,
@@ -147,7 +140,8 @@ export class PluginStats {
       for (const turn of session.turns) {
         record.turns += 1;
         record.wallMs += turn.durationMs || (turn.completedAt ? Math.max(0, turn.completedAt - turn.createdAt) : 0);
-        record.costUsd += turn.costUsd ?? 0;
+        record.pricedTurns += 1;
+        record.pricedUsd += turn.costUsd ?? 0;
         record.tokensIn += turn.tokensIn;
         record.tokensOut += turn.tokensOut;
         record.ponySkips += turn.ponySkips.length;

@@ -33,8 +33,8 @@ async function run(base) {
   const post = (p, body) => fetch(base + p, { method: "POST", body: JSON.stringify(body) }).then((r) => r.json());
   const get = (p) => fetch(base + p).then((r) => r.json());
 
-  await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 5, turns: 40, costUsd: 12.5, ponyCeilings: 3, srcLines: 5000 });
-  await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 3, turns: 41, costUsd: 12.5, ponyCeilings: 2, turnsPonyOn: 7 });
+  await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 5, turns: 40, pricedUsd: 12.5, costUsd: 99, ponyCeilings: 3, srcLines: 5000 });
+  await post("/install/wsl__-root-apps-claude2", { host: "wsl", project: "claude2", path: "/root/apps/claude2", sessions: 3, turns: 41, pricedUsd: 12.5, ponyCeilings: 2, pricedTurns: 7 });
   await post("/flags/claude2", { graft: false });
   assert.deepStrictEqual(await get("/settings"), {}, "settings start empty");
   await post("/settings", { maxTurns: 120 });
@@ -52,12 +52,13 @@ async function run(base) {
   const record = stats.installs["wsl__-root-apps-claude2"];
   assert.strictEqual(record.sessions, 5, "counters merge with max");
   assert.strictEqual(record.turns, 41, "newer counter wins when higher");
-  assert.strictEqual(record.turnsPonyOn, 7, "split on/off counters merge like the rest");
+  assert.strictEqual(record.pricedTurns, 7, "priced counters merge like the rest");
+  assert.strictEqual(record.costUsd, undefined, "a dropped counter is not kept");
   assert.strictEqual(record.ponyCeilings, 2, "ceilings gauge replaces");
   assert.strictEqual(record.srcLines, 5000, "an absent gauge keeps its last reading");
   const days = Object.values(stats.days["wsl__-root-apps-claude2"] || {});
   assert.strictEqual(days.length, 1, "one dated bucket");
-  assert.deepStrictEqual(days[0], { turns: 1, turnsPonyOn: 7 }, "only the second push's growth is dated; the first sets the baseline");
+  assert.deepStrictEqual(days[0], { turns: 1, pricedTurns: 7 }, "only the second push's growth is dated; the first sets the baseline");
   const flags = await get("/flags/claude2");
   assert.deepStrictEqual(flags, { graft: false, ponytail: true }, "flag merge and defaults");
   assert.strictEqual((await get("/flags/other")).graft, true, "unknown project defaults on");

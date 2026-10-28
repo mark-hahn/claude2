@@ -26,6 +26,7 @@ function normalizeTurn(turn: Partial<ClaudeTurn>): ClaudeTurn {
     stopped: turn.stopped === true,
     error: typeof turn.error === "string" ? turn.error : null,
     costUsd: typeof turn.costUsd === "number" ? turn.costUsd : null,
+    cliCostTotal: typeof turn.cliCostTotal === "number" ? turn.cliCostTotal : null,
     stopReason: typeof turn.stopReason === "string" ? turn.stopReason : null,
     turns: typeof turn.turns === "number" ? turn.turns : 0,
     maxTurns: typeof turn.maxTurns === "number" ? turn.maxTurns : 0,
@@ -50,6 +51,28 @@ function normalizeSession(session: Partial<ClaudeSession>): ClaudeSession {
   };
 }
 
+// One-time conversion: before cliCostTotal was kept, a resumed turn stored the CLI's running total
+// for the session as its costUsd. Each such turn gets its own cost back, and the running total
+// moves to cliCostTotal, which also marks the turn as converted. True when anything changed.
+// ponytail: a background follow-up's turn already held its own share, and read as a running total
+// it throws off the turn after it; delete this once every workspace has loaded and saved.
+function perTurnCosts(turns: ClaudeTurn[]): boolean {
+  let total = 0;
+  let changed = false;
+  for (const turn of turns) {
+    if (turn.cliCostTotal !== null) {
+      total = turn.cliCostTotal;
+    } else if (turn.costUsd !== null) {
+      const running = turn.costUsd;
+      turn.costUsd = running >= total ? running - total : running;
+      turn.cliCostTotal = running;
+      total = running;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export class SessionStore {
   private sessions: ClaudeSession[];
 
@@ -59,6 +82,9 @@ export class SessionStore {
     // workspaces); the first workspace opened after the update adopts them
     const legacy = local === undefined ? this.context.globalState.get<Partial<ClaudeSession>[]>(sessionsKey, []) : [];
     this.sessions = (local ?? legacy).map((session) => normalizeSession(session));
+    if (this.sessions.map((session) => perTurnCosts(session.turns)).some(Boolean)) {
+      void this.context.workspaceState.update(sessionsKey, this.sessions);
+    }
     if (local === undefined && legacy.length > 0) {
       void this.context.workspaceState.update(sessionsKey, this.sessions);
       void this.context.globalState.update(sessionsKey, undefined);

@@ -3213,18 +3213,20 @@ ${zoomScript(z)}
         ['Sessions', (project) => project.sessions, sum('sessions')],
         ['Turns', (project) => project.turns, sum('turns')],
         ['Wall time', (project) => fmtWall(project.wallMs), fmtWall(sum('wallMs'))],
-        ['Total $', (project) => fmtUsd(project.costUsd), fmtUsd(sum('costUsd'))],
+        // Costs count only turns since each turn's cost became its own (pricedTurns), not all of Turns.
+        ['Total $', (project) => fmtUsd(project.pricedUsd), fmtUsd(sum('pricedUsd'))],
         ['Tokens in', (project) => fmtTok(project.tokensIn), fmtTok(sum('tokensIn'))],
         ['Tokens out', (project) => fmtTok(project.tokensOut), fmtTok(sum('tokensOut'))],
         ['Graft $ savings', (project) => fmtUsd(project.graftUsdSaved), fmtUsd(sum('graftUsdSaved'))],
         ['Graft tokens saved', (project) => fmtTok(project.graftTokensSaved), fmtTok(sum('graftTokensSaved'))],
         ['Graft tool calls', (project) => project.graftCalls, sum('graftCalls')],
-        ['Graft $/turn on', (project) => perTurn(project.costGraftOn, project.turnsGraftOn), perTurn(sum('costGraftOn'), sum('turnsGraftOn'))],
-        ['Graft $/turn off', (project) => perTurn(project.costGraftOff, project.turnsGraftOff), perTurn(sum('costGraftOff'), sum('turnsGraftOff'))],
+        // Both plugins are always on, so every priced turn is an "on" turn and the off rows stay empty.
+        ['Graft $/turn on', (project) => perTurn(project.pricedUsd, project.pricedTurns), perTurn(sum('pricedUsd'), sum('pricedTurns'))],
+        ['Graft $/turn off', () => '—', '—'],
         ['Ponytail skips', (project) => project.ponySkips, sum('ponySkips')],
         ['Ponytail ceilings', (project) => project.ponyCeilings, sum('ponyCeilings')],
-        ['Ponytail $/turn on', (project) => perTurn(project.costPonyOn, project.turnsPonyOn), perTurn(sum('costPonyOn'), sum('turnsPonyOn'))],
-        ['Ponytail $/turn off', (project) => perTurn(project.costPonyOff, project.turnsPonyOff), perTurn(sum('costPonyOff'), sum('turnsPonyOff'))],
+        ['Ponytail $/turn on', (project) => perTurn(project.pricedUsd, project.pricedTurns), perTurn(sum('pricedUsd'), sum('pricedTurns'))],
+        ['Ponytail $/turn off', () => '—', '—'],
       ];
       for (const [label, valueOf, total] of rows) {
         const row = document.createElement('tr');

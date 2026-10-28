@@ -1459,6 +1459,8 @@ class Claude2Controller implements vscode.Disposable {
     // Where the conversation already sits in the window. A turn that errored never recorded a
     // level, so the newest turn that did is the one to carry forward.
     const priorContext = session.turns.reduce((level, prior) => prior.contextUsed || (prior.cleared ? 0 : level), 0);
+    // Where the CLI's running cost for the session stood after the newest turn that reported one.
+    const priorCost = session.turns.reduce((total, prior) => prior.cliCostTotal ?? total, 0);
     // The text is on its way to the CLI, so the saved draft goes now: what is stored has to
     // match the box, which is emptied the moment Send is pressed.
     if (!keepDraft && this.drafts.delete(sessionId)) {
@@ -1486,6 +1488,7 @@ class Claude2Controller implements vscode.Disposable {
       stopped: false,
       error: null,
       costUsd: null,
+      cliCostTotal: null,
       stopReason: null,
       turns: 0,
       maxTurns: this.runLimits().maxTurns,
@@ -1549,6 +1552,7 @@ class Claude2Controller implements vscode.Disposable {
         workspacePath: this.workspacePath(),
         hasPriorTurns: !wasFirstPrompt,
         priorContextTokens: priorContext,
+        priorCostTotal: priorCost,
         limits: this.runLimits(),
         longTools: this.settings.longToolDisplay,
         fastMode: this.settings.fastMode,
@@ -1601,6 +1605,7 @@ class Claude2Controller implements vscode.Disposable {
         finished: true,
         stopped: result.stopped,
         costUsd: result.costUsd,
+        cliCostTotal: result.cliCostTotal,
         stopReason: result.stopReason,
         turns: result.turns,
         durationMs: result.durationMs,
@@ -1610,7 +1615,7 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.flush();
       void this.noteTurnStats(sessionId, {
         wallMs: result.durationMs,
-        costUsd: result.costUsd ?? 0,
+        pricedUsd: result.costUsd ?? 0,
         tokensIn: result.tokensIn,
         tokensOut: result.tokensOut,
         ponySkips: result.ponySkips.length,
@@ -1621,6 +1626,9 @@ class Claude2Controller implements vscode.Disposable {
         contextWindow,
         contextTokens: result.contextTokens,
         cliTurns: result.turns,
+        // Marks a logged turn whose costUsd is its own: before this field, costUsd was the
+        // session's running total.
+        cliCostTotal: result.cliCostTotal,
         stopped: result.stopped,
         stopReason: result.stopReason,
         skips: result.ponySkips,
@@ -1864,9 +1872,8 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // A settled turn's numbers, folded into the shared record along with what graft banked for
-  // the session meanwhile and a fresh reading of the workspace's ceiling comments. Both plugins
-  // are always on now, so the turn and its cost go to their on sides; the off sides keep the
-  // turns run back when they could be switched off. The whole turn ships as one raw event to
+  // the session meanwhile and a fresh reading of the workspace's ceiling comments. Every turn
+  // counts as priced, its cost (if any) as pricedUsd. The whole turn ships as one raw event to
   // the server's log — the extensive record future stats get computed from.
   // Workspace size barely moves within one conversation and the full-tree grep is the costly
   // part, so it is measured once per session and remembered for the session's later turns.
@@ -1881,8 +1888,7 @@ class Claude2Controller implements vscode.Disposable {
       size = await this.workspaceSize();
       this.sizeBySession.set(sessionId, size);
     }
-    const split: StatsDelta = { turnsPonyOn: 1, costPonyOn: delta.costUsd ?? 0, turnsGraftOn: 1, costGraftOn: delta.costUsd ?? 0 };
-    await this.stats.add({ ...delta, ...graft, ...split }, { ponyCeilings: ceilings, ...size });
+    await this.stats.add({ ...delta, ...graft, pricedTurns: 1 }, { ponyCeilings: ceilings, ...size });
     void this.stats.logTurn({ sessionId, plugins: { graft: true, ponytail: true }, ...info, ...delta, ...graft, ponyCeilings: ceilings, ...size });
     // The turn ends before this grep does, so the footer posted then carried the old count.
     this.postConversationState(sessionId);
@@ -1903,8 +1909,8 @@ class Claude2Controller implements vscode.Disposable {
     // than waiting for a turn to finish here. Not awaited — the table does not need the POST.
     void this.stats.add({}, { ponyCeilings: ceilings, srcFiles: size.srcFiles, srcLines: size.srcLines });
     installs[this.stats.installKey()] = local;
-    const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
-      "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"] as const;
+    const counterFields = ["sessions", "turns", "wallMs", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
+      "pricedTurns", "pricedUsd"] as const;
     const projects = new Map<string, ProjectColumn>();
     for (const record of Object.values(installs)) {
       const name = typeof record.project === "string" ? record.project : "";
@@ -1918,7 +1924,6 @@ class Claude2Controller implements vscode.Disposable {
         sessions: 0,
         turns: 0,
         wallMs: 0,
-        costUsd: 0,
         tokensIn: 0,
         tokensOut: 0,
         ponySkips: 0,
@@ -1926,14 +1931,8 @@ class Claude2Controller implements vscode.Disposable {
         graftCalls: 0,
         graftTokensSaved: 0,
         graftUsdSaved: 0,
-        turnsPonyOn: 0,
-        turnsPonyOff: 0,
-        costPonyOn: 0,
-        costPonyOff: 0,
-        turnsGraftOn: 0,
-        turnsGraftOff: 0,
-        costGraftOn: 0,
-        costGraftOff: 0,
+        pricedTurns: 0,
+        pricedUsd: 0,
         srcFiles: 0,
         srcLines: 0,
       };

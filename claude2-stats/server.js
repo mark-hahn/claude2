@@ -43,8 +43,10 @@ const port = process.env.PORT === undefined ? 7301 : Number(process.env.PORT);
 const dataDir = process.env.CLAUDE2_STATS_DIR || path.join(os.homedir(), ".claude2-stats");
 const dataPath = path.join(dataDir, "data.json");
 const namePattern = /^[A-Za-z0-9._-]{1,200}$/;
-const counterFields = ["sessions", "turns", "wallMs", "costUsd", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
-  "turnsPonyOn", "turnsPonyOff", "costPonyOn", "costPonyOff", "turnsGraftOn", "turnsGraftOff", "costGraftOn", "costGraftOff"];
+// costUsd and the per-plugin on/off counters were dropped: they summed sessions' running cost
+// totals. pricedTurns/pricedUsd count from the fix on, and a record's next merge sheds the old ones.
+const counterFields = ["sessions", "turns", "wallMs", "tokensIn", "tokensOut", "ponySkips", "graftCalls", "graftTokensSaved", "graftUsdSaved",
+  "pricedTurns", "pricedUsd"];
 const turnsPath = path.join(dataDir, "turns.jsonl");
 
 // Freshness the lease counts from — a touch under the extension's five-minute timer, so a tick

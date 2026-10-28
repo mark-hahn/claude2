@@ -43,7 +43,6 @@ export interface InstallStats {
   sessions: number;
   turns: number;
   wallMs: number;
-  costUsd: number;
   tokensIn: number;
   tokensOut: number;
   ponySkips: number;
@@ -51,14 +50,10 @@ export interface InstallStats {
   graftCalls: number;
   graftTokensSaved: number;
   graftUsdSaved: number;
-  turnsPonyOn: number;
-  turnsPonyOff: number;
-  costPonyOn: number;
-  costPonyOff: number;
-  turnsGraftOn: number;
-  turnsGraftOff: number;
-  costGraftOn: number;
-  costGraftOff: number;
+  // Turns and their API-priced cost, counted only since turn costs became each turn's own; the
+  // older cost counters summed sessions' running totals and were dropped.
+  pricedTurns: number;
+  pricedUsd: number;
   srcFiles: number;
   srcLines: number;
   updatedAt: number;
@@ -102,6 +97,9 @@ export interface ClaudeTurn {
   stopped: boolean;
   error: string | null;
   costUsd: number | null;
+  // The CLI's running cost for the whole session when this turn ended. A resumed CLI process
+  // starts its total_cost_usd there, so the next turn's own cost is measured from it.
+  cliCostTotal: number | null;
   stopReason: string | null;
   turns: number;
   maxTurns: number;
@@ -157,6 +155,8 @@ export interface ClaudeRunResult {
   tokensOut: number;
   contextTokens: number;
   costUsd: number | null;
+  // The CLI's own total_cost_usd: the session's running cost, not this turn's.
+  cliCostTotal: number | null;
   stopReason: string | null;
   turns: number;
   durationMs: number;

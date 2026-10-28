@@ -70,6 +70,11 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 
 ## Gotchas
 
+- A resumed CLI's `total_cost_usd` (and `modelUsage`) is the session's running total, not the
+  run's; `usage` is the run's own. Each turn stores the raw total as `cliCostTotal` and the next
+  run subtracts it (`priorCostTotal`). Stored turns from before that field are converted once on
+  load (`perTurnCosts` in sessionStore.ts). The stats pane's costs restarted as `pricedTurns` /
+  `pricedUsd`; the server's turn log still holds running totals in `costUsd` for older events.
 - Webview JS lives inside TS template literals, so neither tsc nor eslint sees it. Run
   `node src/test/webview-scripts.check.mjs` (its header has the build commands). In those
   strings `\'` comes out as a bare `'` and breaks the script: use `’` or `\\'`. `${` interpolates.

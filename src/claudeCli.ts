@@ -34,6 +34,9 @@ interface RunPromptOptions {
   // Context is a level, not a total: a run inherits where the last one left off so the gauge
   // never drops to zero while the first API call of the run is still in flight.
   priorContextTokens: number;
+  // The session's running CLI cost after its last turn (Turn.cliCostTotal); a resumed run's
+  // total_cost_usd starts there.
+  priorCostTotal: number;
   limits: RunLimits;
   // The Long tool display setting: tool lines in longToolUseLine's form instead of toolUseLine's.
   longTools: boolean;
@@ -284,8 +287,10 @@ export class ClaudeCliRunner {
       // A follow-up prompt swaps in its own block: its promise, its callbacks, fresh counters.
       let resolveBlock = resolve;
       let rejectBlock = reject;
-      // total_cost_usd counts from the start of the process; a follow-up block reports only its share.
-      let costBase = 0;
+      // total_cost_usd is the session's running cost: a resumed process starts from what the
+      // session had already spent, and a follow-up block reports only its share.
+      let costBase = mode === "resume" ? Math.max(0, options.priorCostTotal) : 0;
+      let cliCostTotal: number | null = null;
       let stdoutBuffer = "";
       let stderrText = "";
       let responseText = "";
@@ -422,6 +427,7 @@ export class ClaudeCliRunner {
           tokensOut,
           contextTokens,
           costUsd,
+          cliCostTotal,
           stopReason,
           turns: reportedTurns || status.turns || 1,
           // A run killed by Stop never reports its own duration, so fall back to the wall clock.
@@ -685,7 +691,14 @@ export class ClaudeCliRunner {
             show(resultText);
           }
           const totalCost = numberOf(message.total_cost_usd);
+          // ponytail: a total below the base means the CLI started counting over (a fork, a
+          // /clear), so all of it is this turn's; a restart that already spent more than the
+          // base undercounts that one turn.
+          if (totalCost !== null && totalCost < costBase) {
+            costBase = 0;
+          }
           costUsd = totalCost === null ? null : totalCost - costBase;
+          cliCostTotal = totalCost ?? cliCostTotal;
           modelWindow = mainModelWindow(recordOf(message.modelUsage), status.modelId) ?? modelWindow;
           durationMs += numberOf(message.duration_ms) ?? 0;
           reportedTurns += numberOf(message.num_turns) ?? 0;
