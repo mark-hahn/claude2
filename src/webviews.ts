@@ -736,7 +736,7 @@ ${tooltipScript()}
     let status = null;
     // Which plugins this workspace runs with and the numbers only the extension can read:
     // graft's savings for this session, and the workspace's ponytail ceiling count.
-    let footer = { graft: false, ponytail: false, graftSavedUsd: 0, ceilings: 0, quotaAlert: false, quotaProjected: null };
+    let footer = { graftSavedUsd: 0, ceilings: 0, quotaAlert: false, quotaProjected: null };
     // When the last status arrived, so the elapsed time it carries can be run forward locally
     // between messages instead of sitting still through a long tool call.
     let statusAt = 0;
@@ -2212,11 +2212,11 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       // Cost and time are flows, so every turn of the conversation adds in. The running turn has
       // neither recorded yet, so its elapsed time is carried separately and its cost lands at the end.
       const cost = turns.reduce((sum, turn) => sum + (turn.costUsd || 0), 0);
-      // With graft on, what the session would have cost without it sits alongside what it did
-      // cost — but only once they differ by a nickel, below which the second figure says nothing.
-      const saved = footer.graft ? footer.graftSavedUsd || 0 : 0;
+      // What the session would have cost without graft sits alongside what it did cost — but only
+      // once they differ by fifty cents, below which the second figure says nothing.
+      const saved = footer.graftSavedUsd || 0;
       const costBox = document.getElementById('cost');
-      costBox.textContent = saved >= 0.05
+      costBox.textContent = saved >= 0.5
         ? '$' + cost.toFixed(2) + '/' + (cost + saved).toFixed(2)
         : '$' + cost.toFixed(2);
       costBox.classList.toggle('quota-alert', !!footer.quotaAlert);
@@ -3146,8 +3146,6 @@ function pluginsHtml(webview: vscode.Webview, zoom: number, alert: boolean): str
     th { text-align: center; font-weight: 600; }
     td:first-child { text-align: left; font-weight: 600; }
     td:last-child, th:last-child { font-weight: 600; }
-    td.mid { text-align: center; }
-    input[type=checkbox] { width: calc(15px * var(--z)); height: calc(15px * var(--z)); margin: 0; }
 ${tabsStyle()}  </style>
 </head>
 <body>
@@ -3239,54 +3237,6 @@ ${zoomScript(z)}
         row.appendChild(cell('td', String(total)));
         table.appendChild(row);
       }
-      for (const plugin of ['graft', 'ponytail']) {
-        const row = document.createElement('tr');
-        row.appendChild(cell('td', 'Enable ' + plugin));
-        // The All box reads checked while every project is on, and sets every project when clicked.
-        const all = document.createElement('input');
-        all.type = 'checkbox';
-        all.disabled = report.offline === true;
-        const boxes = [];
-        const syncAll = () => { all.checked = boxes.every(({ box }) => box.checked); };
-        for (const project of projects) {
-          const box = document.createElement('input');
-          box.type = 'checkbox';
-          box.checked = project[plugin] !== false;
-          // a flag the server cannot hear about would silently not stick
-          box.disabled = report.offline === true;
-          box.addEventListener('change', () => void toggle(box, project.project, plugin).then(syncAll));
-          boxes.push({ box, name: project.project });
-          const holder = cell('td', '');
-          holder.className = 'mid';
-          holder.appendChild(box);
-          row.appendChild(holder);
-        }
-        syncAll();
-        all.addEventListener('change', async () => {
-          all.disabled = true;
-          const wanted = all.checked;
-          await Promise.all(boxes.filter(({ box }) => box.checked !== wanted).map(({ box, name }) => {
-            box.checked = wanted;
-            return toggle(box, name, plugin);
-          }));
-          syncAll();
-          all.disabled = false;
-        });
-        const allHolder = cell('td', '');
-        allHolder.className = 'mid';
-        allHolder.appendChild(all);
-        row.appendChild(allHolder);
-        table.appendChild(row);
-      }
-    }
-
-    async function toggle(box, project, plugin) {
-      box.disabled = true;
-      const reply = await request('setPluginFlag', { project, plugin, enabled: box.checked });
-      if (!reply.ok || reply.payload !== true) {
-        box.checked = !box.checked;
-      }
-      box.disabled = false;
     }
 
     function cell(tag, text) {

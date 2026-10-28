@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { ModelMap } from "./modelInfo";
-import { TOOL_DETAIL_MARK, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PluginFlags, type PonySkip, type RunningStatus } from "./types";
+import { TOOL_DETAIL_MARK, TOOL_LINE_MARK, type ClaudePhase, type ClaudeRunResult, type PonySkip, type RunningStatus } from "./types";
 
 // TEMP: when true, every raw stream-json line from claude is shown in the response, blank-line separated.
 const DUMP_RAW_MESSAGES = false;
@@ -44,7 +44,6 @@ interface RunPromptOptions {
   // onSuggestion gets it. Not every turn has one; the CLI skips a cold cache, for one.
   promptSuggestions: boolean;
   onSuggestion: (suggestion: string) => void;
-  plugins: PluginFlags;
   // Where the run's debug record goes: one <sessionId>.jsonl per session holding what each turn
   // was started with (args, env) and the CLI's init message (version, tools, plugins, memory files).
   debugDir: string;
@@ -64,7 +63,6 @@ export interface ContextProbeOptions {
   compactWindow: number | null;
   permissionMode: string;
   advisor: string;
-  plugins: PluginFlags;
 }
 
 interface RunningProcess {
@@ -237,10 +235,6 @@ export class ClaudeCliRunner {
     // where it would reach every session on the machine. Always sent: the CLI reads "" as no
     // advisor, so none here overrides an advisorModel left in any settings file.
     const runSettings: Record<string, unknown> = { advisorModel: options.advisor ? sanitizeModel(options.advisor) : "" };
-    if (!options.plugins.ponytail) {
-      // Turns the globally-enabled ponytail plugin off.
-      runSettings.enabledPlugins = { "ponytail@ponytail": false };
-    }
     if (options.fastMode) {
       // A -p run only gets fast mode from its --settings.
       runSettings.fastMode = true;
@@ -253,7 +247,7 @@ export class ClaudeCliRunner {
     }
     args.push("--settings", JSON.stringify(runSettings));
 
-    const env = childEnv(options.compactWindow, options.plugins.graft);
+    const env = childEnv(options.compactWindow);
     if (!options.fastMode) {
       // Fast mode bills usage credits, so off is a hard off that outranks a fastMode in any settings file.
       env.CLAUDE_CODE_DISABLE_FAST_MODE = "1";
@@ -868,9 +862,6 @@ export class ClaudeCliRunner {
   public async contextUsage(options: ContextProbeOptions): Promise<Record<string, unknown> | null> {
     const probeId = randomUUID();
     const runSettings: Record<string, unknown> = { advisorModel: options.advisor ? sanitizeModel(options.advisor) : "" };
-    if (!options.plugins.ponytail) {
-      runSettings.enabledPlugins = { "ponytail@ponytail": false };
-    }
     const args = [
       ...(options.model ? ["--model", sanitizeModel(options.model)] : []),
       "--resume",
@@ -888,7 +879,7 @@ export class ClaudeCliRunner {
     if (!copySessionTranscript(options.workspacePath, options.sessionId, probeId)) {
       return null;
     }
-    const channel = controlChannel(args, childEnv(options.compactWindow, options.plugins.graft), options.workspacePath, 30000);
+    const channel = controlChannel(args, childEnv(options.compactWindow), options.workspacePath, 30000);
     // The CLI writes the copy's last lines as it exits, so the copy goes only once it has.
     void channel.exited.then(() => fs.promises.rm(transcriptPath(options.workspacePath, probeId), { force: true })).catch(() => undefined);
     try {
@@ -996,16 +987,11 @@ function claude2SystemPrompt(contextWindow: number, advisor: string): string {
   ].join("\n");
 }
 
-function childEnv(autoCompactWindow: number | null = null, graftEnabled = true): NodeJS.ProcessEnv {
+function childEnv(autoCompactWindow: number | null = null): NodeJS.ProcessEnv {
   const env = { ...process.env };
   // A stray key would divert billing from the subscription to the API.
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
-  // The globally-hooked graft resolves its graph from GRAFT_DIR before <repo>/graft, so
-  // pointing it at a dir with no INDEX.md makes every graft hook a silent no-op for this run.
-  if (!graftEnabled) {
-    env.GRAFT_DIR = path.join(os.tmpdir(), "claude2-graft-off");
-  }
   // This CLI build has no --autocompact flag; the auto-compact window is set through the environment
   // (accepts 100k-1M tokens).
   if (autoCompactWindow !== null) {

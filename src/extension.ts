@@ -14,7 +14,7 @@ import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
 import { advisorFor, cheapestModel, defaultPresetOf, prefsOf, presetsOf, prunePresets, readModelInfo, sameModels, withUpdateLock, writeModelInfo } from "./modelInfo";
-import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PluginFlags, type PonySkip, type PromptImage } from "./types";
+import { ANSWER_MARK, CLAUDE2_COMPACT_RESERVE, CLAUDE2_CONTEXT_WINDOW, type ClaudeSession, type ClaudeTurn, type InstallStats, type PonySkip, type PromptImage } from "./types";
 import { conversationHtml, managementHtml, sidebarHtml, snipsHtml, zoomFactor, type ConversationDefaults, type ManagementPane } from "./webviews";
 
 let output: vscode.OutputChannel | undefined;
@@ -33,7 +33,7 @@ type PendingImage = { kind: "cap" | "paste"; path: string; hash: string; stack: 
 // The Plugins pane's table: one column per project rolled up from every install's record on
 // the stats server, with that project's plugin switches folded in. `offline` marks a table
 // built from the local record alone because the server could not be reached.
-type ProjectColumn = Omit<InstallStats, "host" | "path" | "updatedAt"> & { hosts: string; paths: string; graft: boolean; ponytail: boolean };
+type ProjectColumn = Omit<InstallStats, "host" | "path" | "updatedAt"> & { hosts: string; paths: string };
 type PluginsReport = { projects: ProjectColumn[]; offline: boolean };
 
 const PNG_DATA_URI = "data:image/png;base64,";
@@ -846,7 +846,6 @@ class Claude2Controller implements vscode.Disposable {
         compactWindow: this.settings.contextWindowTokens || null,
         permissionMode: this.settings.permissionMode,
         advisor: this.settings.useAdvisor && model ? advisorFor(model, readModelInfo(this.context.globalState).models) : "",
-        plugins: await this.stats.flags(),
       });
     } catch (error) {
       this.channel.appendLine(`Ctx: the CLI's context count failed: ${errorMessage(error)}`);
@@ -1538,7 +1537,6 @@ class Claude2Controller implements vscode.Disposable {
       }
     };
     await this.waitForUpdate();
-    const plugins = await this.stats.flags();
     try {
       const result = await this.runner.runPrompt({
         sessionId,
@@ -1562,7 +1560,6 @@ class Claude2Controller implements vscode.Disposable {
             this.placeSuggestion(sessionId, suggestion);
           }
         },
-        plugins,
         debugDir: path.join(this.context.globalStorageUri.fsPath, "debug"),
         onText: (text) => {
           streamedResponse += text;
@@ -1618,7 +1615,6 @@ class Claude2Controller implements vscode.Disposable {
         tokensOut: result.tokensOut,
         ponySkips: result.ponySkips.length,
       }, {
-        plugins,
         turnId: turn.id,
         model: selectedModel,
         effort: selectedEffort,
@@ -1657,7 +1653,6 @@ class Claude2Controller implements vscode.Disposable {
           wallMs: Math.max(0, Date.now() - turn.createdAt),
           ponySkips: lastPonySkips.length,
         }, {
-          plugins,
           turnId: turn.id,
           model: selectedModel,
           effort: selectedEffort,
@@ -1869,15 +1864,15 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // A settled turn's numbers, folded into the shared record along with what graft banked for
-  // the session meanwhile and a fresh reading of the workspace's ceiling comments. The turn
-  // and its cost are also credited to the on or off side of each plugin, per the flags the
-  // run actually carried, and the whole turn ships as one raw event to the server's log —
-  // the extensive record future stats get computed from.
+  // the session meanwhile and a fresh reading of the workspace's ceiling comments. Both plugins
+  // are always on now, so the turn and its cost go to their on sides; the off sides keep the
+  // turns run back when they could be switched off. The whole turn ships as one raw event to
+  // the server's log — the extensive record future stats get computed from.
   // Workspace size barely moves within one conversation and the full-tree grep is the costly
   // part, so it is measured once per session and remembered for the session's later turns.
   private readonly sizeBySession = new Map<string, { srcFiles: number; srcLines: number }>();
 
-  private async noteTurnStats(sessionId: string, delta: StatsDelta, info: { plugins: PluginFlags } & Record<string, unknown>): Promise<void> {
+  private async noteTurnStats(sessionId: string, delta: StatsDelta, info: Record<string, unknown>): Promise<void> {
     const graft = await this.stats.graftDelta(sessionId);
     const ceilings = await this.ponyCeilingCount();
     this.ceilings = ceilings;
@@ -1886,13 +1881,9 @@ class Claude2Controller implements vscode.Disposable {
       size = await this.workspaceSize();
       this.sizeBySession.set(sessionId, size);
     }
-    const split: StatsDelta = {};
-    split[info.plugins.ponytail ? "turnsPonyOn" : "turnsPonyOff"] = 1;
-    split[info.plugins.ponytail ? "costPonyOn" : "costPonyOff"] = delta.costUsd ?? 0;
-    split[info.plugins.graft ? "turnsGraftOn" : "turnsGraftOff"] = 1;
-    split[info.plugins.graft ? "costGraftOn" : "costGraftOff"] = delta.costUsd ?? 0;
+    const split: StatsDelta = { turnsPonyOn: 1, costPonyOn: delta.costUsd ?? 0, turnsGraftOn: 1, costGraftOn: delta.costUsd ?? 0 };
     await this.stats.add({ ...delta, ...graft, ...split }, { ponyCeilings: ceilings, ...size });
-    void this.stats.logTurn({ sessionId, ...info, ...delta, ...graft, ponyCeilings: ceilings, ...size });
+    void this.stats.logTurn({ sessionId, plugins: { graft: true, ponytail: true }, ...info, ...delta, ...graft, ponyCeilings: ceilings, ...size });
     // The turn ends before this grep does, so the footer posted then carried the old count.
     this.postConversationState(sessionId);
   }
@@ -1920,7 +1911,6 @@ class Claude2Controller implements vscode.Disposable {
       if (!name) {
         continue;
       }
-      const flags = remote?.flags?.[name] ?? {};
       const column = projects.get(name) ?? {
         project: name,
         hosts: "",
@@ -1946,8 +1936,6 @@ class Claude2Controller implements vscode.Disposable {
         costGraftOff: 0,
         srcFiles: 0,
         srcLines: 0,
-        graft: flags.graft !== false,
-        ponytail: flags.ponytail !== false,
       };
       for (const field of counterFields) {
         column[field] += Number(record[field]) || 0;
@@ -1972,8 +1960,8 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   // The workspace's current size: non-binary files and their lines, for judging whether the
-  // plugins pay off more on big codebases. Same exclusions as the ceilings grep, plus graft's
-  // own generated cards — counting those would inflate exactly the workspaces graft runs in.
+  // plugins pay off more on big codebases. Same exclusions as the ceilings grep, graft's own
+  // generated cards among them — counting those would inflate exactly the workspaces graft runs in.
   // grep -c with an empty pattern counts every line, and -I makes binaries report 0, so they
   // drop out below (ponytail: along with genuinely empty files — close enough for a gauge).
   private workspaceSize(): Promise<{ srcFiles: number; srcLines: number }> {
@@ -2003,10 +1991,11 @@ class Claude2Controller implements vscode.Disposable {
 
   // Ponytail marks a deliberate corner cut in code with a "ponytail:" comment naming the ceiling
   // and the upgrade path. grep exits 1 for "no matches", so any failure just reads as none found.
+  // graft's cache holds copies of the source, one line per file, and comes and goes as it reindexes.
   private ponyCeilingCount(): Promise<number> {
     return new Promise((resolve) => {
       const pattern = "(//|#|;|<!--|/\\*)[[:space:]]*ponytail:";
-      const args = ["-rnIE", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", pattern, "."];
+      const args = ["-rnIE", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=out", "--exclude-dir=dist", "--exclude-dir=graft", "--exclude-dir=.vscode-test", pattern, "."];
       const child = spawn("grep", args, { cwd: this.workspacePath(), stdio: ["ignore", "pipe", "ignore"] });
       let outputText = "";
       child.stdout.setEncoding("utf8");
@@ -2169,8 +2158,6 @@ class Claude2Controller implements vscode.Disposable {
       await this.reply(requestId, () => speechmaticsCost(stringOf(record?.month), record?.rescan === true, (line) => this.channel.appendLine(line)));
     } else if (type === "loadPluginsReport") {
       await this.reply(requestId, async () => await this.pluginsReport());
-    } else if (type === "setPluginFlag") {
-      await this.reply(requestId, async () => await this.stats.setFlag(stringOf(record?.project), stringOf(record?.plugin), record?.enabled === true));
     } else if (type === "loadCapture") {
       await this.reply(requestId, async () => await this.imageView());
     } else if (type === "cropCapture") {
@@ -2289,9 +2276,9 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     panel.title = session.name;
-    // Which plugin stat the footer shows, and the numbers only this side can read: graft's
-    // savings for the session and the workspace's ceiling count.
-    const footer = { ...this.stats.cachedFlags(), graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting(), quotaProjected: this.quota.projectedPct() };
+    // The numbers only this side can read: graft's savings for the session and the workspace's
+    // ceiling count.
+    const footer = { graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting(), quotaProjected: this.quota.projectedPct() };
     void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
     this.refreshSidebar();
   }

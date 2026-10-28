@@ -31,12 +31,6 @@ export interface PonySkip {
   y: string;
 }
 
-// The per-project on/off switches for the two agent plugins a spawned CLI run can carry.
-export interface PluginFlags {
-  graft: boolean;
-  ponytail: boolean;
-}
-
 // One install (host + workspace) of the extension: the running totals it owns on the
 // claude2-stats server. ponyCeilings, srcFiles, and srcLines are gauges of the workspace as
 // it stands now; every other numeric field is a counter that only ever grows. The On/Off

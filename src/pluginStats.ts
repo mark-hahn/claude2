@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { modelHours } from "./claudeCli";
-import { type ClaudeSession, type InstallStats, type PluginFlags } from "./types";
+import { type ClaudeSession, type InstallStats } from "./types";
 
 // All plugin stats live on one server task (claude2-stats on hahnca.com, see claude2-stats/),
 // so the Plugins pane shows the same table from every workspace on every machine. Each install
@@ -15,7 +15,6 @@ import { type ClaudeSession, type InstallStats, type PluginFlags } from "./types
 const statsHost = "hahnca.com";
 const statsPort = 7301;
 const statsKey = "plugin.stats";
-const flagsKey = "plugin.flags";
 const graftSeenKey = "plugin.graftSeen";
 const turnEventsKey = "plugin.turnEvents";
 // The pre-plugins ledger's counters; they remember turns whose sessions were since deleted.
@@ -240,13 +239,6 @@ export class PluginStats {
     return metrics ? this.graftUsd(Number(metrics.savedTokens) || 0, metrics) : 0;
   }
 
-  // This project's switches as last answered by the server, without asking it again — the
-  // footer redraws far too often to go over the wire for a flag that changes by hand.
-  public cachedFlags(): PluginFlags {
-    const cached = this.context.workspaceState.get<Partial<PluginFlags>>(flagsKey, {});
-    return { graft: cached.graft !== false, ponytail: cached.ponytail !== false };
-  }
-
   // What graft saved this claude session so far, minus what was already counted.
   public async graftDelta(sessionId: string): Promise<{ graftCalls: number; graftTokensSaved: number; graftUsdSaved: number }> {
     const zero = { graftCalls: 0, graftTokensSaved: 0, graftUsdSaved: 0 };
@@ -269,35 +261,14 @@ export class PluginStats {
     return { graftCalls: calls, graftTokensSaved: tokens, graftUsdSaved: this.graftUsd(tokens, metrics) };
   }
 
-  // Every install's record and every project's flags, straight off the server. Null when it
-  // is unreachable; the pane then shows this workspace alone from the local record.
-  public async fetchAll(): Promise<{ installs: Record<string, InstallStats>; flags: Record<string, Partial<PluginFlags>> } | null> {
+  // Every install's record, straight off the server. Null when it is unreachable; the pane
+  // then shows this workspace alone from the local record.
+  public async fetchAll(): Promise<{ installs: Record<string, InstallStats> } | null> {
     const body = await httpJson("GET", "/stats", undefined, 6000, this.log);
     if (!body || typeof body.installs !== "object") {
       return null;
     }
-    return body as unknown as { installs: Record<string, InstallStats>; flags: Record<string, Partial<PluginFlags>> };
-  }
-
-  // This project's switches, asked fresh before each run so a toggle made in another window
-  // takes effect on the next prompt. The last answer is kept as the offline fallback; a
-  // project the server has never heard of runs with both plugins on.
-  public async flags(): Promise<PluginFlags> {
-    const body = await httpJson("GET", `/flags/${this.projectName()}`, undefined, 2500, this.log);
-    if (body) {
-      const flags = { graft: body.graft !== false, ponytail: body.ponytail !== false };
-      await this.context.workspaceState.update(flagsKey, flags);
-      return flags;
-    }
-    return this.cachedFlags();
-  }
-
-  public async setFlag(project: string, plugin: string, enabled: boolean): Promise<boolean> {
-    if (plugin !== "graft" && plugin !== "ponytail") {
-      return false;
-    }
-    const body = await httpJson("POST", `/flags/${project.replace(/[^A-Za-z0-9._-]+/g, "-")}`, { [plugin]: enabled }, 5000, this.log);
-    return body !== null;
+    return body as unknown as { installs: Record<string, InstallStats> };
   }
 }
 

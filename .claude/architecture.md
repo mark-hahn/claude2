@@ -26,8 +26,8 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   `claude2.sessions.v1`). On WSL that lives in the Windows-side `state.vscdb`.
 - `src/quota.ts`: plan usage windows (5h, 7d, model) from Anthropic's usage endpoint, history
   and projection.
-- `src/pluginStats.ts`: per-install counters and per-project plugin flags (graft, ponytail),
-  kept on the stats server.
+- `src/pluginStats.ts`: per-install counters for the graft and ponytail plugins, kept on the
+  stats server.
 - `src/settings.ts`: the Settings pane's values. The copy on the stats server wins, cached in
   globalState.
 - `src/modelInfo.ts`: the CLI's model list, the M-button presets, per-model prefs, `advisorFor`.
@@ -64,7 +64,7 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - **The footer's context gauge.** It shows the latest stream event's usage (input + cache read
   + cache write + output) against `compactAtOf(window)` = window − 33k, where the CLI
   auto-compacts.
-- **Shared state across machines.** Settings, plugin stats and flags, the quota-poll lease, and
+- **Shared state across machines.** Settings, plugin stats, the quota-poll lease, and
   per-model hours all go through claude2-stats, plain HTTP on the LAN. A server that is down
   falls back to local copies; it never throws.
 
@@ -91,8 +91,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   subscription. The advisor is set only per run through `--settings advisorModel`, never by
   `/advisor`. How often it's called has no setting: `claude2SystemPrompt` adds a line asking
   for fewer calls whenever a run has an advisor.
-- Graft is turned off per project by pointing `GRAFT_DIR` at an empty dir, ponytail by
-  `enabledPlugins` in `--settings`.
+- Graft and ponytail are always on: runs carry no override of the global graft hooks or the
+  ponytail plugin. The server's `/flags` endpoints and the stats' plugin-off counters are left over
+  from when they could be switched per project.
 - `--max-turns` is counted by the CLI (`num_turns`), not by `message_start` events.
 - WSL runs in NAT mode: Windows services aren't reachable at `localhost`, and F5 debugging never
   attaches (the launch config is `noDebug`; Ctrl+F5 works).
