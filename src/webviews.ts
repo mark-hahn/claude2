@@ -652,13 +652,22 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
        one is which is answered by clicking it, not by reading it. */
     .img-char { cursor: pointer; }
     /* The Ctx popup: tokens by source, opening upward from its button. Placed by script, which
-       also caps its height to the room above the button; a long table scrolls inside it. */
-    #ctx-pop { position: fixed; z-index: 50; max-width: calc(100vw - 16px); overflow: auto; padding: 8px 10px; border: 1px solid #000; border-radius: 8px; background: #fff; color: #000; font-size: clamp(14px, calc(14px * var(--z)), 18px); box-shadow: 0 4px 14px rgba(0,0,0,0.2); }
-    #ctx-pop table { border-collapse: collapse; }
+       stretches it from the pane's left edge to the button's right edge and caps its height to
+       the room above the button; a table too long or too wide scrolls inside it. The table
+       fills that width, the Source column taking what the numbers leave. */
+    #ctx-pop { position: fixed; z-index: 50; overflow: auto; padding: 8px 10px; border: 1px solid #000; border-radius: 8px; background: #fff; color: #000; font-size: clamp(14px, calc(14px * var(--z)), 18px); box-shadow: 0 4px 14px rgba(0,0,0,0.2); }
+    #ctx-pop table { width: 100%; border-collapse: collapse; }
     #ctx-pop th, #ctx-pop td { padding: 1px 8px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
     /* Only Source reads left: the second header row's in/out sit over right-aligned numbers, and
        Last prompt and Conversation are centred over the pair of columns each one spans. */
     #ctx-pop thead tr:first-child th:first-child, #ctx-pop td:first-child { text-align: left; }
+    /* Source labels wrap rather than widen the table past the pane: a path breaks after a slash
+       where it can (the script puts a <wbr> there), anywhere when a piece is still too long. */
+    #ctx-pop td:first-child { white-space: normal; overflow-wrap: anywhere; }
+    /* A row with contents opens and shuts on a click, its twist showing which. The twist hangs
+       in the label's indent, so a wrapped label lines up under its own first line. */
+    #ctx-pop tr.opens { cursor: pointer; }
+    #ctx-pop .ctx-twist { display: inline-block; width: 1em; margin-left: -1em; }
     #ctx-pop th[colspan] { text-align: center; }
     #ctx-pop th { font-weight: 700; vertical-align: bottom; }
     #ctx-pop thead tr:last-child th, #ctx-pop th[rowspan] { border-bottom: 1px solid #000; }
@@ -668,8 +677,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     #ctx-pop tr.total td { font-weight: 700; border-top: 1px solid #000; }
     #ctx-pop tr.cache-first td { padding-top: 6px; }
     #ctx-pop .ctx-head { margin-bottom: 6px; font-weight: 700; }
-    /* The Notes button, top right, and the notes it opens above the table. */
-    #ctx-pop .ctx-bar { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+    /* The Notes and Close buttons, top right, and the notes Notes opens above the table. */
+    #ctx-pop .ctx-bar { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 4px; }
     #ctx-pop .ctx-bar button { min-height: 0; padding: 2px 8px; }
     #ctx-pop .ctx-notes { margin-bottom: 8px; max-width: 64ch; white-space: normal; }
     #ctx-pop .ctx-notes > div { margin-bottom: 4px; }
@@ -826,11 +835,25 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     const ctxPop = document.getElementById('ctx-pop');
     let ctxAsk = 0;
     let ctxNotesOpen = false;
+    // The table is a tree that opens a row at a time: only the top level shows at first.
+    const ctxOpenRows = new Set();
+    function foldCtx(items) {
+      let cut = Infinity;
+      for (const item of items) {
+        item.line.hidden = item.depth > cut;
+        if (item.line.hidden) continue;
+        const open = ctxOpenRows.has(item.key);
+        cut = item.twist && !open ? item.depth : Infinity;
+        if (item.twist) item.twist.textContent = open ? '▾' : '▸';
+      }
+    }
     // Every count is whole thousands, with no unit letters: 345 tokens reads 0, 543 reads 1.
     // Only a true zero is left blank.
     const fmtCtx = (n) => !n ? '' : String(Math.round(n / 1000));
+    // Always as wide as from the pane's left edge to the button's right edge, whatever the table holds.
     function placeCtxPop() {
       const rect = ctxButton.getBoundingClientRect();
+      ctxPop.style.left = '8px';
       ctxPop.style.right = Math.max(8, innerWidth - rect.right) + 'px';
       ctxPop.style.bottom = (innerHeight - rect.top + 6) + 'px';
       ctxPop.style.maxHeight = Math.max(120, rect.top - 14) + 'px';
@@ -874,7 +897,10 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         notes.hidden = !ctxNotesOpen;
         placeCtxPop();
       });
-      bar.append(notesButton);
+      const closeButton = document.createElement('button');
+      closeButton.textContent = 'Close';
+      closeButton.addEventListener('click', () => { ctxPop.hidden = true; });
+      bar.append(notesButton, closeButton);
       ctxPop.append(bar, notes);
       const grid = document.createElement('table');
       const head = grid.createTHead();
@@ -893,15 +919,40 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       th(spans, 'Conversation', 2);
       for (const text of ['in', 'out', 'in', 'out']) th(unit, text);
       const body = grid.createTBody();
+      // The rows come depth first, so a row's contents are the deeper rows right after it. Each
+      // row is keyed by its path of labels, which lets an opened row stay open through the
+      // second answer.
+      const items = [];
+      const path = [];
       table.rows.forEach((row, index) => {
         const line = body.insertRow();
         line.className = index === table.rows.length - 1 ? 'total' : row.depth === 0 && index > 0 ? 'top' : '';
         if (index < table.rows.length - 1 && row.depth === 0) line.classList.add('subtotal');
+        path.length = row.depth;
+        path.push(row.label);
+        const key = JSON.stringify(path);
+        const opens = index + 1 < table.rows.length && table.rows[index + 1].depth > row.depth;
         const name = line.insertCell();
-        name.textContent = row.label;
-        name.style.paddingLeft = 'calc(8px + ' + (row.depth * 1.2) + 'em)';
+        const twist = document.createElement('span');
+        twist.className = 'ctx-twist';
+        name.append(twist);
+        row.label.split(/(?<=[\\\\/])/).forEach((part, at) => {
+          if (at) name.append(document.createElement('wbr'));
+          name.append(part);
+        });
+        name.style.paddingLeft = 'calc(8px + ' + (row.depth * 1.2 + 1) + 'em)';
         for (const value of [row.now, row.lastIn, row.lastOut, row.allIn, row.allOut]) line.insertCell().textContent = fmtCtx(value);
+        if (opens) {
+          line.classList.add('opens');
+          line.addEventListener('click', () => {
+            if (!ctxOpenRows.delete(key)) ctxOpenRows.add(key);
+            foldCtx(items);
+            placeCtxPop();
+          });
+        }
+        items.push({ line, depth: row.depth, key, twist: opens ? twist : null });
       });
+      foldCtx(items);
       // How each column's input was billed, as shares of it; the out columns have no caching.
       const pct = (split, key) => {
         const whole = split.read + split.write + split.fresh;
@@ -910,7 +961,9 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       [['Cache read', 'read'], ['Cache write', 'write'], ['Uncached', 'fresh']].forEach(([label, key], index) => {
         const line = body.insertRow();
         line.className = index === 0 ? 'cache-first' : '';
-        line.insertCell().textContent = label;
+        const name = line.insertCell();
+        name.textContent = label;
+        name.style.paddingLeft = 'calc(8px + 1em)';
         for (const value of [pct(table.cache.now, key), pct(table.cache.last, key), '', pct(table.cache.all, key), '']) line.insertCell().textContent = value;
       });
       ctxPop.append(grid);
@@ -923,6 +976,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       }
       ctxAsk += 1;
       ctxNotesOpen = false;
+      ctxOpenRows.clear();
       ctxPop.replaceChildren();
       ctxLine('Reading the transcript…', 'ctx-head');
       ctxPop.hidden = false;
