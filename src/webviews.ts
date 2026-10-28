@@ -699,7 +699,7 @@ ${tooltipStyle()}  </style>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><div id="advisor" title="Advisor: the model Claude can consult mid-task, one step stronger than the model picked. Use advisor in Settings turns it on for every session."></div></div>
         </div>
-        <div class="stats"><div class="status" id="turns"></div><div class="status" id="context"></div><div class="status" id="projected" data-tip="Worst plan window (5h, 7d, model) projected to its reset at the recent burn rate"></div><div class="status" id="cost"></div><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><div class="status" id="duration"></div></div>
+        <div class="stats"><div class="status" id="turns"></div><div class="status" id="context"></div><div class="status" id="cost"></div><div class="status" id="pony" title="Ponytail skips this session : ceiling comments in the workspace"></div><div class="status" id="quiet" title="Time since anything new showed in the pane"></div><div class="status" id="duration"></div></div>
       </div>
     </div>
   </div>
@@ -736,7 +736,7 @@ ${tooltipScript()}
     let status = null;
     // Which plugins this workspace runs with and the numbers only the extension can read:
     // graft's savings for this session, and the workspace's ponytail ceiling count.
-    let footer = { graftSavedUsd: 0, ceilings: 0, quotaAlert: false, quotaProjected: null };
+    let footer = { graftSavedUsd: 0, ceilings: 0, quotaAlert: false };
     // When the last status arrived, so the elapsed time it carries can be run forward locally
     // between messages instead of sitting still through a long tool call.
     let statusAt = 0;
@@ -2231,8 +2231,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         skips += (status.ponySkips || []).length;
       }
       document.getElementById('pony').textContent = skips + ':' + (footer.ceilings || 0);
-      const projected = typeof footer.quotaProjected === 'number' ? footer.quotaProjected : null;
-      document.getElementById('projected').textContent = projected === null ? '--' : projected + '%';
       const spent = turns.reduce((sum, turn) => sum + (turn.durationMs || 0), 0);
       document.getElementById('duration').textContent = shortTime(spent + (active ? liveElapsed() : 0));
       // Time since the CLI last sent anything while streaming; zero when idle.
