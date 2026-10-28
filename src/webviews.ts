@@ -1143,8 +1143,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       reader.readAsDataURL(file);
     }, true);
     // A click on one of the leading 🖼️ chars is about that picture, not about the caret: plain
-    // shows it in the Image pane, ctrl deletes it (the extension asks first). The chars' own
-    // CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off, once
+    // shows it in the Image pane, ctrl deletes it (the extension asks first), alt copies its
+    // path. The chars' own CSS gives them the pointer. A ctrl-click on a <file> tag in the text takes the tag off, once
     // the extension has asked too (removeFile). These presses are kept from Monaco, which would
     // move the caret or add a cursor; a ctrl-click anywhere else still does. This has to be the
     // mousedown: Monaco pointer-captures its lines on mousedown, so the mouseup's target is never
@@ -1154,7 +1154,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       const index = imageCharAt(event.target, event.clientX);
       if (index >= 0) {
         // A restored prompt's pictures are its turn's, read-only in the Image pane: a ctrl-click there only shows one.
-        vscode.postMessage(event.ctrlKey && !restoredTurn ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId: restoredTurn ? restoredTurn.id : '', index });
+        const turnId = restoredTurn ? restoredTurn.id : '';
+        vscode.postMessage(event.altKey ? { type: 'copyImagePath', sessionId, turnId, index } : event.ctrlKey && !restoredTurn ? { type: 'deleteImage', sessionId, index } : { type: 'showImage', sessionId, turnId, index });
       } else {
         if (!event.ctrlKey || promptRestored) return;
         const target = promptBox.getTargetAtClientPoint(event.clientX, event.clientY);
@@ -1975,7 +1976,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
             }
             const char = event.target && event.target.closest ? event.target.closest('.img-char') : null;
             if (char) {
-              vscode.postMessage({ type: 'showImage', sessionId, turnId: turn.id, index: Number(char.dataset.image) });
+              vscode.postMessage({ type: event.altKey ? 'copyImagePath' : 'showImage', sessionId, turnId: turn.id, index: Number(char.dataset.image) });
               return;
             }
             if (event.altKey) {
@@ -2955,7 +2956,7 @@ ${tooltipScript()}
         empty.hidden = true;
         label.textContent = payload.label || 'Image';
         pathLabel.textContent = payload.path || '';
-        hint.textContent = !editable ? 'already sent — shown only' : depth > 0 ? 'drag to crop · click to undo a crop' : 'drag to crop';
+        hint.textContent = (!editable ? 'already sent — shown only' : depth > 0 ? 'drag to crop · click to undo a crop' : 'drag to crop') + ' · alt-click copies the path';
       } else {
         img.removeAttribute('src');
         img.hidden = true;
@@ -2999,6 +3000,12 @@ ${tooltipScript()}
     // coming to the frame no matter where the pointer ends up. The frame, not the image, so a
     // drag can also start off the picture; dragRect clamps both ends onto it.
     frame.addEventListener('pointerdown', (event) => {
+      // Alt-click copies the picture's path, sent or not, for pasting into another prompt; it never crops.
+      if (event.button === 0 && event.altKey && pathLabel.textContent) {
+        event.preventDefault();
+        vscode.postMessage({ type: 'copyText', text: pathLabel.textContent });
+        return;
+      }
       if (event.button !== 0 || !editable || !img.getAttribute('src')) return;
       event.preventDefault();
       frame.setPointerCapture(event.pointerId);

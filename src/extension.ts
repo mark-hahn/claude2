@@ -728,6 +728,9 @@ class Claude2Controller implements vscode.Disposable {
       await this.pasteImage(sessionId, stringOf(record?.dataUri));
     } else if (type === "showImage") {
       await this.showImage(sessionId, stringOf(record?.turnId) || null, numberOf(record?.index));
+    } else if (type === "copyImagePath") {
+      // Alt-clicking a 🖼️ char: its path, for pasting into another prompt.
+      await this.copyToClipboard(this.imageAt({ sessionId, turnId: stringOf(record?.turnId) || null, index: numberOf(record?.index) })?.path ?? "");
     } else if (type === "pickFile") {
       await this.pickFile(sessionId);
     } else if (type === "deleteImage") {
@@ -2090,6 +2093,10 @@ class Claude2Controller implements vscode.Disposable {
       this.managementPanel?.dispose();
       return;
     }
+    if (type === "copyText") {
+      await this.copyToClipboard(stringOf(record?.text));
+      return;
+    }
     if (type === "openTab") {
       const pane = paneOf(record?.pane);
       if (pane) {
@@ -2177,10 +2184,11 @@ class Claude2Controller implements vscode.Disposable {
   // the image was deleted, or its session went. A submitted one is never editable, so the pane
   // greys out its crop; a waiting one carries the depth of its own crop stack.
   private currentImage(): { kind: "cap" | "paste"; path: string; depth: number; editable: boolean; index: number; count: number } | null {
-    const target = this.paneImage;
-    if (!target) {
-      return null;
-    }
+    return this.paneImage ? this.imageAt(this.paneImage) : null;
+  }
+
+  // The picture a 🖼️ char stands for: a sent prompt's when turnId is set, else one still waiting.
+  private imageAt(target: { sessionId: string; turnId: string | null; index: number }): { kind: "cap" | "paste"; path: string; depth: number; editable: boolean; index: number; count: number } | null {
     if (target.turnId !== null) {
       const images = this.store.get(target.sessionId)?.turns.find((turn) => turn.id === target.turnId)?.images ?? [];
       const image = images[target.index];
