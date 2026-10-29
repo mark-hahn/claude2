@@ -24,6 +24,7 @@
 - claude.md instructions are authorative and copilot-instructions.md should always be a copy of claude.md
 - when i say to save a rule, add it to CLAUDE.md (and mirror it in .github/copilot-instructions.md)
 - the architecture map is `.claude/architecture.md`: read it when a task needs orientation, and keep it current
+- alt-click in a fenced code block copies that block's text to the clipboard; this overrides any other alt-click rule
 
 ## Remote server
 

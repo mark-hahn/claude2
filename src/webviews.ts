@@ -1271,6 +1271,16 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       requestAnimationFrame(thawing);
       thawing = null;
     }, true);
+    // Alt-click in a fenced code block copies just that block. Capture phase, so it wins over
+    // every other alt-click (the box's whole-text copy included).
+    window.addEventListener('click', (event) => {
+      const block = event.altKey && event.target.closest ? event.target.closest('pre') : null;
+      if (!block) return;
+      event.stopPropagation();
+      event.preventDefault();
+      vscode.postMessage({ type: 'copyText', sessionId, text: block.textContent });
+      block.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
+    }, true);
     function thawPane() {
       if (!frozenPane) return;
       requestAnimationFrame(thaw());
