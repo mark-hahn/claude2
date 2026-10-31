@@ -772,12 +772,13 @@ ${tooltipScript()}
     let programmaticScroll = false;
     let resizeTimer = 0;
     // frozenPane: a wheel over the pane (not over a scrolling box) suspends every auto-scrolling
-    // rule so the pane scrolls freely and keeps its position through renders. Any mouse press
-    // anywhere in the webview thaws it; the press still does its normal job.
+    // rule so the pane scrolls freely and keeps its position through renders. Presses, footer
+    // actions and losing focus leave it alone; only navigation thaws it: Enter, ctrl-up/down,
+    // a submit, or a plain click on a bar (a ctrl-click on another bar too).
     let frozenPane = false;
     // allOpen: plain up/down arrows, with the pane focused and no text field or footer control
     // holding focus, freeze the pane with every box open and scroll it. The thaw closes every
-    // box but the selected one, which is left open.
+    // box but the selected one, which is left open. It thaws on the same navigation.
     let allOpen = false;
     let draftSent = '';
     // U+1F5BC U+FE0F, one per picture attached to this prompt. The run of them leads the prompt
@@ -1250,27 +1251,13 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       if (clamped !== historyBox.scrollTop) historyBox.scrollTop = clamped;
     });
     // A wheel over a box that can scroll stays the box's; anywhere else in the pane it freezes it.
-    // An unfocused webview never freezes: nothing short of a click here could thaw it.
     historyBox.addEventListener('wheel', (event) => {
-      if (!document.hasFocus()) return;
       for (let el = event.target; el && el !== historyBox; el = el.parentElement) {
         const overflowY = getComputedStyle(el).overflowY;
         if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1) return;
       }
       frozenPane = true;
     }, { passive: true });
-    // Capture phase, so the thaw lands before the press's own handlers run. The rules are
-    // re-applied only after the release, so nothing moves under the pointer mid-click.
-    let thawing = null;
-    window.addEventListener('pointerdown', () => {
-      if (!frozenPane) return;
-      thawing = thaw();
-    }, true);
-    window.addEventListener('pointerup', () => {
-      if (!thawing) return;
-      requestAnimationFrame(thawing);
-      thawing = null;
-    }, true);
     // Alt-click in a fenced code block copies just that block. Capture phase, so it wins over
     // every other alt-click (the box's whole-text copy included).
     window.addEventListener('click', (event) => {
@@ -1281,10 +1268,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       vscode.postMessage({ type: 'copyText', sessionId, text: block.textContent });
       block.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
     }, true);
-    function thawPane() {
-      if (!frozenPane) return;
-      requestAnimationFrame(thaw());
-    }
     // Ends a freeze and returns what re-applies the rules: a rebuild when every box was open, so
     // the others close; otherwise just the resync, which keeps a text selection in the box.
     function thaw() {
@@ -1336,12 +1319,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       }
       historyBox.scrollTop += up ? -40 : 40;
     }
-    // A press elsewhere in VS Code, or switching away from it, never reaches this webview;
-    // losing focus stands in for both.
-    window.addEventListener('blur', thawPane);
-    // Any footer action thaws, keyboard included (mouse presses are already covered above).
     const dockControls = document.querySelector('.dock-controls');
-    for (const type of ['keydown', 'click', 'change']) dockControls.addEventListener(type, thawPane, true);
     // The open box's clamp is sized from the pane height, so a pane resize has to
     // re-derive it or the old clamp sticks.
     window.addEventListener('resize', () => {
@@ -1603,7 +1581,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       // The new turn's block is selected and opened when it arrives; every other box closes
       // with it, since only one box is ever open.
       pendingTurnCount = session.turns.length + 1;
-      // A keyboard submit is the one selection change with no mouse press to thaw the pane.
+      // A submit is navigation: it thaws the pane.
       if (frozenPane) thaw();
     }
 
@@ -2059,6 +2037,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
               selectBlock(index);
               return;
             }
+            if (frozenPane) thaw();
             boxOpen = !boxOpen;
             if (boxOpen) {
               boxScrollNext = 'restore';
@@ -2344,6 +2323,9 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       // Deliberate navigation outranks a submit's queued jump to the not-yet-arrived turn.
       pendingTurnCount = 0;
       if (nextIndex === anchorIndex) return;
+      // A selection change is navigation: it thaws the pane, and the render below re-applies
+      // the rules.
+      if (frozenPane) thaw();
       anchorIndex = nextIndex;
       // A selection change always opens the newly selected block, on its remembered scroll
       // position and as a markdown box.
