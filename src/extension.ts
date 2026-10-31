@@ -327,8 +327,8 @@ class Claude2Controller implements vscode.Disposable {
     // unless it is the last one, where "Close" takes it down with the rest. While the Snips
     // tab is still up, the last one is spared, since that click closes Snips instead.
     const requestedSessionId = stringOf(record?.sessionId);
-    const sessionPaneCount = this.conversationPanels.size;
-    const lastId = sessionPaneCount === 1 && this.snipsPanel ? [...this.conversationPanels.keys()][0] : "";
+    const sessionPaneCount = this.conversationTabs().length;
+    const lastId = sessionPaneCount === 1 && this.snipsPanel ? ([...this.conversationPanels.keys()][0] ?? "") : "";
     const keepId = requestedSessionId || (type === "closeOtherSessions" ? (sessionPaneCount > 1 ? this.activeConversationId() : lastId) : "");
     await this.discardEmptySessions(keepId);
     if (type === "closeOtherSessions") {
@@ -676,6 +676,14 @@ class Claude2Controller implements vscode.Disposable {
     return "";
   }
 
+  // Every session tab, revived or not. After a reload VS Code revives a background tab (the
+  // serializer) only when it is first shown, so `conversationPanels` lacks those until then.
+  private conversationTabs(): vscode.Tab[] {
+    return vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter((tab) => tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith("claude2.conversation"));
+  }
+
   // The sidebar's Mngmnt button: closes the management pane when it is up front, otherwise
   // opens it, always on the Quotas tab.
   private async toggleManagement(): Promise<void> {
@@ -701,11 +709,10 @@ class Claude2Controller implements vscode.Disposable {
       this.managementPanel?.dispose();
       return;
     }
-    for (const [sessionId, panel] of [...this.conversationPanels]) {
-      if (sessionId !== keepId) {
-        panel.dispose();
-      }
-    }
+    // Closed by tab, not by panel, so tabs not yet revived go too. The kept one is always the
+    // active conversation, which is the active tab of the active group.
+    const kept = keepId ? vscode.window.tabGroups.activeTabGroup.activeTab : undefined;
+    void vscode.window.tabGroups.close(this.conversationTabs().filter((tab) => tab !== kept), true);
   }
 
   private async handleConversationMessage(message: unknown): Promise<void> {
@@ -1129,7 +1136,7 @@ class Claude2Controller implements vscode.Disposable {
   // What the sidebar's Close button works down: a session tab, or the management pane once
   // none are left. With neither up there is nothing to close and the button greys out.
   public hasOpenPanes(): boolean {
-    return this.conversationPanels.size > 0 || this.managementPanel !== null || this.snipsPanel !== null;
+    return this.conversationTabs().length > 0 || this.managementPanel !== null || this.snipsPanel !== null;
   }
 
   // Resolves to the signed-in account summary, or null when the user cancelled the code box.

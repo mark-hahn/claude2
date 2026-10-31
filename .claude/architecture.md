@@ -101,6 +101,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - Graft and ponytail are always on: runs carry no override of the global graft hooks or the
   ponytail plugin. The server's `/flags` endpoints and the stats' plugin-off counters are left over
   from when they could be switched per project.
+- After a reload VS Code revives a background session tab (the serializer) only when it is
+  first shown, so `conversationPanels` misses those tabs until then. Anything that must see
+  every session tab (the sidebar's Close) goes through `conversationTabs()`, VS Code's tab list.
 - `--max-turns` is counted by the CLI (`num_turns`), not by `message_start` events.
 - WSL runs in NAT mode: Windows services aren't reachable at `localhost`, and F5 debugging never
   attaches (the launch config is `noDebug`; Ctrl+F5 works).
