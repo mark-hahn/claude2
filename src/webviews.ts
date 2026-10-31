@@ -54,6 +54,7 @@ export function sidebarHtml(webview: vscode.Webview): string {
     #trash { width: 54px; }
     #trash.active { background: #fbd9d9; border-color: #e4a7a7; }
     #trash.active:hover { background: #f5c7c7; }
+    #restore { padding: 0 8px; }
     #sessionCounts { margin-left: 8px; margin-right: 2px; align-self: center; font-size: 15.12px; color: var(--ink); }
     .search-row { display: flex; gap: 7px; }
     #searchBox { flex: 1; min-width: 0; box-sizing: border-box; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
@@ -98,6 +99,7 @@ ${tooltipStyle()}  </style>
       <div class="row sessions-row">
         <button id="clean" title="Move every session to the trash">Clean</button>
         <button id="trash" title="Show trashed sessions (ctrl-click to trash every session)">Trash</button>
+        <button id="restore" title="Move the selected sessions out of the trash" hidden>R</button>
         <span id="sessionCounts" title="Active sessions / trashed sessions"></span>
       </div>
       <div class="search-row">
@@ -132,6 +134,8 @@ ${tooltipScript()}
     const trashButton = document.getElementById('trash');
     // Clean on the active list; on the trash list it turns into the delete for the picked cards.
     const cleanButton = document.getElementById('clean');
+    // Shown only on the trash list with cards picked: restores them and goes back to the active list.
+    const restoreButton = document.getElementById('restore');
     const sessionCounts = document.getElementById('sessionCounts');
     const searchBox = document.getElementById('searchBox');
     // Search mode is on while this is non-empty. Enter in the box starts it; the X, an
@@ -153,6 +157,11 @@ ${tooltipScript()}
       vscode.postMessage({ type: 'trashAllSessions' });
     });
     document.getElementById('close').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'closeOtherSessions' }); });
+    restoreButton.addEventListener('click', () => {
+      vscode.postMessage({ type: 'restoreSessions', sessionIds: [...picked] });
+      clearSearch();
+      setShowTrash(false);
+    });
     document.getElementById('snips').addEventListener('click', () => vscode.postMessage({ type: 'toggleSnips' }));
     trashButton.addEventListener('click', (event) => {
       // Ctrl-click is the bulk action for whichever list is showing: on the active list
@@ -249,6 +258,7 @@ ${tooltipScript()}
       cleanButton.textContent = showTrash ? '\u{1F5D1}' + (picked.size ? ' ' + picked.size : '') : 'Clean';
       cleanButton.title = showTrash ? 'Permanently delete the selected trashed sessions' : 'Move every session to the trash';
       cleanButton.disabled = showTrash && picked.size === 0;
+      restoreButton.hidden = !showTrash || picked.size === 0;
       if (visible.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';

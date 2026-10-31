@@ -364,6 +364,15 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "restoreSession") {
       await this.store.setTrashed(stringOf(record?.sessionId), false);
       this.refreshSidebar();
+    } else if (type === "restoreSessions") {
+      // Oldest first, so the bumped timestamps keep the picked cards in their existing order.
+      const ids = new Set(Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf) : []);
+      for (const session of this.store.all().reverse()) {
+        if (session.trashed && ids.has(session.id)) {
+          await this.store.setTrashed(session.id, false);
+        }
+      }
+      this.refreshSidebar();
     } else if (type === "moveSessionToTop") {
       await this.store.touch(requestedSessionId);
       this.refreshSidebar();
