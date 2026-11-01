@@ -273,7 +273,7 @@ export class QuotaService {
     }
     const model = cheapestModel(readModelInfo(this.context.globalState).models);
     this.probeInFlight = new Promise<void>((resolve, reject) => {
-      const child = spawn("claude", ["-p", "quota", "--model", model, "--max-turns", "1", "--output-format", "stream-json", "--include-partial-messages", "--tools", ""], {
+      const child = spawn("claude", ["-p", "quota", "--model", model, "--max-turns", "1", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", ""], {
         cwd: this.workspacePath,
         env: childEnv(),
         stdio: ["ignore", "pipe", "pipe"],

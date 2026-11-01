@@ -719,6 +719,8 @@ ${tooltipStyle()}  </style>
 ${zoomScript(z)}
 ${tooltipScript()}
     const sessionId = ${safeSessionId};
+    // DEBUG: a slow pane open. ms since this page started loading, logged once at the first state.
+    const loadMarks = { script: Math.round(performance.now()) };
     // VS Code hands this back to the panel serializer, which reopens the tab after a reload.
     vscode.setState({ sessionId });
     // Model id -> its effort levels, and the M button's presets: the host's stored model info,
@@ -818,6 +820,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       readOnlyMessage: { value: 'The last prompt, shown again. Ctrl-Enter clears the box.' },
     });
     const promptModel = promptBox.getModel();
+    loadMarks.editor = Math.round(performance.now());
     // The frame grows with the text, never below three lines, and the CSS caps it at six. The floor
     // is Monaco's own rounded line height, so a zoom level never leaves the third line cut off.
     function fitPrompt() {
@@ -1063,6 +1066,21 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         }
         document.title = session.name || 'Claude2';
         render();
+        if (!loadMarks.state) {
+          loadMarks.state = Math.round(performance.now());
+          const js = performance.getEntriesByType('resource').find((entry) => entry.name.includes('promptEditor.js'));
+          if (js) loadMarks.jsFetch = Math.round(js.responseEnd - js.startTime);
+          loadMarks.pageStart = new Date(performance.timeOrigin).toISOString().slice(11, 23);
+          // VS Code's outer frame (same origin) registers the service worker before this page exists.
+          try {
+            const outer = window.parent.performance;
+            loadMarks.outerStart = new Date(outer.timeOrigin).toISOString().slice(11, 23);
+            loadMarks.outer = outer.getEntries().map((entry) => entry.entryType.slice(0, 3) + ' ' + entry.name.split('/').pop().slice(0, 30) + ' @' + Math.round(entry.startTime) + '+' + Math.round(entry.duration));
+          } catch (error) {
+            loadMarks.outer = String(error);
+          }
+          vscode.postMessage({ type: 'debugLog', sessionId, text: 'load ' + JSON.stringify(loadMarks) });
+        }
       } else if (message.type === 'ctxStats') {
         if (message.ask === ctxAsk && !ctxPop.hidden) showCtx(message.table, message.done);
       } else if (message.type === 'turnDelta') {
@@ -2425,6 +2443,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       }
     }
 
+    loadMarks.ready = Math.round(performance.now());
     vscode.postMessage({ type: 'conversationReady', sessionId });
   </script>
 </body>

@@ -393,6 +393,7 @@ class Claude2Controller implements vscode.Disposable {
   }
 
   private async newSession(): Promise<void> {
+    this.openLog("new session clicked");
     await this.discardEmptySessions();
     const session = await this.createSession();
     this.sidebarProvider?.showActive();
@@ -607,6 +608,7 @@ class Claude2Controller implements vscode.Disposable {
     }
     let panel = this.conversationPanels.get(sessionId);
     if (!panel) {
+      this.openLog(`${sessionId.slice(0, 8)} creating panel`);
       panel = vscode.window.createWebviewPanel("claude2.conversation", session.name, vscode.ViewColumn.One, {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -633,6 +635,7 @@ class Claude2Controller implements vscode.Disposable {
     const info = readModelInfo(this.context.globalState);
     const dist = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist")).toString();
     panel.webview.html = conversationHtml(panel.webview, dist, sessionId,this.conversationDefaults(sessionId), info, this.zoomOf("conversation"));
+    this.openLog(`${sessionId.slice(0, 8)} html set`);
     panel.webview.onDidReceiveMessage((message) => void this.handleConversationMessage(message));
     panel.onDidChangeViewState(() => {
       if (panel.active) {
@@ -731,6 +734,7 @@ class Claude2Controller implements vscode.Disposable {
     if (type === "zoom") {
       await this.noteZoom("conversation", record?.zoom);
     } else if (type === "conversationReady") {
+      this.openLog(`${sessionId.slice(0, 8)} webview ready`);
       this.postConversationState(sessionId);
       this.postImages(sessionId);
       if (this.pendingPromptFocus.delete(sessionId)) {
@@ -2308,6 +2312,11 @@ class Claude2Controller implements vscode.Disposable {
 
   private refreshSidebar(): void {
     this.sidebarProvider?.refresh();
+  }
+
+  // DEBUG: a slow pane open (~10s, 2026-11-01). Timestamped so the gaps show which step is slow.
+  private openLog(text: string): void {
+    this.channel.appendLine(`${new Date().toISOString().slice(11, 23)} open: ${text}`);
   }
 
   // Ctrl-wheel / Ctrl-+ zoom is kept here rather than in webview state: nothing serializes these
