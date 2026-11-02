@@ -24,8 +24,11 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   plus the CLI's own counts.
 - `src/sessionStore.ts`: sessions and turns in workspaceState (key `hahnca.claude2`, field
   `claude2.sessions.v1`). On WSL that lives in the Windows-side `state.vscdb`.
-- `src/quota.ts`: plan usage windows (5h, 7d, model) from Anthropic's usage endpoint, history
-  and projection.
+- `src/quota.ts`: plan usage windows (5h, 7d, model) from Anthropic's usage endpoint, and their
+  history. Read only after a turn, when the Quotas pane opens or ticks (its own 5-min timer), or
+  on Update; there is no background timer. An open pane also syncs from the stats server every
+  30s (`shared()`, `/quota/meta`; never the endpoint) so every window's pane matches. A 429 pause
+  is shared through the server and capped at 15 min; any newer reading ends it.
 - `src/pluginStats.ts`: per-install counters for the graft and ponytail plugins, kept on the
   stats server.
 - `src/settings.ts`: the Settings pane's values. The copy on the stats server wins, cached in

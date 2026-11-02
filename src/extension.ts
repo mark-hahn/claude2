@@ -246,7 +246,6 @@ class Claude2Controller implements vscode.Disposable {
     launcher.command = "claude2.open";
     launcher.show();
     this.context.subscriptions.push(launcher);
-    this.quota.start();
     this.watchInstructions();
     this.modelsReady = this.refreshModels();
     // Every machine's transcripts count toward the one account, so each reports its own on start,
@@ -257,7 +256,6 @@ class Claude2Controller implements vscode.Disposable {
 
   public dispose(): void {
     this.runner.dispose();
-    this.quota.dispose();
     this.instructionsWatcher?.dispose();
     for (const panel of this.conversationPanels.values()) {
       panel.dispose();
@@ -2172,6 +2170,8 @@ class Claude2Controller implements vscode.Disposable {
         const [history, apiCosts] = await Promise.all([this.quota.history(type === "forceQuotaHistory"), checkCosts((line) => this.channel.appendLine(line))]);
         return { ...history, apiCosts };
       });
+    } else if (type === "syncQuotaHistory") {
+      await this.reply(requestId, () => this.quota.shared(numberOf(record?.readAt), stringOf(record?.error)));
     } else if (type === "loadSpeechmatics") {
       // Asked a month at a time: tv-srvr takes seconds per month, too slow to hold up the history.
       await this.reply(requestId, () => speechmaticsCost(stringOf(record?.month), record?.rescan === true, (line) => this.channel.appendLine(line)));

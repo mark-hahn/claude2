@@ -10,16 +10,13 @@ import type { QuotaHistoryPayload, QuotaReadingRow, QuotaState, QuotaWindowState
 const usageUrl = "https://api.anthropic.com/api/oauth/usage";
 const historyFilename = "quota-history.json";
 const metaFilename = "quota-meta.json";
-const fiveMinutesMs = 5 * 60 * 1000;
 const oneMinuteMs = 60 * 1000;
 const fifteenMinutesMs = 15 * 60 * 1000;
 // The endpoint rate-limits the whole account: measured (see the finance app's
 // quota-poll.js) ten calls in five minutes draws a 429, and a steady call a
-// minute lasts about eighteen minutes before one. Every VS Code window runs
-// its own QuotaService, so freshness and 429 pauses are shared through a meta
-// file in global storage; timer ticks defer to any window's reading younger
-// than this, keeping the fleet at one background call per five minutes.
-const timerFreshMs = fiveMinutesMs - 30 * 1000;
+// minute lasts about eighteen minutes before one. So there is no background
+// timer: a reading is taken only after a turn, when a Quotas pane opens or ticks,
+// or on Update, and the server's lease shares one reading across every window.
 const fetchTimeoutMs = 5000;
 // The stats server is on the LAN, so a call to it costs milliseconds; every one of them resolves
 // null rather than throwing when it is down, and each caller below falls back to the local files.
@@ -49,15 +46,10 @@ export class QuotaService {
   private loaded = false;
   private inFlight: Promise<QuotaState> | null = null;
   private probeInFlight: Promise<void> | null = null;
-  private timer: NodeJS.Timeout | null = null;
   private lastReadAt = 0;
   private lastFailureReason: string | null = null;
   private pausedUntil = 0;
   private storageDirPromise: Promise<string> | null = null;
-  // What this window last painted. globalState is shared by every window, but only the window
-  // that took the reading (or took the click) knows it changed, so the rest compare on each tick.
-  private lastAlertShown = false;
-  private lastProjectedShown: number | null = null;
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
@@ -73,56 +65,6 @@ export class QuotaService {
 
   public clearAlert(): void {
     void this.context.globalState.update(alertKey, undefined);
-    this.lastAlertShown = false;
-  }
-
-  // globalState carries the flag to every window, but nothing tells a window it arrived, so the
-  // timer tick that already runs everywhere doubles as the check. Worst case a window repaints a
-  // reading behind — within the same five minutes it would have refreshed the quota anyway.
-  private syncAlert(): void {
-    const now = this.alerting();
-    const projected = this.projectedPct();
-    if (now !== this.lastAlertShown || projected !== this.lastProjectedShown) {
-      this.lastAlertShown = now;
-      this.lastProjectedShown = projected;
-      this.onAlert();
-    }
-  }
-
-  // The worst plan window's projected level at its reset: used now plus the recent burn rate
-  // carried to the reset. "Recent" is the last seventh of the window (43 min of 5h, a day of 7d),
-  // read off the newest reading at or before then — rows are only kept when a value changes, so
-  // that row still holds the level of that moment. With no such row inside the current window, the
-  // whole-window average, its elapsed time floored at the lookback so a fresh window can't spike.
-  public projectedPct(): number | null {
-    const now = Date.now();
-    let worst: number | null = null;
-    for (const window of this.state.windows) {
-      if (window.pct === null || window.resetsAt === null) {
-        continue;
-      }
-      const resetMs = window.resetsAt * 1000;
-      if (resetMs <= now) {
-        continue;
-      }
-      // ponytail: the model-scoped (Fable) window is assumed weekly like 7d.
-      const lengthMs = window.key === "five" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-      const lookbackMs = lengthMs / 7;
-      const startMs = resetMs - lengthMs;
-      const field = window.key === "five" ? "five_pct" : window.key === "seven" ? "seven_pct" : "fable_pct";
-      let reference: QuotaReadingRow | null = null;
-      for (const row of this.readings) {
-        if (row.at >= startMs && row.at <= now - lookbackMs && row[field] !== null && (!reference || row.at > reference.at)) {
-          reference = row;
-        }
-      }
-      const perMs = reference
-        ? Math.max(0, window.pct - (reference[field] ?? 0)) / lookbackMs
-        : window.pct / Math.max(now - startMs, lookbackMs);
-      const projected = Math.round(window.pct + perMs * (resetMs - now));
-      worst = worst === null ? projected : Math.max(worst, projected);
-    }
-    return worst;
   }
 
   // Raises the warning only on a crossing: a window that was already at or above the line when
@@ -145,36 +87,40 @@ export class QuotaService {
     void this.context.globalState.update(alertSeenKey, next);
     if (crossed && !this.alerting()) {
       void this.context.globalState.update(alertKey, true);
-      this.lastAlertShown = true;
       this.onAlert();
-    }
-  }
-
-  public start(): void {
-    // The fleet's last reading and history, without an API call, so the footer's projection
-    // shows as soon as a pane opens instead of after the first timed read.
-    void this.ensureLoaded().then(() => this.adoptShared()).then(() => this.syncAlert(), (error) => this.log(`quota: preload failed: ${errorMessage(error)}`));
-    this.schedule(5000 + Math.floor(Math.random() * 10000));
-  }
-
-  public dispose(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
     }
   }
 
   public async history(force: boolean): Promise<QuotaHistoryPayload> {
     await this.ensureLoaded();
     await this.read(force);
+    return this.payload();
+  }
+
+  // An open Quotas pane asks every 30s so the panes of every window match. Never calls the usage
+  // endpoint: it asks the stats server for the small meta reply and fetches the whole history
+  // only when that moved. Null when the pane already shows this reading and message.
+  public async shared(paneReadAt: number, paneError: string): Promise<QuotaHistoryPayload | null> {
+    await this.ensureLoaded();
+    const meta = await httpJson("GET", "/quota/meta", undefined, sharedTimeoutMs, this.log);
+    if (meta === null || (numberOf(meta.readAt) ?? 0) > this.lastReadAt || (numberOf(meta.pausedUntil) ?? 0) > this.pausedUntil) {
+      await this.adoptShared();
+    }
+    if (this.pausedUntil > Date.now()) {
+      this.state = { ...this.state, pausedUntil: this.pausedUntil, error: rateLimitedMessage(this.pausedUntil) };
+    }
+    const payload = this.payload();
+    return (payload.readAt ?? 0) === paneReadAt && (payload.state.error ?? "") === paneError ? null : payload;
+  }
+
+  private payload(): QuotaHistoryPayload {
     return { readAt: this.lastReadAt || null, rows: [...this.readings].sort((left, right) => left.at - right.at), state: this.state };
   }
 
-  public async read(force: boolean, background = false): Promise<QuotaState> {
+  public async read(force: boolean): Promise<QuotaState> {
     await this.ensureLoaded();
     await this.adoptShared();
-    const freshMs = background ? timerFreshMs : oneMinuteMs;
-    if (!force && this.lastReadAt && Date.now() - this.lastReadAt < freshMs) {
+    if (!force && this.lastReadAt && Date.now() - this.lastReadAt < oneMinuteMs) {
       return this.state;
     }
     if (this.inFlight) {
@@ -189,27 +135,14 @@ export class QuotaService {
     return await this.inFlight;
   }
 
-  private schedule(delayMs: number): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-    }
-    this.timer = setTimeout(() => {
-      void this.read(false, true).finally(() => {
-        this.syncAlert();
-        this.schedule(fiveMinutesMs);
-      });
-    }, delayMs);
-  }
-
   private async takeReading(force: boolean): Promise<QuotaState> {
     const now = Date.now();
-    if (this.pausedUntil > now) {
-      this.state = { ...this.state, pausedUntil: this.pausedUntil };
-      return this.state;
-    }
-
-    if (!(await this.claim(force))) {
-      this.state = { ...this.state, pausedUntil: this.pausedUntil || null };
+    // A pause adopted from another window gets that window's message too, or this pane would
+    // silently show the old reading while the one that hit the 429 says why. The Update button
+    // (force) always tries the endpoint; a reading that succeeds ends the pause for everyone.
+    if ((!force && this.pausedUntil > now) || !(await this.claim(force))) {
+      const paused = this.pausedUntil > now;
+      this.state = { ...this.state, pausedUntil: this.pausedUntil || null, error: paused ? rateLimitedMessage(this.pausedUntil) : this.state.error };
       return this.state;
     }
 
@@ -241,8 +174,10 @@ export class QuotaService {
     const credentials = await this.credentials();
     const response = await getJson(credentials.accessToken);
     if (response.statusCode === 429) {
-      this.pausedUntil = retryAfterMs(response.retryAfter);
-      throw new Error(`Claude usage endpoint is rate limited until ${new Date(this.pausedUntil).toLocaleTimeString()}.`);
+      // Capped: the endpoint has asked for 8-11 hour waits yet answered fine within the hour.
+      this.pausedUntil = Math.min(retryAfterMs(response.retryAfter), Date.now() + fifteenMinutesMs);
+      this.log(`quota: 429 from usage endpoint, retry-after ${response.retryAfter ?? "(none)"}, pausing until ${new Date(this.pausedUntil).toLocaleTimeString()}`);
+      throw new Error(rateLimitedMessage(this.pausedUntil));
     }
     if (response.statusCode === 401 && !retried) {
       await this.probeQuotaRefresh();
@@ -316,8 +251,8 @@ export class QuotaService {
   // The usage endpoint rate-limits the whole account, and an arbitrary number of windows across
   // three machines all want to poll it, so the right to call it is leased: the server hands out
   // one claim per five-minute cycle and everyone else paints the winner's reading. A user asking
-  // for a reading by hand skips the queue — one person clicking cannot stampede, and the pause
-  // check above still stops them from poking a 429. An unreachable server means no lease to be
+  // for a reading by hand skips the queue and the pause — one person clicking cannot stampede, and
+  // a capped pause is often longer than the endpoint's real limit. An unreachable server means no lease to be
   // had: poll anyway, since a stale quota pane is worse than a rate limit that may not come.
   private async claim(force: boolean): Promise<boolean> {
     if (force) {
@@ -394,7 +329,9 @@ export class QuotaService {
 
   private async adoptShared(): Promise<void> {
     const shared = await this.fetchShared();
-    if (shared.pausedUntil > this.pausedUntil) {
+    // A reading newer than ours ends any pause we hold: the server clears its pause on every
+    // reading, and a window that kept the old one would sit paused while the endpoint answers.
+    if (shared.pausedUntil > this.pausedUntil || shared.lastReadAt > this.lastReadAt) {
       this.pausedUntil = shared.pausedUntil;
     }
     // Rows from the other machines, whether or not their newest reading beats ours: this is the
@@ -651,6 +588,10 @@ function normalizeRow(value: unknown): QuotaReadingRow | null {
 
 function emptyState(error: string | null): QuotaState {
   return { at: null, available: false, subscription: null, credits: null, windows: [], error, pausedUntil: null };
+}
+
+function rateLimitedMessage(until: number): string {
+  return `Quota check returned 429 (too many checks, not your usage limit). Quota checking is paused until ${new Date(until).toLocaleTimeString()}; Update checks now.`;
 }
 
 function retryAfterMs(firstValue: string | undefined): number {

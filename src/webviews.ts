@@ -3561,7 +3561,7 @@ ${zoomScript(z)}
     document.addEventListener('click', renderAge);
     setInterval(() => void load(false), 5 * 60 * 1000);
     setInterval(renderAge, 10 * 1000);
-    setInterval(render, 30 * 1000);
+    setInterval(() => void sync(), 30 * 1000);
     void load(false);
 
     async function load(force) {
@@ -3575,6 +3575,17 @@ ${zoomScript(z)}
       updating = false;
       if (reply.ok) payload = reply.payload;
       else payload.state = Object.assign({}, payload.state, { error: reply.error || 'Could not load quota history.' });
+      render();
+    }
+
+    // Every 30s the stats server's newest reading (never the usage endpoint), so the panes of every
+    // window match. The reply carries a payload only when it differs from the one shown; apiCosts
+    // comes only with a full load, so it is kept.
+    async function sync() {
+      if (!loading && !updating) {
+        const reply = await request('syncQuotaHistory', { readAt: payload.readAt || 0, error: (payload.state && payload.state.error) || '' });
+        if (reply.ok && reply.payload && !updating) payload = Object.assign({}, payload, reply.payload);
+      }
       render();
     }
 
@@ -3635,7 +3646,9 @@ ${zoomScript(z)}
     }
 
     function renderAge() {
-      document.getElementById('age').textContent = payload.readAt ? elapsed(payload.readAt) : '';
+      const age = document.getElementById('age');
+      age.textContent = payload.readAt ? elapsed(payload.readAt) : '';
+      age.style.color = payload.state && payload.state.pausedUntil > Date.now() ? '#c62828' : '';
       const asrAge = document.getElementById('asr-age');
       if (asrAge) asrAge.textContent = elapsed(Number(asrAge.dataset.at));
     }

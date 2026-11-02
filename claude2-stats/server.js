@@ -10,6 +10,7 @@
 //   POST /flags/<project>  body: flags   -> merge { graft?, ponytail? }
 //   POST /turns   body: { events: [..] } -> append raw per-turn events to turns.jsonl
 //   GET  /quota                          -> { rows, readAt, pausedUntil, state }
+//   GET  /quota/meta                     -> { readAt, pausedUntil } : open panes poll this every 30s
 //   POST /quota   body: { rows?, readAt?, pausedUntil?, state? } -> merge a reading
 //   POST /quota/claim                    -> { poll } : the right to call the usage endpoint
 //   GET  /models                         -> { machines: { <host>: { updatedAt, hours } } }
@@ -110,7 +111,8 @@ function mergeInstall(key, body) {
 
 // Rows are identified by their timestamp, so a replayed push or a backfill of a machine's whole
 // file is idempotent. readAt and pausedUntil only ever move forward: a client with a slow clock
-// can neither re-arm a spent lease nor cut short someone else's 429 pause.
+// can neither re-arm a spent lease nor cut short someone else's 429 pause. Only a newer reading
+// ends a pause.
 function mergeQuota(body) {
   const quota = data.quota;
   const incoming = Array.isArray(body.rows) ? body.rows : [];
@@ -127,6 +129,8 @@ function mergeQuota(body) {
   const readAt = numberOf(body.readAt);
   if (readAt > numberOf(quota.readAt)) {
     quota.readAt = readAt;
+    // A reading that got through (an Update click overrides the pause) shows the endpoint answers again.
+    quota.pausedUntil = 0;
     // The state travels with the reading that produced it: a row carries percentages, but not the
     // subscription or window labels the pane needs before its first local reading lands.
     if (body.state && typeof body.state === "object") {
@@ -250,6 +254,9 @@ async function handle(request, response) {
       fs.appendFileSync(turnsPath, events.map((event) => JSON.stringify(event)).join("\n") + "\n");
     }
     return json(200, { ok: true, count: events.length });
+  }
+  if (request.method === "GET" && url.pathname === "/quota/meta") {
+    return json(200, { readAt: data.quota.readAt, pausedUntil: data.quota.pausedUntil });
   }
   if (request.method === "GET" && url.pathname === "/quota") {
     const { rows, readAt, pausedUntil, state } = data.quota;
