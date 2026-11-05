@@ -1166,7 +1166,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     }, true);
     // Ctrl-Alt-Z does the same from anywhere in the tab: a VS Code keybinding (package.json) that
     // posts 'toggleBigPrompt' here. VS Code forwards keys pressed in this webview to it.
-    addTabKeys(promptBox);
+    addListKeys(promptBox);
     // Up from the top line leaves the box for the pane's arrow scroll. Wrapped lines leave no
     // newline to count, so the top line is the one where the caret's own Up didn't move it.
     promptBox.onKeyDown((event) => {
@@ -1212,7 +1212,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     // An image on the clipboard becomes another attached picture rather than pasted text. Each
     // paste adds one; the pictures already waiting stay. The extension ignores a second copy
     // of one already in the list. Capture phase, so Monaco never sees the paste, and ahead of
-    // addTabKeys' handler for pasted text, which is on the editor inside this frame.
+    // addListKeys' handler for pasted text, which is on the editor inside this frame.
     promptHost.addEventListener('paste', (event) => {
       // A restored prompt takes no paste, a picture included; Monaco's read-only drops the text.
       if (promptRestored) return;
@@ -3950,7 +3950,7 @@ ${monacoScript(dist)}
       if (!snipsBox) {
         snipsBox = monaco.editor.create(document.getElementById('snips'), { ...editorOptions, value: text });
         addLineDots(snipsBox);
-        addTabKeys(snipsBox);
+        addListKeys(snipsBox);
         snipsBox.onDidChangeModelContent(() => vscode.postMessage({ type: 'snipsChanged', text: snipsBox.getValue() }));
         snipsBox.addAction({ id: 'claude2.closeSnips', label: 'Close Snips', keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter], run: () => vscode.postMessage({ type: 'closeSnips' }) });
         snipsBox.focus();
@@ -3976,8 +3976,8 @@ ${monacoScript(dist)}
 }
 
 // Monaco's setup, shared by the prompt box and the Snips tab: the worker, the theme, the user's
-// editing keys, the editor options, the gutter's line dots, and Tab's list items with the untabbing
-// of text that arrives. Expects `monaco` and `zoom`.
+// editing keys, the editor options, the gutter's line dots, the list keys (Tab, Shift-Tab, Enter, Backspace),
+// and the untabbing of text that arrives. Expects `monaco` and `zoom`.
 function monacoScript(dist: string): string {
   return `
     // A webview can't start a worker from a resource URL, which is a different origin, so the
@@ -4086,12 +4086,23 @@ function monacoScript(dist: string): string {
     function untab(text) {
       return text.replace(/\\t/g, '  ');
     }
-    // Tab makes list items (tabLines) instead of inserting anything. Left to Monaco while a
-    // completion list or a snippet is up, where Tab means something else. Pasted text loses its tab
+    // Tab makes list items (tabLines) instead of inserting anything, Shift-Tab steps them back the
+    // same way, Enter starts the next one (enterLines) and Backspace takes a dash back off
+    // (backspaceDashes). Tab, Shift-Tab and Enter are left to Monaco while a completion list or a
+    // snippet is up, where they mean something else, and Enter on a read-only box, which answers
+    // with its message. Pasted text loses its tab
     // chars, through Monaco's own paste so it stays one undo step; the find box's own pastes and a
     // read-only editor's are left alone. Capture phase, so Monaco never sees the paste.
-    function addTabKeys(editor) {
-      editor.addAction({ id: 'claude2.tabLines', label: 'Make List Items', keybindings: [monaco.KeyCode.Tab], keybindingContext: 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode', run: () => tabLines(editor) });
+    function addListKeys(editor) {
+      const free = 'editorTextFocus && !suggestWidgetVisible && !inSnippetMode';
+      editor.addAction({ id: 'claude2.tabLines', label: 'Make List Items', keybindings: [monaco.KeyCode.Tab], keybindingContext: free, run: () => tabLines(editor, tabLine) });
+      editor.addAction({ id: 'claude2.untabLines', label: 'Step List Items Back', keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.Tab], keybindingContext: free, run: () => tabLines(editor, untabLine) });
+      editor.addAction({ id: 'claude2.enterLines', label: 'Next List Item', keybindings: [monaco.KeyCode.Enter], keybindingContext: free + ' && !editorReadonly', run: () => enterLines(editor) });
+      editor.onKeyDown((event) => {
+        if (!event.equals(monaco.KeyCode.Backspace) || !backspaceDashes(editor)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      });
       editor.getContainerDomNode().addEventListener('paste', (event) => {
         const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
         if (!editor.hasTextFocus() || editor.getOption(monaco.editor.EditorOption.readOnly) || !text.includes('\\t')) return;
@@ -4100,10 +4111,11 @@ function monacoScript(dist: string): string {
         editor.trigger('keyboard', 'paste', { text: untab(text) });
       }, true);
     }
-    // Tab on each line a caret or selection touches: the margin steps right to the next even count
-    // (an odd one by 1, an even one by 2) and the text becomes a "- " item, exactly one space after
-    // the dash. A run of lines leaves its blank ones alone; a lone blank line becomes an empty item.
-    function tabLines(editor) {
+    // Tab on each line a caret or selection touches: a line with no dash becomes a "- " item at the
+    // left edge, and an item's margin steps right to the next even count (an odd one by 1, an even
+    // one by 2), exactly one space after the dash either way. A run of lines leaves its blank ones
+    // alone; a lone blank line becomes an empty item at its own margin. Shift-Tab comes through here too, with untabLine for what each line gets.
+    function tabLines(editor, startOf) {
       const model = editor.getModel();
       const lines = new Set();
       for (const s of editor.getSelections()) {
@@ -4116,7 +4128,7 @@ function monacoScript(dist: string): string {
       for (const n of lines) {
         const line = model.getLineContent(n);
         if (lines.size > 1 && !line.trim()) continue;
-        const start = tabLine(line);
+        const start = startOf(line);
         edits.push({ range: new monaco.Range(n, 1, n, start.old + 1), text: start.prefix });
         tabbed.set(n, start);
       }
@@ -4133,11 +4145,54 @@ function monacoScript(dist: string): string {
       editor.pushUndoStop();
     }
     // What Tab puts at the start of a line: prefix replaces the line's first old chars, its
-    // margin and any dash with the spaces after it.
+    // margin and any dash with the spaces after it. Text with no dash takes one at the left edge,
+    // while a blank line stays at its margin.
     function tabLine(line) {
       const margin = line.match(/^ */)[0].length;
       const dash = line.slice(margin).match(/^- */);
-      return { old: margin + (dash ? dash[0].length : 0), prefix: ' '.repeat(margin + 2 - margin % 2) + '- ' };
+      if (!dash) return { old: margin, prefix: ' '.repeat(margin === line.length ? margin : 0) + '- ' };
+      return { old: margin + dash[0].length, prefix: ' '.repeat(margin + 2 - margin % 2) + '- ' };
+    }
+    // Shift-Tab's prefix and old, the inverse of tabLine: an item at the left edge loses its dash, and
+    // any other margin steps left to the next even count, keeping the dash.
+    function untabLine(line) {
+      const dash = line.match(/^- +/);
+      if (dash) return { old: dash[0].length, prefix: '' };
+      const margin = line.match(/^ */)[0].length;
+      return { old: margin, prefix: ' '.repeat(Math.max(margin - 2 + margin % 2, 0)) };
+    }
+    // Enter at each caret, with the spaces after the caret dropped so the text it takes along
+    // keeps exactly one after the dash. Unlike Monaco's own Enter, an edit doesn't scroll to the caret.
+    function enterLines(editor) {
+      const model = editor.getModel();
+      const edits = editor.getSelections().map((s) => {
+        const rest = model.getLineContent(s.endLineNumber).slice(s.endColumn - 1);
+        const spaces = rest.match(/^ */)[0].length;
+        return { range: new monaco.Range(s.startLineNumber, s.startColumn, s.endLineNumber, s.endColumn + spaces), text: '\\n' + enterStart(model.getLineContent(s.startLineNumber), rest.slice(spaces)) };
+      });
+      editor.pushUndoStop();
+      editor.executeEdits('claude2', edits, (undo) => undo.map(({ range }) => monaco.Selection.fromPositions(range.getEndPosition())));
+      editor.pushUndoStop();
+      editor.revealPosition(editor.getPosition());
+    }
+    // What Enter starts the new line with, given the line it leaves and the text it takes along:
+    // that line's margin and a dash, unless the text already has its dash. Any line of a heading
+    // starts the next at the left edge with nothing.
+    function enterStart(line, rest) {
+      if (/^ *#/.test(line)) return '';
+      return line.match(/^ */)[0] + (/^-( |$)/.test(rest) ? '' : '- ');
+    }
+    // Backspace right after a line's "- " takes both chars, for the odd line that isn't a list item:
+    // the inverse of Tab on a blank line. False, leaving the key to Monaco, unless every caret is there.
+    function backspaceDashes(editor) {
+      const model = editor.getModel();
+      const carets = editor.getSelections();
+      const afterDash = (s) => s.isEmpty() && /^ *- $/.test(model.getLineContent(s.startLineNumber).slice(0, s.startColumn - 1));
+      if (editor.getOption(monaco.editor.EditorOption.readOnly) || !carets.every(afterDash)) return false;
+      editor.pushUndoStop();
+      editor.executeEdits('claude2', carets.map((s) => ({ range: new monaco.Range(s.startLineNumber, s.startColumn - 2, s.startLineNumber, s.startColumn), text: null })));
+      editor.pushUndoStop();
+      return true;
     }
 `;
 }

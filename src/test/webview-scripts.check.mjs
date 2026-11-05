@@ -49,14 +49,55 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
     const { old, prefix } = tabLine(line);
     return prefix + line.slice(old);
   };
-  assert.strictEqual(tab('text'), '  - text', 'even margin (none) steps two and gains a dash');
-  assert.strictEqual(tab(' text'), '  - text', 'odd margin steps one');
-  assert.strictEqual(tab('   text'), '    - text', 'odd margin of three steps one');
+  assert.strictEqual(tab('text'), '- text', 'text with no dash gains one at the left edge');
+  assert.strictEqual(tab('  text'), '- text', 'even when it was indented');
   assert.strictEqual(tab('  - text'), '    - text', 'an item steps in two, keeping its dash');
+  assert.strictEqual(tab(' - text'), '  - text', 'an odd margin steps one');
+  assert.strictEqual(tab('   - text'), '    - text', 'an odd margin of three steps one');
   assert.strictEqual(tab('-text'), '  - text', 'one space after the dash');
   assert.strictEqual(tab('-    text'), '  - text', 'only one space after the dash');
-  assert.strictEqual(tab(''), '  - ', 'an empty line becomes an empty item');
+  assert.strictEqual(tab(''), '- ', 'an empty line becomes an empty item at the left edge');
+  assert.strictEqual(tab('- '), '  - ', 'more tabbing steps it in as usual');
+  assert.strictEqual(tab('  '), '  - ', 'a blank line keeps its margin, undoing Backspace after a dash');
   console.log('ok: tab makes list items');
+}
+
+// Shift-Tab undoes Tab one step; untabLine says what replaces the line's start.
+{
+  const source = pages.snips.match(/function untabLine\(line\)[\s\S]*?\n {4}\}/);
+  assert.ok(source, 'snips pane lost untabLine');
+  const untabLine = new Function(source[0] + '\nreturn untabLine;')();
+  const untab = (line) => {
+    const { old, prefix } = untabLine(line);
+    return prefix + line.slice(old);
+  };
+  assert.strictEqual(untab('- text'), 'text', 'an item at the left edge loses its dash');
+  assert.strictEqual(untab('- '), '', 'so does an empty one');
+  assert.strictEqual(untab('-    text'), 'text', 'with every space after the dash');
+  assert.strictEqual(untab('    - text'), '  - text', 'an indented item steps left');
+  assert.strictEqual(untab('  - text'), '- text', 'to the left edge, keeping its dash');
+  assert.strictEqual(untab('   - text'), '  - text', 'an odd margin steps one');
+  assert.strictEqual(untab('  text'), 'text', 'plain text steps left too');
+  assert.strictEqual(untab('text'), 'text', 'and stays at the left edge');
+  assert.strictEqual(untab('-text'), '-text', 'a dash needs its space');
+  console.log('ok: shift-tab steps list items back');
+}
+
+// Enter starts the next list item; enterStart says what follows the line break.
+{
+  const source = pages.snips.match(/function enterStart\(line, rest\)[\s\S]*?\n {4}\}/);
+  assert.ok(source, 'snips pane lost enterStart');
+  const enterStart = new Function(source[0] + '\nreturn enterStart;')();
+  assert.strictEqual(enterStart('- text', ''), '- ', 'next item');
+  assert.strictEqual(enterStart('plain', ''), '- ', 'any line starts an item');
+  assert.strictEqual(enterStart('', ''), '- ', 'so does an empty one');
+  assert.strictEqual(enterStart('    - text', ''), '    - ', 'dashes line up');
+  assert.strictEqual(enterStart('  - text', 'tail'), '  - ', 'text taken along gets the dash');
+  assert.strictEqual(enterStart('  - text', '- text'), '  ', 'text that has a dash keeps just that one');
+  assert.strictEqual(enterStart('## heading', ''), '', 'a heading is followed by the left edge');
+  assert.strictEqual(enterStart('  # heading', ''), '', 'even an indented one');
+  assert.strictEqual(enterStart('## heading', 'tail'), '', 'and when it is split');
+  console.log('ok: enter starts list items');
 }
 
 // The export has to drop tool lines and the graft tally the way the box does, and keep the
