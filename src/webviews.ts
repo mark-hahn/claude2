@@ -277,7 +277,10 @@ ${tooltipScript()}
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
         // The first prompt, which the name was made from; capped so a long one can't fill the pane.
-        const prompt = ((session.turns || [])[0] || {}).prompt || 'No prompt.';
+        // Each attached picture's sentence, and the blank line before it, shows as <img>; the tooltip
+        // sets textContent, so it stays text.
+        const prompt = (((session.turns || [])[0] || {}).prompt || 'No prompt.')
+          .replace(/\\s*\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '<img>');
         card.dataset.tip = prompt.length > 800 ? prompt.slice(0, 800) + '…' : prompt;
         card.dataset.tipDelay = '1200';
         const name = document.createElement('span');
