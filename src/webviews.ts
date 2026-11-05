@@ -4023,6 +4023,8 @@ function monacoScript(dist: string): string {
       glyphMargin: false,
       folding: false,
       minimap: { enabled: false },
+      // On by default: it pins the line that opens the indent block being scrolled through.
+      stickyScroll: { enabled: false },
       overviewRulerLanes: 0,
       scrollBeyondLastLine: false,
       // Popups may overhang the box's frame instead of being clipped by it.
