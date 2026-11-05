@@ -3976,7 +3976,7 @@ ${monacoScript(dist)}
 }
 
 // Monaco's setup, shared by the prompt box and the Snips tab: the worker, the theme, the user's
-// editing keys, the editor options, the gutter's line dots, the list keys (Tab, Shift-Tab, Enter, Backspace),
+// editing keys, the editor options, the gutter's line dots, the list keys (Tab, Shift-Tab, Enter, Backspace, #),
 // and the untabbing of text that arrives. Expects `monaco` and `zoom`.
 function monacoScript(dist: string): string {
   return `
@@ -4087,8 +4087,8 @@ function monacoScript(dist: string): string {
       return text.replace(/\\t/g, '  ');
     }
     // Tab makes list items (tabLines) instead of inserting anything, Shift-Tab steps them back the
-    // same way, Enter starts the next one (enterLines) and Backspace takes a dash back off
-    // (backspaceDashes). Tab, Shift-Tab and Enter are left to Monaco while a completion list or a
+    // same way, Enter starts the next one (enterLines), Backspace takes a dash back off
+    // (backspaceDashes) and # turns an empty one into a heading (typeHash). Tab, Shift-Tab and Enter are left to Monaco while a completion list or a
     // snippet is up, where they mean something else, and Enter on a read-only box, which answers
     // with its message. Pasted text loses its tab
     // chars, through Monaco's own paste so it stays one undo step; the find box's own pastes and a
@@ -4099,7 +4099,7 @@ function monacoScript(dist: string): string {
       editor.addAction({ id: 'claude2.untabLines', label: 'Step List Items Back', keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.Tab], keybindingContext: free, run: () => tabLines(editor, untabLine) });
       editor.addAction({ id: 'claude2.enterLines', label: 'Next List Item', keybindings: [monaco.KeyCode.Enter], keybindingContext: free + ' && !editorReadonly', run: () => enterLines(editor) });
       editor.onKeyDown((event) => {
-        if (!event.equals(monaco.KeyCode.Backspace) || !backspaceDashes(editor)) return;
+        if (!(event.equals(monaco.KeyCode.Backspace) ? backspaceDashes(editor) : event.browserEvent.key === '#' && typeHash(editor))) return;
         event.preventDefault();
         event.stopPropagation();
       });
@@ -4162,7 +4162,7 @@ function monacoScript(dist: string): string {
       return { old: margin, prefix: ' '.repeat(Math.max(margin - 2 + margin % 2, 0)) };
     }
     // Enter at each caret, with the spaces after the caret dropped so the text it takes along
-    // keeps exactly one after the dash. Unlike Monaco's own Enter, an edit doesn't scroll to the caret.
+    // keeps exactly one after the dash.
     function enterLines(editor) {
       const model = editor.getModel();
       const edits = editor.getSelections().map((s) => {
@@ -4170,17 +4170,20 @@ function monacoScript(dist: string): string {
         const spaces = rest.match(/^ */)[0].length;
         return { range: new monaco.Range(s.startLineNumber, s.startColumn, s.endLineNumber, s.endColumn + spaces), text: '\\n' + enterStart(model.getLineContent(s.startLineNumber), rest.slice(spaces)) };
       });
+      typeEdits(editor, edits);
+    }
+    // One undo step, each caret landing after its new text. Unlike Monaco's own typing, an edit
+    // doesn't scroll to the caret.
+    function typeEdits(editor, edits) {
       editor.pushUndoStop();
       editor.executeEdits('claude2', edits, (undo) => undo.map(({ range }) => monaco.Selection.fromPositions(range.getEndPosition())));
       editor.pushUndoStop();
       editor.revealPosition(editor.getPosition());
     }
     // What Enter starts the new line with, given the line it leaves and the text it takes along:
-    // that line's margin and a dash, unless the text already has its dash. Any line of a heading
-    // starts the next at the left edge with nothing.
+    // that line's margin and a dash, unless that text is already an item or a heading.
     function enterStart(line, rest) {
-      if (/^ *#/.test(line)) return '';
-      return line.match(/^ */)[0] + (/^-( |$)/.test(rest) ? '' : '- ');
+      return line.match(/^ */)[0] + (/^(-( |$)|#+ )/.test(rest) ? '' : '- ');
     }
     // Backspace right after a line's "- " takes both chars, for the odd line that isn't a list item:
     // the inverse of Tab on a blank line. False, leaving the key to Monaco, unless every caret is there.
@@ -4193,6 +4196,27 @@ function monacoScript(dist: string): string {
       editor.executeEdits('claude2', carets.map((s) => ({ range: new monaco.Range(s.startLineNumber, s.startColumn - 2, s.startLineNumber, s.startColumn), text: null })));
       editor.pushUndoStop();
       return true;
+    }
+    // Typing # where hashStart has something else for it to do. False, leaving the key to Monaco,
+    // unless every caret is at such a place.
+    function typeHash(editor) {
+      const model = editor.getModel();
+      const carets = editor.getSelections();
+      const above = (n) => n > 1 ? model.getLineContent(n - 1) : '';
+      const starts = carets.map((s) => s.isEmpty() ? hashStart(model.getLineContent(s.startLineNumber), s.startColumn, above(s.startLineNumber)) : null);
+      if (editor.getOption(monaco.editor.EditorOption.readOnly) || starts.includes(null)) return false;
+      typeEdits(editor, carets.map((s, i) => ({ range: new monaco.Range(s.startLineNumber, s.startColumn - starts[i].old, s.startLineNumber, s.startColumn), text: starts[i].text })));
+      return true;
+    }
+    // What # typed at column does: text replaces the old chars before the caret. Right after a "# "
+    // it joins that hash, the space staying behind it. At the end of an empty item it makes "# " at
+    // the left edge, with a blank line before it unless the line above is one already or there is
+    // none. Null anywhere else.
+    function hashStart(line, column, above) {
+      const before = line.slice(0, column - 1);
+      if (before.endsWith('# ')) return { old: 1, text: '# ' };
+      if (!/^ *- $/.test(line) || column <= line.length) return null;
+      return { old: before.length, text: (above.trim() ? '\\n' : '') + '# ' };
     }
 `;
 }

@@ -94,10 +94,32 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   assert.strictEqual(enterStart('    - text', ''), '    - ', 'dashes line up');
   assert.strictEqual(enterStart('  - text', 'tail'), '  - ', 'text taken along gets the dash');
   assert.strictEqual(enterStart('  - text', '- text'), '  ', 'text that has a dash keeps just that one');
-  assert.strictEqual(enterStart('## heading', ''), '', 'a heading is followed by the left edge');
-  assert.strictEqual(enterStart('  # heading', ''), '', 'even an indented one');
-  assert.strictEqual(enterStart('## heading', 'tail'), '', 'and when it is split');
+  assert.strictEqual(enterStart('## heading', ''), '- ', 'a heading is followed by an item');
+  assert.strictEqual(enterStart('  # heading', ''), '  - ', 'under its own margin');
+  assert.strictEqual(enterStart('## heading', 'tail'), '- ', 'and when it is split');
+  assert.strictEqual(enterStart('## heading', '## heading'), '', 'a heading pushed down stays one');
+  assert.strictEqual(enterStart('#tag', '#tag'), '- ', 'text with a hash but no heading space gets the dash');
   console.log('ok: enter starts list items');
+}
+
+// Typing # on an empty item makes it a heading; hashStart says what replaces the item.
+{
+  const source = pages.snips.match(/function hashStart\(line, column, above\)[\s\S]*?\n {4}\}/);
+  assert.ok(source, 'snips pane lost hashStart');
+  const hashStart = new Function(source[0] + '\nreturn hashStart;')();
+  assert.deepStrictEqual(hashStart('- ', 3, 'text'), { old: 2, text: '\n# ' }, 'a heading, with a blank line before it');
+  assert.deepStrictEqual(hashStart('  - ', 5, 'text'), { old: 4, text: '\n# ' }, 'the indent goes');
+  assert.deepStrictEqual(hashStart('- ', 3, ''), { old: 2, text: '# ' }, 'no second blank line, nor one at the top');
+  assert.deepStrictEqual(hashStart('- ', 3, '  '), { old: 2, text: '# ' }, 'spaces count as blank');
+  assert.strictEqual(hashStart('- ', 1, 'text'), null, 'only at the end of the line');
+  assert.strictEqual(hashStart('- text', 7, 'text'), null, 'only on an empty item');
+  assert.strictEqual(hashStart('', 1, 'text'), null, 'an empty line is no item');
+  for (const [line, column] of [['# ', 3], ['## ', 4], ['# text', 3], ['see # ', 7]]) {
+    assert.deepStrictEqual(hashStart(line, column, 'text'), { old: 1, text: '# ' }, 'joins the hash in ' + line);
+  }
+  assert.strictEqual(hashStart('# text', 7, 'text'), null, 'not further along the line');
+  assert.strictEqual(hashStart('#', 2, 'text'), null, 'no space to step over');
+  console.log('ok: hash makes headings');
 }
 
 // The export has to drop tool lines and the graft tally the way the box does, and keep the
