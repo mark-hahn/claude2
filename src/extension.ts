@@ -39,6 +39,8 @@ type PluginsReport = { projects: ProjectColumn[]; offline: boolean };
 const PNG_DATA_URI = "data:image/png;base64,";
 // Model pick -> the context window the CLI last reported for it, for Max context tokens of 0.
 const modelWindowsKey = "modelWindows";
+// How long an Alt-Cap's tab gets to paint before the shot.
+const tabSettleMs = 300;
 
 export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Claude2");
@@ -741,7 +743,7 @@ class Claude2Controller implements vscode.Disposable {
     } else if (type === "debugLog") {
       this.channel.appendLine(`webview ${sessionId.slice(0, 8)}: ${stringOf(record?.text)}`);
     } else if (type === "captureScreen") {
-      await this.captureForSession(sessionId, record?.hideWindow === true);
+      await this.captureForSession(sessionId, record?.hideWindow === true, record?.previousTab === true);
     } else if (type === "pasteImage") {
       await this.pasteImage(sessionId, stringOf(record?.dataUri));
     } else if (type === "showImage") {
@@ -895,15 +897,31 @@ class Claude2Controller implements vscode.Disposable {
 
   // hideWindow is a plain Cap click: minimize this VS Code window for the length of the shot so the
   // picture shows what it was covering. It comes back by itself, and the extension host never goes
-  // away. Ctrl-Cap is the opposite -- the window stays up and is in the picture. Every click takes
-  // another picture; the ones already waiting stay where they are.
-  private async captureForSession(sessionId: string, hideWindow = false): Promise<void> {
+  // away. Ctrl-Cap is the opposite -- the window stays up and is in the picture. Alt-Cap keeps the
+  // window up too, but the picture is of the previously used tab and lands in this session's prompt.
+  // Every click takes another picture; the ones already waiting stay where they are.
+  private async captureForSession(sessionId: string, hideWindow = false, previousTab = false): Promise<void> {
     try {
-      await this.addImage(sessionId, "cap", await captureScreen(hideWindow));
+      await this.addImage(sessionId, "cap", await (previousTab ? this.capturePreviousTab(sessionId) : captureScreen(hideWindow)));
     } catch (error) {
       void vscode.window.showErrorMessage(`Screen capture failed: ${errorMessage(error)}`);
       // The Cap button greys itself out for the length of the shot and comes back on this.
       this.postImages(sessionId);
+    }
+  }
+
+  private async capturePreviousTab(sessionId: string): Promise<string> {
+    // A picture's Image pane is usually the last tab used, and never the one meant; the shot brings it back.
+    if (this.managementPane === "cap") {
+      this.managementPanel?.dispose();
+    }
+    await vscode.commands.executeCommand("workbench.action.openPreviousRecentlyUsedEditor");
+    await new Promise((resolve) => setTimeout(resolve, tabSettleMs));
+    try {
+      return await captureScreen(false);
+    } finally {
+      // Back to the tab that asked, so closing the Image pane lands on the prompt holding the picture.
+      await this.openConversation(sessionId);
     }
   }
 

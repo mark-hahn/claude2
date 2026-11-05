@@ -704,7 +704,7 @@ ${tooltipStyle()}  </style>
       <div class="dock-controls">
         <div class="footer">
           <div id="finish" class="indicator" data-status="Ready">R</div>
-          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="ctx" title="Tokens by source, for the last prompt and the whole conversation, in and out">Ctx</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
+          <div class="group"><button id="stop" title="Stop" aria-label="Stop">&#x25AA;</button><button id="ctx" title="Tokens by source, for the last prompt and the whole conversation, in and out">Ctx</button><button id="cap" title="Attach another screen capture to the next Send — hides this window for the shot; Ctrl-click leaves it up; Alt-click leaves it up and shoots the previous tab">Cap</button><button id="file" title="Attach a file to the next Send — puts a &lt;name&gt; tag in the box; Ctrl-click the tag to take it off">File</button><button id="export" title="Export this session to a markdown file in the project root"><svg viewBox="0 0 16 16"><path d="M3 8h10M9.2 4.2 13 8l-3.8 3.8"/></svg></button></div>
         </div>
         <div class="bar">
           <div class="group"><button id="cycle" class="indicator">M</button><select id="model"></select><select id="effort"></select><div id="advisor" title="Advisor: the model Claude can consult mid-task, one step stronger than the model picked. Use advisor in Settings turns it on for every session."></div></div>
@@ -1255,14 +1255,15 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     });
     document.getElementById('cap').addEventListener('click', (event) => {
       // A ctrl-click's picture is of this window, so a restored prompt stays in the box until the
-      // shot is taken (imagesState); a plain click's window is out of the way, so it goes now.
+      // shot is taken (imagesState); a plain or alt click's picture is of something else, so it goes now.
       if (event.ctrlKey) leaveAfterShot = true; else leaveRestored();
       // Every click takes another picture and adds it to the ones already waiting. The button
       // greys out only for the length of the shot; the picture list is shown by the 🖼️ chars.
       capButton.disabled = true;
       // A plain click minimizes this VS Code window for the shot, so it shows what was behind it.
-      // Ctrl-click leaves the window up, for a picture of the window itself.
-      vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: event.ctrlKey !== true });
+      // Ctrl-click leaves the window up, for a picture of the window itself. Alt-click leaves it up
+      // too, with the previously used tab brought forward for the shot.
+      vscode.postMessage({ type: 'captureScreen', sessionId, hideWindow: !event.ctrlKey && !event.altKey, previousTab: event.altKey });
     });
     document.getElementById('file').addEventListener('click', () => vscode.postMessage({ type: 'pickFile', sessionId }));
     const exportButton = document.getElementById('export');

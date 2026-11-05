@@ -38,7 +38,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   the same PowerShell through `/mnt/c`; the server asks the `claude2-cap/` UI-side extension
   on the client. Its PowerShell is duplicated in `claude2-cap/extension.js`; keep both in step.
   Gotcha: hide-window restore needs an empty `mouse_event` before `SetForegroundWindow`, or
-  the Windows foreground lock leaves VS Code behind whatever window was under it.
+  the Windows foreground lock leaves VS Code behind whatever window was under it. Alt-Cap
+  (`capturePreviousTab` in extension.ts) switches to the previously used tab, shoots it with the
+  window up, and returns to the asking session, whose prompt gets the picture.
 - `src/gitCheck.ts`: the optional "Git changes check": one API call (the `claudeApiKey`
   setting, not the subscription) before a new session's first prompt.
 - `src/instructionsFile.ts`: the Instructions pane edits the project CLAUDE.md and keeps
