@@ -143,6 +143,61 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   console.log('ok: session export matches the open boxes');
 }
 
+// Search counts what bars and boxes show, in the sidebar and the pane alike, and a pane steps
+// through its hits top to bottom, a bar's ahead of its box's, then hands over to the sidebar.
+{
+  const lift = (page, name) => {
+    const source = page.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n {4}\\}'));
+    assert.ok(source, 'pane lost ' + name);
+    return source[0];
+  };
+  const shared = ['typedText', 'isToolLine', 'strippedText', 'shownText', 'occurrences'];
+  const T = '\u2063';
+  const D = T + '\u2062';
+  const turns = [
+    { id: 'a', prompt: 'find me twice, find\n\n[An image is attached. Read the image file find.png to view it.]', response: 'nothing here' },
+    { id: 'b', prompt: 'other', response: T + '**Read** find.ts\n' + D + 'find\nthe find\n🌱 find saved' },
+    { id: 'c', prompt: 'other', response: 'plain', error: 'could not find it' },
+  ];
+
+  const matchCount = new Function('searchText', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK',
+    [...shared, 'matchCount'].map((name) => lift(pages.sidebar, name)).join('\n') + '\nreturn matchCount;')('FIND', T, '🌱');
+  assert.strictEqual(matchCount({ turns }), 4, 'prompt typing, box text, and a failure; no tool line, detail, tally, or picture sentence');
+
+  const body = [...shared, 'searchHits', 'stepSearch'].map((name) => lift(pages.conversation, name)).join('\n');
+  const fake = new Function('session', 'searchText', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK', 'vscode', `
+    let searchHit = null, searchHitMoved = false, anchorIndex = 0, boxOpen = true, toolsBox = true, boxScrollNext = null;
+    let frozenPane = false, allOpen = false, initializedSelection = false, pendingTurnCount = 0, shownActiveTurn = null;
+    const status = null, sessionId = 's', render = () => {};
+    const document = { createElement: () => ({}) };
+    const fillResponse = (box, turn) => { box.text = shownText(turn); };
+    const textHits = (box, needle) => Array(occurrences(box.text, needle));
+    ${body}
+    return { stepSearch, state: () => ({ searchHit, anchorIndex, boxOpen }) };
+  `);
+  const posted = [];
+  const pane = fake({ turns }, 'find', T, '🌱', { postMessage: (message) => posted.push(message.type) });
+  const walk = [];
+  pane.stepSearch(true);
+  for (let step = 0; step < 4; step += 1) {
+    const { searchHit, anchorIndex, boxOpen } = pane.state();
+    walk.push([searchHit.turnId, searchHit.bar, searchHit.nth, anchorIndex, boxOpen].join());
+    pane.stepSearch(false);
+  }
+  assert.deepStrictEqual(walk, ['a,true,0,0,false', 'a,true,1,0,false', 'b,false,0,1,true', 'c,false,0,2,true'], 'bar hits close the boxes, box hits open theirs');
+  assert.deepStrictEqual(posted, ['searchEnd'], 'after the last hit the sidebar moves on');
+  assert.strictEqual(pane.state().searchHit.turnId, 'c', 'and the selection stays until it does');
+  pane.stepSearch(true);
+  assert.strictEqual(pane.state().searchHit.turnId, 'a', 'first starts over, which is how a lone session wraps');
+
+  const none = fake({ turns: [{ id: 'a', prompt: 'x', response: 'y' }] }, 'find', T, '🌱', { postMessage: (message) => posted.push(message.type) });
+  none.stepSearch(true);
+  assert.strictEqual(posted.length, 1, 'a name-only card opens and stays');
+  none.stepSearch(false);
+  assert.strictEqual(posted.length, 2, 'its next click moves on');
+  console.log('ok: search counts shown text and steps through hits');
+}
+
 // The advisor display shows the next listed family up from the model, None when nothing outranks
 // it or Use advisor is off, and agrees with the extension's advisorFor.
 {

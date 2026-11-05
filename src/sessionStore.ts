@@ -131,7 +131,8 @@ export class SessionStore {
     while (this.sessions.some((session) => session.name === `${base} (${version})`)) {
       version += 1;
     }
-    const copy = normalizeSession({ ...structuredClone(source), id: randomUUID(), name: `${base} (${version})`, updatedAt: Date.now() });
+    // A search can open a trashed session, and a fork of one is a live session of its own.
+    const copy = normalizeSession({ ...structuredClone(source), id: randomUUID(), name: `${base} (${version})`, trashed: false, updatedAt: Date.now() });
     this.sessions.unshift(copy);
     await this.save();
     return copy;

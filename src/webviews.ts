@@ -80,6 +80,8 @@ export function sidebarHtml(webview: vscode.Webview): string {
     .card .card-restore:hover { background: linear-gradient(var(--wash), var(--wash)), rgba(252,252,251,0.5); }
     .card:hover .card-restore { display: block; }
     .card-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
+    /* Every card whose name holds the search text at once, over the card's own yellow. */
+    .card-name.search-hit { background: #ffc9c9; }
     .card-rename { box-sizing: border-box; display: block; width: 100%; font: inherit; font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #9a9a93; border-radius: 6px; padding: 1px 4px; }
     .card-meta { display: block; color: var(--muted); font-size: 14px; margin-top: 3px; }
     .card-hits { display: block; color: #0b5ed7; font-size: 14px; margin-top: 3px; }
@@ -111,7 +113,7 @@ ${tooltipStyle()}  </style>
   </div>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-${tooltipScript()}
+${tooltipScript()}${shownTextScript()}
     let sessions = [];
     let selectedId = '';
     // Session id -> 'running' (only sent for a session with its pane closed) or 'background'.
@@ -138,10 +140,12 @@ ${tooltipScript()}
     const restoreButton = document.getElementById('restore');
     const sessionCounts = document.getElementById('sessionCounts');
     const searchBox = document.getElementById('searchBox');
-    // Search mode is on while this is non-empty. Enter in the box starts it; the X, an
-    // empty Enter, or any top button ends it. Card clicks leave it alone on purpose, so
-    // the opened editors can show their highlighted lines.
+    // Search mode, the third list beside the active and trash ones, is on while this is non-empty.
+    // Enter in the box starts it; the X, an empty Enter, a card's R, or any top button ends it. A
+    // card click steps through the hits instead, so it never ends it.
     let searchText = '';
+    // The cards on show in search mode, in order: where a pane out of hits moves on to.
+    let resultIds = [];
 
     document.getElementById('new').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'newSession' }); });
     document.getElementById('mngmnt').addEventListener('click', () => { clearSearch(); vscode.postMessage({ type: 'toggleManagement' }); });
@@ -193,16 +197,17 @@ ${tooltipScript()}
     document.getElementById('searchClear').addEventListener('click', () => {
       searchBox.value = '';
       if (searchText) setSearch('');
+      if (showTrash) setShowTrash(false);
     });
 
-    // The extension mirrors the search into every conversation pane, so it hears
-    // about every change here, including the empty text that ends search mode. A search
-    // of the trash list has no panes to tint: trashed sessions never have one.
+    // The extension mirrors the search into every conversation pane, so it hears about every
+    // change here, including the empty text that ends search mode. A search covers every session,
+    // so it replaces the trash list too, and lands on its first card.
     function setSearch(text) {
       searchText = text;
       searchBox.classList.toggle('searching', searchText !== '');
-      vscode.postMessage({ type: 'searchChanged', text: showTrash ? '' : searchText });
-      render();
+      if (searchText && showTrash) setShowTrash(false); else render();
+      vscode.postMessage({ type: 'searchChanged', text: searchText, sessionId: resultIds[0] || '' });
     }
 
     function clearSearch() {
@@ -216,6 +221,13 @@ ${tooltipScript()}
       // A new session lives on the active list, so opening one leaves the trash list.
       if (message.type === 'showActive') {
         if (showTrash) setShowTrash(false);
+        return;
+      }
+      // The pane has no hits left: on to the next card, round from the last to the first. A lone
+      // card comes back to itself, which is how a single session's hits wrap.
+      if (message.type === 'searchEnd') {
+        const next = resultIds[(resultIds.indexOf(message.sessionId) + 1) % resultIds.length];
+        if (next) vscode.postMessage({ type: 'searchStep', sessionId: next, first: true });
         return;
       }
       if (message.type === 'sessions') {
@@ -243,15 +255,15 @@ ${tooltipScript()}
       sessionCounts.textContent = (sessions.length - trashCount) + '/' + trashCount;
       let selectedCard = null;
       const counts = new Map();
-      // Search narrows whichever list is showing; a name-only match carries a zero count.
+      // Search takes in both lists; a name-only match carries a zero count.
       const visible = sessions.filter((session) => {
-        if ((session.trashed === true) !== showTrash) return false;
-        if (!searchText) return true;
+        if (!searchText) return (session.trashed === true) === showTrash;
         const count = matchCount(session);
-        if (!count && !(session.name || '').toLowerCase().includes(searchText.toLowerCase())) return false;
+        if (!count && !nameMatches(session)) return false;
         counts.set(session.id, count);
         return true;
       });
+      resultIds = searchText ? visible.map((session) => session.id) : [];
       // Only a trashed card on show can stay picked, so the delete button never reaches one out of sight.
       const pickable = showTrash ? visible.map((session) => session.id) : [];
       picked = new Set(pickable.filter((id) => picked.has(id)));
@@ -267,12 +279,13 @@ ${tooltipScript()}
         return;
       }
       visible.forEach((session) => {
-        const trashed = showTrash;
+        const trashed = session.trashed === true;
         const card = document.createElement('div');
         card.className = trashed ? 'card trashed' : 'card';
-        if (trashed ? picked.has(session.id) : session.id === selectedId) {
+        // The trash list picks cards; every other list has the one card whose pane is up.
+        if (showTrash ? picked.has(session.id) : session.id === selectedId) {
           card.classList.add('selected');
-          if (!trashed) selectedCard = card;
+          if (!showTrash) selectedCard = card;
         }
         card.setAttribute('role', 'button');
         card.tabIndex = 0;
@@ -284,7 +297,7 @@ ${tooltipScript()}
         card.dataset.tip = prompt.length > 800 ? prompt.slice(0, 800) + '…' : prompt;
         card.dataset.tipDelay = '1200';
         const name = document.createElement('span');
-        name.className = 'card-name';
+        name.className = searchText && nameMatches(session) ? 'card-name search-hit' : 'card-name';
         name.textContent = session.name || 'New session';
         const meta = document.createElement('span');
         meta.className = 'card-meta';
@@ -330,6 +343,7 @@ ${tooltipScript()}
           restore.addEventListener('click', (event) => {
             event.stopPropagation();
             vscode.postMessage({ type: 'restoreSession', sessionId: session.id });
+            clearSearch();
           });
           actions.appendChild(restore);
         }
@@ -377,9 +391,14 @@ ${tooltipScript()}
             event.preventDefault();
             return;
           }
-          if (trashed) {
+          if (showTrash) {
             pick(session.id, event, pickable);
             render();
+            return;
+          }
+          // The selected card moves on from its pane's current hit; any other card starts at its first.
+          if (searchText) {
+            vscode.postMessage({ type: 'searchStep', sessionId: session.id, first: session.id !== selectedId });
             return;
           }
           vscode.postMessage({ type: 'openSession', sessionId: session.id });
@@ -463,7 +482,11 @@ ${tooltipScript()}
       return new Date(ms).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
 
-    // Occurrences of the search text across the session's prompts and responses,
+    function nameMatches(session) {
+      return (session.name || '').toLowerCase().includes(searchText.toLowerCase());
+    }
+
+    // Occurrences of the search text across what the session's bars and boxes show,
     // case-insensitive. The name is deliberately not counted: a name-only match
     // shows the card with no tally.
     function matchCount(session) {
@@ -471,19 +494,7 @@ ${tooltipScript()}
       const turns = Array.isArray(session.turns) ? session.turns : [];
       let count = 0;
       for (const turn of turns) {
-        count += occurrences(turn.prompt, needle) + occurrences(turn.response, needle);
-      }
-      return count;
-    }
-
-    function occurrences(text, needle) {
-      if (!text || !needle) return 0;
-      const lower = String(text).toLowerCase();
-      let count = 0;
-      let index = lower.indexOf(needle);
-      while (index !== -1) {
-        count += 1;
-        index = lower.indexOf(needle, index + needle.length);
+        count += occurrences(typedText(turn), needle) + occurrences(shownText(turn), needle);
       }
       return count;
     }
@@ -512,10 +523,8 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   const maxTurns = JSON.stringify(defaults.maxTurns);
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
-  const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   const toolDetailMark = `'\\u${TOOL_DETAIL_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   const answerMark = `'\\u${ANSWER_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
-  const graftTallyMark = JSON.stringify(GRAFT_TALLY_MARK);
   return `<!doctype html>
 <html lang="en" style="--z: ${z}">
 <head>
@@ -593,6 +602,7 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
     .error-note { margin-top: 10px; background: #fdecec; border: 1px solid #f0bcbc; border-radius: 6px; padding: 8px 10px; color: #731b1b; }
     .response .search-line { background: #cfe8ff; }
     .prompt-bar.search-hit { background: #cfe8ff; border-color: #9cc4e8; }
+    ::highlight(search-selection) { background-color: #ffc9c9; }
     .run-arrow { font-weight: 700; margin-right: 6px; animation: run-blink 0.6s steps(1) infinite; }
     @keyframes run-blink { 50% { visibility: hidden; } }
     /* The fork mark leading every bar. A span, since a bar is a button and can't hold buttons. */
@@ -743,10 +753,9 @@ ${tooltipScript()}
     let contextWindows = ${contextWindows};
     const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
     const maxTurns = ${maxTurns};
-    const TOOL_LINE_MARK = ${toolLineMark};
     const TOOL_DETAIL_MARK = ${toolDetailMark};
     const ANSWER_MARK = ${answerMark};
-    const GRAFT_TALLY_MARK = ${graftTallyMark};
+${shownTextScript()}
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
     // Which plugins this workspace runs with and the numbers only the extension can read:
@@ -757,6 +766,13 @@ ${tooltipScript()}
     let statusAt = 0;
     // Sidebar search text; while non-empty, every line holding it gets a light-blue wash.
     let searchText = '';
+    // The selected search hit: { turnId, bar, nth }, the nth occurrence in that turn's bar or box.
+    // A bar holding it shows its whole prompt for as long as it does.
+    let searchHit = null;
+    // Set by a step until the hit has been scrolled to, so a later render leaves the box alone.
+    let searchHitMoved = false;
+    // The last step of the sidebar's taken from session state, which can repeat one.
+    let searchSeq = 0;
     let expandedPrompts = new Set();
     // Tool lines showing their detail, as turn id + ':' + the line's place among the box's tool calls.
     const openToolCalls = new Set();
@@ -819,8 +835,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     const promptBox = monaco.editor.create(promptHost.firstElementChild, {
       ...editorOptions,
       disableMonospaceOptimizations: true,
-      // What typing into a restored prompt says.
-      readOnlyMessage: { value: 'The last prompt, shown again. Ctrl-Enter clears the box.' },
     });
     const promptModel = promptBox.getModel();
     loadMarks.editor = Math.round(performance.now());
@@ -1049,6 +1063,10 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
           promptModel.setValue(draftSent);
         }
         if (typeof message.search === 'string') searchText = message.search;
+        if ((session.trashed === true) !== promptTrashed) {
+          promptTrashed = session.trashed === true;
+          lockPrompt();
+        }
         // The extension's copy of the scroll memory is the persistent one; it is taken once,
         // at load, so a position noted here is never clobbered by a state echo.
         if (!boxScrollsLoaded && message.boxScrolls && typeof message.boxScrolls === 'object') {
@@ -1068,7 +1086,13 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
           }
         }
         document.title = session.name || 'Claude2';
-        render();
+        const step = message.searchStep;
+        if (step && step.seq !== searchSeq) {
+          searchSeq = step.seq;
+          stepSearch(step.first);
+        } else {
+          render();
+        }
         if (!loadMarks.state) {
           loadMarks.state = Math.round(performance.now());
           const js = performance.getEntriesByType('resource').find((entry) => entry.name.includes('promptEditor.js'));
@@ -1090,6 +1114,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         applyTurnDelta(message);
       } else if (message.type === 'searchState') {
         searchText = typeof message.text === 'string' ? message.text : '';
+        searchHit = null;
         render();
       } else if (message.type === 'focusPrompt') {
         (promptMarkdown ? promptMd : promptBox).focus();
@@ -1101,7 +1126,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         stopButton.classList.remove('stopping');
       } else if (message.type === 'imagesState') {
         imageCount = typeof message.count === 'number' ? message.count : 0;
-        capButton.disabled = false;
+        capButton.disabled = promptTrashed;
         showImageChars();
         if (leaveAfterShot) {
           leaveAfterShot = false;
@@ -1214,8 +1239,8 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     // of one already in the list. Capture phase, so Monaco never sees the paste, and ahead of
     // addListKeys' handler for pasted text, which is on the editor inside this frame.
     promptHost.addEventListener('paste', (event) => {
-      // A restored prompt takes no paste, a picture included; Monaco's read-only drops the text.
-      if (promptRestored) return;
+      // A read-only box takes no paste, a picture included; Monaco's read-only drops the text.
+      if (promptRestored || promptTrashed) return;
       const items = event.clipboardData ? Array.from(event.clipboardData.items) : [];
       const item = items.find((entry) => entry.kind === 'file' && entry.type.startsWith('image/'));
       const file = item ? item.getAsFile() : null;
@@ -1541,9 +1566,22 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     // restoredTurn is the turn on show, whose own pictures lead the box meanwhile.
     let promptRestored = false;
     let restoredTurn = null;
+    // A trashed session's box is read-only until the session is restored: nothing is sent, typed
+    // or attached from a pane that only a search can open.
+    let promptTrashed = false;
+    const fileButton = document.getElementById('file');
+    function lockPrompt() {
+      promptBox.updateOptions({
+        readOnly: promptRestored || promptTrashed,
+        // What typing into the box says.
+        readOnlyMessage: { value: promptTrashed ? 'This session is in the trash. Restore it to send a prompt.' : 'The last prompt, shown again. Ctrl-Enter clears the box.' },
+      });
+      capButton.disabled = promptTrashed;
+      fileButton.disabled = promptTrashed;
+    }
     function setPromptRestored(on) {
       promptRestored = on;
-      promptBox.updateOptions({ readOnly: on });
+      lockPrompt();
       monaco.editor.setTheme(on ? 'claude2-restored' : 'claude2');
       promptHost.classList.toggle('restored', on);
       vscode.postMessage({ type: 'restoredPromptChanged', sessionId, on });
@@ -1572,15 +1610,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       return index >= 0 && index < count ? index : -1;
     }
 
-    // A stored prompt without the sentences the attached pictures added to it. Those sentences are
-    // how the CLI reads each picture, so they stay in what was sent; they are just not what the
-    // user typed, and a prompt bar shows the typing with 🖼️ chars in front of it.
-    function typedText(turn) {
-      return (turn.prompt || '')
-        .replace(/\\n\\n\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '')
-        .replace(/\\n\\n\\[<[^>\\n]*> is the file [^\\]]*\\]/g, '');
-    }
-
     // The turn a stop has been asked for, so the Stop button can show that the request is in
     // flight. Cleared by the first render where that turn is no longer the running one.
     let stoppingTurn = null;
@@ -1593,6 +1622,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     }
 
     function submitPrompt() {
+      if (promptTrashed) return;
       if (promptRestored) return leaveRestored();
       // The 🖼️ chars are this pane's way of showing the attached pictures, not part of the
       // prompt: the extension has the list, and appends a sentence per picture to the text.
@@ -1646,6 +1676,17 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         }
         appendResponse(box, parts.slice(1).join('\\n'), tools, calls);
       }
+    }
+
+    // The whole box: a run that failed part way still wrote everything up to that point, so the
+    // text stays and the reason goes underneath it rather than in its place.
+    function fillResponse(box, turn, tools) {
+      fillBox(box, turn.response || '', tools, turn.id);
+      if (!turn.error) return;
+      const note = document.createElement('div');
+      note.className = 'error-note';
+      note.textContent = turn.error;
+      box.appendChild(note);
     }
 
     // Adds response text to a box as markdown. With tools, each run of tool lines sits
@@ -1733,12 +1774,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       return searchText !== '' && (text || '').toLowerCase().includes(searchText.toLowerCase());
     }
 
-    // Tool lines carry an invisible marker from the runner. Bold alone is not the tell: the model
-    // opens its own prose with **bold** runs too, and those are answer text that must never hide.
-    function isToolLine(line) {
-      return line.startsWith(TOOL_LINE_MARK);
-    }
-
     // A line of the stored detail under a tool line, which carries the detail mark after the tool mark.
     function isDetailLine(line) {
       return line.startsWith(TOOL_LINE_MARK + TOOL_DETAIL_MARK);
@@ -1747,19 +1782,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     // A response without the stored tool-line details: what a box shows with every call closed.
     function withoutDetails(text) {
       return text.split('\\n').filter((line) => !isDetailLine(line)).join('\\n');
-    }
-
-    // What the markdown box renders: the response without its tool lines — no leading blanks,
-    // runs of blank lines collapsed to one so the paragraph breaks survive.
-    function strippedText(text) {
-      const kept = [];
-      for (const line of text.split('\\n')) {
-        if (isToolLine(line) || line.startsWith(GRAFT_TALLY_MARK)) continue;
-        if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) continue;
-        kept.push(line);
-      }
-      while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
-      return kept.join('\\n');
     }
 
     // The markdown renderer, deliberately small: the blocks Claude actually emits (headings,
@@ -2002,13 +2024,14 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
           wrapper.dataset.index = String(index);
           wrapper.dataset.turnId = turn.id;
           const bar = document.createElement('button');
-          bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) ? ' prompt-expanded' : '');
-          if (matchesSearch(turn.prompt) || matchesSearch(turn.response)) bar.classList.add('search-hit');
+          const barHit = searchHit && searchHit.bar && searchHit.turnId === turn.id;
+          bar.className = 'prompt-bar' + (expandedPrompts.has(turn.id) || barHit ? ' prompt-expanded' : '');
           // The hover leads with the model and effort this prompt actually ran under, which is not
           // necessarily what the dock is set to now.
           // modelId is what actually answered, which an alias like opus[1m] does not say.
           const ranAs = [turn.model && modelLabel(turn.model), turn.effort, turn.modelId].filter(Boolean).join(' / ');
           const typed = typedText(turn);
+          if (searchText && (matchesSearch(typed) || matchesSearch(shownText(turn)))) bar.classList.add('search-hit');
           // When it was sent rides at the right end of the model/effort line (tip-aside), or takes
           // that line itself when the turn predates recording what it ran as.
           const sent = turn.createdAt ? new Date(turn.createdAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -2090,15 +2113,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
             const tools = locked || (index === anchorIndex && toolsBox);
             const response = document.createElement('div');
             response.className = 'response markdown' + (turn.error ? ' error' : '');
-            // A run that failed part way still wrote everything up to that point, so the text stays
-            // and the reason goes underneath it rather than in its place.
-            fillBox(response, turn.response || '', tools, turn.id);
-            if (turn.error) {
-              const note = document.createElement('div');
-              note.className = 'error-note';
-              note.textContent = turn.error;
-              response.appendChild(note);
-            }
+            fillResponse(response, turn, tools);
             // The tool line a press landed on. The streaming box is rebuilt as text arrives, so by
             // the click that line can have been swapped for a fresh copy.
             let pressedCall = null;
@@ -2445,6 +2460,84 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         else if (boxScroll === 'top') response.scrollTop = 0;
         else response.scrollTop = boxScroll || 0;
       }
+      paintSearchHit();
+    }
+
+    // Where the text sits in an element, as a text node and an offset, leaving out what a bar or
+    // box only adds around it: a streaming box's tool groups and a bar's marks.
+    function textHits(root, needle) {
+      const spots = [];
+      if (!needle) return spots;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.parentElement.closest('.tool-group, .run-arrow, .img-char')) continue;
+        const lower = node.data.toLowerCase();
+        for (let at = lower.indexOf(needle); at !== -1; at = lower.indexOf(needle, at + needle.length)) spots.push({ node, offset: at });
+      }
+      return spots;
+    }
+
+    // Every hit in the session, top to bottom, a bar's ahead of its box's. A box holding the text
+    // is built offscreen to count them as rendered, since only the selected one is in the page.
+    function searchHits() {
+      const needle = searchText.toLowerCase();
+      const hits = [];
+      for (const turn of session.turns) {
+        const add = (bar, count) => {
+          for (let nth = 0; nth < count; nth++) hits.push({ turnId: turn.id, bar, nth });
+        };
+        add(true, occurrences(typedText(turn), needle));
+        if (!occurrences(shownText(turn), needle)) continue;
+        const box = document.createElement('div');
+        fillResponse(box, turn, false);
+        add(false, textHits(box, needle).length);
+      }
+      return hits;
+    }
+
+    // A step from the sidebar: first lands on this session's first hit, otherwise on the one after
+    // the selected hit. With none left the selection stays and the sidebar moves on. A hit in a
+    // box opens that block alone; a hit in a bar leaves every block closed.
+    function stepSearch(first) {
+      const hits = searchHits();
+      const hit = hits[first ? 0 : hits.findIndex((entry) => searchHit && entry.turnId === searchHit.turnId && entry.bar === searchHit.bar && entry.nth === searchHit.nth) + 1];
+      if (!hit && !first) vscode.postMessage({ type: 'searchEnd', sessionId });
+      if (hit || first) searchHit = hit || null;
+      if (hit) {
+        anchorIndex = session.turns.findIndex((turn) => turn.id === hit.turnId);
+        boxOpen = !hit.bar;
+        toolsBox = false;
+        boxScrollNext = 'restore';
+        searchHitMoved = true;
+        // A step is navigation, and it outranks what a first render or a live run would select.
+        frozenPane = false;
+        allOpen = false;
+        initializedSelection = true;
+        pendingTurnCount = 0;
+        if (status && status.active) shownActiveTurn = status.turnId;
+      }
+      render();
+    }
+
+    // A CSS highlight, so the hit needs no element of its own in the bar or the rendered markdown.
+    // A rebuild takes its range along, so this runs at the end of every sync.
+    function paintSearchHit() {
+      const block = searchHit ? historyBox.querySelector('[data-turn-id="' + searchHit.turnId + '"]') : null;
+      const host = block ? block.querySelector(searchHit.bar ? '.prompt-bar' : '.response') : null;
+      const spot = host ? textHits(host, searchText.toLowerCase())[searchHit.nth] : null;
+      if (!spot) {
+        CSS.highlights.delete('search-selection');
+        return;
+      }
+      const range = new Range();
+      range.setStart(spot.node, spot.offset);
+      range.setEnd(spot.node, spot.offset + searchText.length);
+      CSS.highlights.set('search-selection', new Highlight(range));
+      if (!searchHitMoved) return;
+      searchHitMoved = false;
+      // Centred in a box or bar clamped to scroll; one showing in full ignores this.
+      host.scrollTop += range.getBoundingClientRect().top - host.getBoundingClientRect().top - host.clientHeight / 2;
     }
 
     loadMarks.ready = Math.round(performance.now());
@@ -4270,6 +4363,62 @@ function zoomScript(initial: number): string {
     });
 
     applyZoom(zoom);
+`;
+}
+
+// The text a search goes through, shared by the sidebar, which lists the sessions holding it, and
+// the conversation pane, which steps through it: what a bar shows and what a box shows by default.
+function shownTextScript(): string {
+  // Emitted as an escape, not the raw character, like the conversation pane's other marks.
+  const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
+  return `
+    const TOOL_LINE_MARK = ${toolLineMark};
+    const GRAFT_TALLY_MARK = ${JSON.stringify(GRAFT_TALLY_MARK)};
+
+    // A stored prompt without the sentences the attached pictures added to it. Those sentences are
+    // how the CLI reads each picture, so they stay in what was sent; they are just not what the
+    // user typed, and a prompt bar shows the typing with 🖼️ chars in front of it.
+    function typedText(turn) {
+      return (turn.prompt || '')
+        .replace(/\\n\\n\\[(?:A screenshot of the user's desktop|An image) is attached\\. Read the image file [^\\]]* to view it\\.\\]/g, '')
+        .replace(/\\n\\n\\[<[^>\\n]*> is the file [^\\]]*\\]/g, '');
+    }
+
+    // Tool lines carry an invisible marker from the runner. Bold alone is not the tell: the model
+    // opens its own prose with **bold** runs too, and those are answer text that must never hide.
+    function isToolLine(line) {
+      return line.startsWith(TOOL_LINE_MARK);
+    }
+
+    // What the markdown box renders: the response without its tool lines — no leading blanks,
+    // runs of blank lines collapsed to one so the paragraph breaks survive.
+    function strippedText(text) {
+      const kept = [];
+      for (const line of text.split('\\n')) {
+        if (isToolLine(line) || line.startsWith(GRAFT_TALLY_MARK)) continue;
+        if (!line.trim() && (!kept.length || !kept[kept.length - 1].trim())) continue;
+        kept.push(line);
+      }
+      while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+      return kept.join('\\n');
+    }
+
+    // Everything a closed-tools box shows, a failed turn's reason included.
+    function shownText(turn) {
+      return strippedText(turn.response || '') + '\\n' + (turn.error || '');
+    }
+
+    function occurrences(text, needle) {
+      if (!text || !needle) return 0;
+      const lower = String(text).toLowerCase();
+      let count = 0;
+      let index = lower.indexOf(needle);
+      while (index !== -1) {
+        count += 1;
+        index = lower.indexOf(needle, index + needle.length);
+      }
+      return count;
+    }
 `;
 }
 

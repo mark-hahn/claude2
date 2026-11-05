@@ -115,6 +115,12 @@ class Claude2Controller implements vscode.Disposable {
   private lastConversationId = "";
   // Sidebar search text; non-empty means search mode, and every conversation pane tints matching lines.
   private searchText = "";
+  // The latest card step, for its session's pane. seq tells a new step from a state echo.
+  private searchStep: { sessionId: string; first: boolean; seq: number } | null = null;
+  private searchSeq = 0;
+  // Sessions whose tab only search opened: each closes when the selection moves on or search ends,
+  // unless a prompt or a restore has kept it. Every open tab of a trashed session is in here.
+  private readonly searchTabs = new Set<string>();
   // The Login button drives one "claude auth login" at a time.
   private loginInFlight = false;
   // Set when a turn died on expired OAuth; the sidebar shows a red Re-Auth button until a
@@ -304,6 +310,8 @@ class Claude2Controller implements vscode.Disposable {
     const record = recordOf(message);
     const type = stringOf(record?.type);
     if (type === "ready") {
+      // A sidebar hidden and shown again is a new page that lost its search, so the panes drop it too.
+      await this.setSearch("", "");
       this.refreshSidebar();
       return;
     }
@@ -362,7 +370,10 @@ class Claude2Controller implements vscode.Disposable {
       const ids = Array.isArray(record?.sessionIds) ? record.sessionIds.map(stringOf).filter((id) => id !== "") : [];
       await this.deleteTrashedSessions(ids, ids.length === 1 ? `Permanently delete "${this.store.get(ids[0])?.name || "this session"}"?` : `Permanently delete the ${ids.length} selected sessions?`);
     } else if (type === "restoreSession") {
-      await this.store.setTrashed(stringOf(record?.sessionId), false);
+      // Ahead of the end of search that comes with a card's R: a restored session keeps its tab.
+      this.searchTabs.delete(requestedSessionId);
+      await this.store.setTrashed(requestedSessionId, false);
+      this.postConversationState(requestedSessionId);
       this.refreshSidebar();
     } else if (type === "restoreSessions") {
       // Oldest first, so the bumped timestamps keep the picked cards in their existing order.
@@ -377,7 +388,9 @@ class Claude2Controller implements vscode.Disposable {
       await this.store.touch(requestedSessionId);
       this.refreshSidebar();
     } else if (type === "searchChanged") {
-      this.setSearch(stringOf(record?.text));
+      await this.setSearch(stringOf(record?.text), requestedSessionId);
+    } else if (type === "searchStep") {
+      await this.stepSearch(requestedSessionId, record?.first === true);
     } else if (type === "login") {
       await this.loginToAnthropic();
     } else if (type === "toggleManagement") {
@@ -602,8 +615,8 @@ class Claude2Controller implements vscode.Disposable {
       return;
     }
     const session = this.store.get(sessionId);
-    // A trashed session has no pane until it is restored.
-    if (!session || session.trashed) {
+    // A trashed session has no pane until it is restored, except as a search result.
+    if (!session || (session.trashed && !this.searchText)) {
       return;
     }
     let panel = this.conversationPanels.get(sessionId);
@@ -648,6 +661,7 @@ class Claude2Controller implements vscode.Disposable {
       // The box that held the text is gone; what it last sent goes to disk now.
       void this.flushDrafts();
       this.conversationPanels.delete(sessionId);
+      this.searchTabs.delete(sessionId);
       if (this.lastConversationId === sessionId) {
         this.lastConversationId = "";
       }
@@ -779,6 +793,8 @@ class Claude2Controller implements vscode.Disposable {
       this.postAllConversationStates();
     } else if (type === "copyText") {
       await this.copyToClipboard(stringOf(record?.text));
+    } else if (type === "searchEnd") {
+      this.sidebarProvider?.searchEnd(sessionId);
     } else if (type === "forkTurn") {
       await this.forkTurn(sessionId, stringOf(record?.turnId));
     } else if (type === "exportSession") {
@@ -1364,11 +1380,15 @@ class Claude2Controller implements vscode.Disposable {
       }
     };
     // The box emptied the moment Send was pressed, so every way out of this method short of
-    // running the prompt has to hand the text back as a draft.
-    if (!this.store.get(sessionId)) {
+    // running the prompt has to hand the text back as a draft. A trashed session takes no prompts:
+    // its box is read-only, and this also stops the context gauge's /compact.
+    const target = this.store.get(sessionId);
+    if (!target || target.trashed) {
       putBack();
       return;
     }
+    // A tab in use is no longer just a search result.
+    this.searchTabs.delete(sessionId);
     // The saved draft goes now, not when the turn starts: stopping a run below makes that run
     // repost session state, and a draft still stored at that moment would be offered back to the box.
     if (!keepDraft && this.drafts.delete(sessionId)) {
@@ -2290,13 +2310,31 @@ class Claude2Controller implements vscode.Disposable {
     }
   }
 
-  private setSearch(text: string): void {
-    if (text === this.searchText) {
-      return;
+  // sessionId is the first result, empty when there is none or the search has ended.
+  private async setSearch(text: string, sessionId: string): Promise<void> {
+    if (text !== this.searchText) {
+      this.searchText = text;
+      for (const panel of this.conversationPanels.values()) {
+        void panel.webview.postMessage({ type: "searchState", text });
+      }
     }
-    this.searchText = text;
-    for (const panel of this.conversationPanels.values()) {
-      void panel.webview.postMessage({ type: "searchState", text });
+    await this.stepSearch(sessionId, true);
+  }
+
+  // Selects a result: `first` lands on the session's first hit, otherwise its pane moves on to the
+  // next one or, with none left, posts searchEnd. The pane reads the step from its session state,
+  // which `conversationReady` replays, so a tab still loading gets it too. No session means no
+  // result is selected. A tab opened here is only a result: it goes when the selection moves on.
+  private async stepSearch(sessionId: string, first: boolean): Promise<void> {
+    this.searchStep = sessionId ? { sessionId, first, seq: ++this.searchSeq } : null;
+    if (sessionId && !this.conversationPanels.has(sessionId)) {
+      this.searchTabs.add(sessionId);
+    }
+    await this.openConversation(sessionId);
+    for (const id of this.searchTabs) {
+      if (id !== sessionId) {
+        this.conversationPanels.get(id)?.dispose();
+      }
     }
   }
 
@@ -2316,7 +2354,7 @@ class Claude2Controller implements vscode.Disposable {
     // The numbers only this side can read: graft's savings for the session and the workspace's
     // ceiling count.
     const footer = { graftSavedUsd: this.stats.graftSavedUsd(sessionId), ceilings: this.ceilings, quotaAlert: this.quota.alerting() };
-    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
+    void panel.webview.postMessage({ type: "sessionState", session, status: this.runner.status(sessionId), draft: this.drafts.get(sessionId) ?? "", search: this.searchText, searchStep: this.searchStep?.sessionId === sessionId ? this.searchStep : null, boxScrolls: this.boxScrolls.get(sessionId) ?? {}, footer });
     this.refreshSidebar();
   }
 
@@ -2442,6 +2480,10 @@ class ClaudeSidebarProvider implements vscode.WebviewViewProvider {
 
   public showActive(): void {
     void this.view?.webview.postMessage({ type: "showActive" });
+  }
+
+  public searchEnd(sessionId: string): void {
+    void this.view?.webview.postMessage({ type: "searchEnd", sessionId });
   }
 
   public refresh(): void {

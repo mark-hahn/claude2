@@ -71,6 +71,14 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - **The footer's context gauge.** It shows the latest stream event's usage (input + cache read
   + cache write + output) against `compactAtOf(window)` = window − 33k, where the CLI
   auto-compacts.
+- **A search.** Sidebar Enter → `searchChanged` with the first result → `setSearch` mirrors the text
+  to every pane and `stepSearch` opens that card. Search covers both lists and looks only at what a
+  bar and a default box show (`shownTextScript`, shared by both webviews). A card click posts
+  `searchStep`; the step travels in `sessionState` (`seq` tells it from an echo), so a tab still
+  loading gets it through `conversationReady`. The pane walks its hits (`stepSearch` in the webview)
+  and paints the current one with the CSS highlight API. Out of hits, it posts `searchEnd` and the
+  sidebar picks the next card, or the same card to wrap. Tabs search opened (`searchTabs`) close
+  when the selection moves on or search ends, unless a prompt or a restore kept them.
 - **Shared state across machines.** Settings, plugin stats, the quota-poll lease, and
   per-model hours all go through claude2-stats, plain HTTP on the LAN. A server that is down
   falls back to local copies; it never throws.
@@ -109,6 +117,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - After a reload VS Code revives a background session tab (the serializer) only when it is
   first shown, so `conversationPanels` misses those tabs until then. Anything that must see
   every session tab (the sidebar's Close) goes through `conversationTabs()`, VS Code's tab list.
+- A trashed session has a pane only as a search result, always a `searchTabs` tab, and its prompt
+  box, Cap and File are off until it is restored. `submitPrompt` refuses it too, for the context
+  gauge's `/compact`. Anything new that sends from a pane has to respect `session.trashed`.
 - `--max-turns` is counted by the CLI (`num_turns`), not by `message_start` events.
 - WSL runs in NAT mode: Windows services aren't reachable at `localhost`, and F5 debugging never
   attaches (the launch config is `noDebug`; Ctrl+F5 works).
