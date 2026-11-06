@@ -4134,8 +4134,9 @@ function monacoScript(dist: string): string {
     };
     // A dot in the gutter on the first row of each real line, so a wrapped line reads as one.
     // Clicking a dot selects that line with its line break, like a line number in VS Code, and
-    // dragging from it selects every line passed over. Monaco leaves gutter clicks alone and keeps
-    // focus where it was, so the editor takes it here.
+    // dragging from it selects every line passed over. Shift-click extends from the line the dots
+    // last started on, or from the selection's fixed end if something else has moved it since.
+    // Monaco leaves gutter clicks alone and keeps focus where it was, so the editor takes it here.
     function addLineDots(editor) {
       const model = editor.getModel();
       const dots = editor.createDecorationsCollection();
@@ -4145,9 +4146,12 @@ function monacoScript(dist: string): string {
       })));
       model.onDidChangeContent(show);
       show();
+      let anchor = 0, anchored = null;
       const selectLines = (from, to) => {
         const top = Math.min(from, to), bottom = Math.max(from, to);
         editor.setSelection(bottom < model.getLineCount() ? new monaco.Range(top, 1, bottom + 1, 1) : new monaco.Range(top, 1, bottom, model.getLineMaxColumn(bottom)));
+        anchor = from;
+        anchored = editor.getSelection();
       };
       // The line the drag started on and the pointer's height, while the button is down. Past the
       // box's top or bottom edge it scrolls, faster the further out the pointer is, and the line
@@ -4165,9 +4169,10 @@ function monacoScript(dist: string): string {
       };
       editor.onMouseDown((event) => {
         if (!event.target.element || !event.target.element.closest('.line-dot')) return;
-        dragFrom = event.target.position.lineNumber;
+        const line = event.target.position.lineNumber, selection = editor.getSelection();
+        dragFrom = !event.event.shiftKey ? line : anchored && selection.equalsSelection(anchored) ? anchor : selection.selectionStartLineNumber;
         dragY = event.event.browserEvent.clientY;
-        selectLines(dragFrom, dragFrom);
+        selectLines(dragFrom, line);
         editor.focus();
         requestAnimationFrame(drag);
       });
