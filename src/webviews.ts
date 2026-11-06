@@ -4279,9 +4279,11 @@ function monacoScript(dist: string): string {
       editor.revealPosition(editor.getPosition());
     }
     // What Enter starts the new line with, given the line it leaves and the text it takes along:
-    // that line's margin and a dash, unless that text is already an item or a heading.
+    // that line's margin, and a dash if that line is an item or a heading, unless the text is
+    // already one itself.
     function enterStart(line, rest) {
-      return line.match(/^ */)[0] + (/^(-( |$)|#+ )/.test(rest) ? '' : '- ');
+      const dash = /^ *(- |#+ )/.test(line) && !/^(-( |$)|#+ )/.test(rest);
+      return line.match(/^ */)[0] + (dash ? '- ' : '');
     }
     // Backspace right after a line's "- " takes both chars, for the odd line that isn't a list item:
     // the inverse of Tab on a blank line. False, leaving the key to Monaco, unless every caret is there.

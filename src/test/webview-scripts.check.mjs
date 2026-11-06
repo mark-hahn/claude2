@@ -89,8 +89,12 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   assert.ok(source, 'snips pane lost enterStart');
   const enterStart = new Function(source[0] + '\nreturn enterStart;')();
   assert.strictEqual(enterStart('- text', ''), '- ', 'next item');
-  assert.strictEqual(enterStart('plain', ''), '- ', 'any line starts an item');
-  assert.strictEqual(enterStart('', ''), '- ', 'so does an empty one');
+  assert.strictEqual(enterStart('plain', ''), '', 'a line that is no item gets no dash');
+  assert.strictEqual(enterStart('', ''), '', 'nor does an empty one');
+  assert.strictEqual(enterStart('  plain', ''), '  ', 'it just keeps its margin');
+  assert.strictEqual(enterStart('-text', ''), '', 'a dash needs its space');
+  assert.strictEqual(enterStart('plain', 'tail'), '', 'nor when it is split');
+  assert.strictEqual(enterStart('  plain', 'tail'), '  ', 'keeping its margin there too');
   assert.strictEqual(enterStart('    - text', ''), '    - ', 'dashes line up');
   assert.strictEqual(enterStart('  - text', 'tail'), '  - ', 'text taken along gets the dash');
   assert.strictEqual(enterStart('  - text', '- text'), '  ', 'text that has a dash keeps just that one');
@@ -98,7 +102,7 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   assert.strictEqual(enterStart('  # heading', ''), '  - ', 'under its own margin');
   assert.strictEqual(enterStart('## heading', 'tail'), '- ', 'and when it is split');
   assert.strictEqual(enterStart('## heading', '## heading'), '', 'a heading pushed down stays one');
-  assert.strictEqual(enterStart('#tag', '#tag'), '- ', 'text with a hash but no heading space gets the dash');
+  assert.strictEqual(enterStart('#tag', ''), '', 'a hash with no heading space is no heading');
   console.log('ok: enter starts list items');
 }
 
