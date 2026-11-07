@@ -126,15 +126,15 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   console.log('ok: hash makes headings');
 }
 
-// The export has to drop tool lines and the graft tally the way the box does, and keep the
-// answer rule only where the box would draw it.
+// The export has to drop tool lines, the graft tally and the work above the answer the way a
+// box with tools hidden does.
 {
   const lift = (name) => {
     const source = pages.conversation.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n {4}\\}'));
     assert.ok(source, 'conversation pane lost ' + name);
     return source[0];
   };
-  const body = ['exportMarkdown', 'typedText', 'strippedText', 'isToolLine'].map(lift).join('\n');
+  const body = ['exportMarkdown', 'typedText', 'strippedText', 'answerText', 'isToolLine'].map(lift).join('\n');
   const T = '⁣';
   const A = '⁤';
   const session = { name: 'Demo', turns: [
@@ -143,7 +143,7 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
   ] };
   const exportMarkdown = new Function('session', 'IMG', 'ANSWER_MARK', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK', body + '\nreturn exportMarkdown;')(session, '🖼️', A, T, '🌱');
   assert.strictEqual(exportMarkdown(),
-    '# Demo\n\n> first\n> second\n\nwork\n\nmore\n\n***\n\nthe answer\n\n---\n\n> 🖼️only tools\n\ndone\n\n**Error:** boom\n');
+    '# Demo\n\n> first\n> second\n\nthe answer\n\n---\n\n> 🖼️only tools\n\ndone\n\n**Error:** boom\n');
   console.log('ok: session export matches the open boxes');
 }
 
@@ -155,24 +155,26 @@ assert.ok(pages.cap.includes('loadCapture'), 'image pane lost its loader');
     assert.ok(source, 'pane lost ' + name);
     return source[0];
   };
-  const shared = ['typedText', 'isToolLine', 'strippedText', 'shownText', 'occurrences'];
+  const shared = ['typedText', 'isToolLine', 'strippedText', 'answerText', 'shownText', 'occurrences'];
   const T = '\u2063';
+  const A = '\u2064';
   const D = T + '\u2062';
   const turns = [
     { id: 'a', prompt: 'find me twice, find\n\n[An image is attached. Read the image file find.png to view it.]', response: 'nothing here' },
     { id: 'b', prompt: 'other', response: T + '**Read** find.ts\n' + D + 'find\nthe find\n🌱 find saved' },
     { id: 'c', prompt: 'other', response: 'plain', error: 'could not find it' },
+    { id: 'd', prompt: 'other', response: 'find in the work\n' + A + '\nthe answer' },
   ];
 
-  const matchCount = new Function('searchText', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK',
-    [...shared, 'matchCount'].map((name) => lift(pages.sidebar, name)).join('\n') + '\nreturn matchCount;')('FIND', T, '🌱');
-  assert.strictEqual(matchCount({ turns }), 4, 'prompt typing, box text, and a failure; no tool line, detail, tally, or picture sentence');
+  const matchCount = new Function('searchText', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK', 'ANSWER_MARK',
+    [...shared, 'matchCount'].map((name) => lift(pages.sidebar, name)).join('\n') + '\nreturn matchCount;')('FIND', T, '🌱', A);
+  assert.strictEqual(matchCount({ turns }), 4, 'prompt typing, box text, and a failure; no tool line, detail, tally, picture sentence, or work above the answer');
 
   const body = [...shared, 'searchHits', 'stepSearch'].map((name) => lift(pages.conversation, name)).join('\n');
   const fake = new Function('session', 'searchText', 'TOOL_LINE_MARK', 'GRAFT_TALLY_MARK', 'vscode', `
     let searchHit = null, searchHitMoved = false, anchorIndex = 0, boxOpen = true, toolsBox = true, boxScrollNext = null;
     let frozenPane = false, allOpen = false, initializedSelection = false, pendingTurnCount = 0, shownActiveTurn = null;
-    const status = null, sessionId = 's', render = () => {};
+    const status = null, sessionId = 's', render = () => {}, ANSWER_MARK = '${A}';
     const document = { createElement: () => ({}) };
     const fillResponse = (box, turn) => { box.text = shownText(turn); };
     const textHits = (box, needle) => Array(occurrences(box.text, needle));

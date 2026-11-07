@@ -95,6 +95,10 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   strings `\'` comes out as a bare `'` and breaks the script: use `’` or `\\'`. `${` interpolates.
 - claude2 sends prompts as a list of text blocks (`userMessage`), so transcript prompts are
   arrays, not strings. A real prompt is a top-level user entry with `promptSource`.
+- A box has two views, and ctrl-click swaps them. Tools hidden (the default) shows only what
+  follows `ANSWER_MARK` (`answerText`, shared with search, alt-click copy and export); tools
+  shown adds the work and tool lines, with the separator above the answer. The mark is written
+  at run end (`markAnswer`), so a streaming, stopped or failed response has none and shows whole.
 - A tool line in a response is a `TOOL_LINE_MARK` line. Its detail follows on lines that also
   carry `TOOL_DETAIL_MARK` (`toolDetail`: the long form, plus Edit's old/new and Write's content,
   each text capped at 4k chars); with Long tool display on, only Skill and advisor lines get one.

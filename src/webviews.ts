@@ -524,7 +524,6 @@ export function conversationHtml(webview: vscode.Webview, dist: string, sessionI
   // Emitted as an escape, not the raw character: the mark is invisible, and a literal one in the
   // generated script would be an unreadable blank in any view of this page's source.
   const toolDetailMark = `'\\u${TOOL_DETAIL_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
-  const answerMark = `'\\u${ANSWER_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   return `<!doctype html>
 <html lang="en" style="--z: ${z}">
 <head>
@@ -754,7 +753,6 @@ ${tooltipScript()}
     const compactAtOf = (window) => Math.max(1000, window - ${compactReserve});
     const maxTurns = ${maxTurns};
     const TOOL_DETAIL_MARK = ${toolDetailMark};
-    const ANSWER_MARK = ${answerMark};
 ${shownTextScript()}
     let session = { id: sessionId, name: 'New session', turns: [] };
     let status = null;
@@ -796,12 +794,11 @@ ${shownTextScript()}
     // (below) is the exception.
     let boxOpen = true;
     // Where the box contents land on the next render: 'bottom' after an open, 'top' after
-    // hiding tool groups, 'answer' when a run ends, null to keep the current position.
+    // hiding tool groups or when a run ends, null to keep the current position.
     let boxScrollNext = null;
     let initializedSelection = false;
     let pendingTurnCount = 0;
     let programmaticScroll = false;
-    let resizeTimer = 0;
     // frozenPane: a wheel over the pane (not over a scrolling box) suspends every auto-scrolling
     // rule so the pane scrolls freely and keeps its position through renders. Presses, footer
     // actions and losing focus leave it alone; only navigation thaws it: Enter, ctrl-up/down,
@@ -1377,12 +1374,10 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       historyBox.scrollTop += up ? -40 : 40;
     }
     const dockControls = document.querySelector('.dock-controls');
-    // The open box's clamp is sized from the pane height, so a pane resize has to
-    // re-derive it or the old clamp sticks.
-    window.addEventListener('resize', () => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(resyncSelectedBlock, 80);
-    });
+    // The open box's clamp is sized from the pane height, so any pane resize (the window, the
+    // prompt box growing, the big prompt layout) has to re-derive it, or the old clamp sticks and
+    // the box's bottom runs under the dock. An observer runs before paint, so this never flickers.
+    new ResizeObserver(resyncSelectedBlock).observe(historyBox);
 
     // Re-applies the rules to the selected block, keeping its box where it currently sits.
     function resyncSelectedBlock() {
@@ -1509,8 +1504,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     }
 
     // bigPromptEditor: the prompt box takes the window's full height and the pane narrows to the
-    // column above the controls. The pane changed size without a window resize, so the open
-    // box's clamp is redone here.
+    // column above the controls.
     // The session keeps the flag, so a reload comes back in the same layout.
     let bigPromptEditor = false;
     let bigPromptLoaded = false;
@@ -1519,7 +1513,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       bigPromptEditor = on;
       setPromptMarkdown(false);
       document.querySelector('.shell').classList.toggle('big-prompt-editor', on);
-      resyncSelectedBlock();
       vscode.postMessage({ type: 'bigPromptChanged', sessionId, on });
     }
 
@@ -1659,22 +1652,23 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       showImageChars();
     }
 
-    // Fills a box with the response. Where the run marked the start of its closing answer, the
-    // answer sits under a rule of its own.
+    // Fills a box with the response. With tools hidden that is the closing answer alone. With
+    // them shown, where the run marked the start of its answer, it sits under a rule of its own.
     function fillBox(box, text, tools, turnId) {
       box.replaceChildren();
+      if (!tools) {
+        box.insertAdjacentHTML('beforeend', renderMarkdown(answerText(text)));
+        return;
+      }
       const parts = text.split('\\n' + ANSWER_MARK + '\\n');
       // Tool calls are numbered across both parts, so each keeps one key in openToolCalls.
       const calls = { turnId, count: 0 };
-      appendResponse(box, parts[0], tools, calls);
+      appendResponse(box, parts[0], calls);
       if (parts.length > 1) {
-        // With tools hidden, a run whose work was all tool calls leaves nothing above the rule.
-        if (box.textContent.trim()) {
-          const rule = document.createElement('hr');
-          rule.className = 'answer-rule';
-          box.appendChild(rule);
-        }
-        appendResponse(box, parts.slice(1).join('\\n'), tools, calls);
+        const rule = document.createElement('hr');
+        rule.className = 'answer-rule';
+        box.appendChild(rule);
+        appendResponse(box, parts.slice(1).join('\\n'), calls);
       }
     }
 
@@ -1689,14 +1683,10 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
       box.appendChild(note);
     }
 
-    // Adds response text to a box as markdown. With tools, each run of tool lines sits
-    // between the prose around it as a monospace group; tool lines are plain text except
-    // for a leading **bold** tool name. Blank lines do not end a group.
-    function appendResponse(box, text, tools, calls) {
-      if (!tools) {
-        box.insertAdjacentHTML('beforeend', renderMarkdown(strippedText(text)));
-        return;
-      }
+    // Adds response text to a box as markdown, each run of tool lines sitting between the prose
+    // around it as a monospace group; tool lines are plain text except for a leading **bold**
+    // tool name. Blank lines do not end a group.
+    function appendResponse(box, text, calls) {
       let prose = [];
       let group = null;
       // The tool call whose detail lines, if it has any, come next.
@@ -1926,19 +1916,14 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
     }
 
     // The session as the pane shows it with every box open and tool groups hidden: each prompt
-    // as a quote, then its box the way fillBox splits it, answer rule included. Blocks are
-    // separated by a rule of their own.
+    // as a quote, then the answer. Blocks are separated by a rule of their own.
     function exportMarkdown() {
       const turns = Array.isArray(session.turns) ? session.turns : [];
       const blocks = turns.map((turn) => {
         const images = Array.isArray(turn.images) ? turn.images : [];
         const prompt = IMG.repeat(images.length) + (typedText(turn) || (images.length ? '' : '(empty prompt)'));
         const out = [prompt.split('\\n').map((line) => '> ' + line).join('\\n')];
-        const [head, ...rest] = (turn.response || '').split('\\n' + ANSWER_MARK + '\\n');
-        const work = strippedText(head);
-        const answer = rest.length ? strippedText(rest.join('\\n')) : '';
-        if (work) out.push(work);
-        if (work && answer) out.push('***');
+        const answer = answerText(turn.response || '');
         if (answer) out.push(answer);
         if (turn.error) out.push('**Error:** ' + turn.error);
         return out.join('\\n\\n');
@@ -1995,8 +1980,9 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         // A finished run's box drops its tool groups, the same as a fresh open.
         const ended = turns[anchorIndex] && turns[anchorIndex].id === streamingTurn ? turns[anchorIndex] : null;
         if (ended) toolsBox = false;
-        // A run that answered (not stopped, not failed) lands its open box on the answer.
-        if (ended && boxOpen && !allOpen && ended.finished && !ended.stopped && !ended.error) boxScrollNext = 'answer';
+        // A run that answered (not stopped, not failed) lands its open box on the answer, which is
+        // now all the box holds.
+        if (ended && boxOpen && !allOpen && ended.finished && !ended.stopped && !ended.error) boxScrollNext = 'top';
       }
       streamingTurn = active ? status.turnId : null;
       const openTurn = boxOpen && turns[anchorIndex] ? turns[anchorIndex].id : null;
@@ -2124,7 +2110,7 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
               if (event.altKey) {
                 // The whole box, as shown: a failed turn keeps its partial text and gains the reason.
                 const body = turn.error ? (turn.response || '') + ((turn.response || '') ? '\\n\\n' : '') + turn.error : (turn.response || '');
-                vscode.postMessage({ type: 'copyText', sessionId, text: tools ? withoutDetails(body) : strippedText(body) });
+                vscode.postMessage({ type: 'copyText', sessionId, text: tools ? withoutDetails(body) : answerText(body) });
                 response.animate([{ backgroundColor: '#ffc9c9' }, { backgroundColor: '#ffc9c9' }], 200);
                 return;
               }
@@ -2450,12 +2436,6 @@ ${monacoScript(dist)}    // promptRestored's: the same, on the prompt bar's yell
         }
       }
       if (response) {
-        // 'answer' puts the answer rule at the top of the box; with no rule the whole box is
-        // the answer, so that is its top.
-        if (boxScroll === 'answer') {
-          const rule = response.querySelector('.answer-rule');
-          boxScroll = rule ? response.scrollTop + rule.getBoundingClientRect().top - response.getBoundingClientRect().top - response.clientTop : 'top';
-        }
         if (boxScroll === 'bottom') response.scrollTop = response.scrollHeight;
         else if (boxScroll === 'top') response.scrollTop = 0;
         else response.scrollTop = boxScroll || 0;
@@ -4378,8 +4358,10 @@ function zoomScript(initial: number): string {
 function shownTextScript(): string {
   // Emitted as an escape, not the raw character, like the conversation pane's other marks.
   const toolLineMark = `'\\u${TOOL_LINE_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
+  const answerMark = `'\\u${ANSWER_MARK.codePointAt(0)?.toString(16).padStart(4, "0")}'`;
   return `
     const TOOL_LINE_MARK = ${toolLineMark};
+    const ANSWER_MARK = ${answerMark};
     const GRAFT_TALLY_MARK = ${JSON.stringify(GRAFT_TALLY_MARK)};
 
     // A stored prompt without the sentences the attached pictures added to it. Those sentences are
@@ -4410,9 +4392,15 @@ function shownTextScript(): string {
       return kept.join('\\n');
     }
 
+    // What a closed-tools box renders: the closing answer, the work above its mark hiding with
+    // the tool lines. A run that never marked one (stopped, failed) keeps all its text.
+    function answerText(text) {
+      return strippedText(text.split('\\n' + ANSWER_MARK + '\\n').pop());
+    }
+
     // Everything a closed-tools box shows, a failed turn's reason included.
     function shownText(turn) {
-      return strippedText(turn.response || '') + '\\n' + (turn.error || '');
+      return answerText(turn.response || '') + '\\n' + (turn.error || '');
     }
 
     function occurrences(text, needle) {
