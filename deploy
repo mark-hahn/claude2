@@ -57,3 +57,4 @@ scp -q claude2-stats/server.js claude2-stats/test.js "$REMOTE:/root/dev/apps/cla
 ssh "$REMOTE" "pm2 restart claude2-stats >/dev/null && cd /root/dev/apps/claude2-stats && node test.js"
 
 echo "== done: reload VS Code windows to pick up $VSIX =="
+touch .deployed # claude3's page warns before a prompt when files are newer than this

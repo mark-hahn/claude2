@@ -9,3 +9,6 @@ out/
 
 # deploy's version counter (see deploy) — keeps package.json out of git status.
 .deploy-version
+
+# stamped by ./deploy; claude3 warns before a prompt when files are newer
+.deployed
