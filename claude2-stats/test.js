@@ -39,6 +39,9 @@ async function run(base) {
   assert.deepStrictEqual(await get("/settings"), {}, "settings start empty");
   await post("/settings", { maxTurns: 120 });
   assert.deepStrictEqual(await get("/settings"), { maxTurns: 120 }, "settings round-trip");
+  assert.deepStrictEqual(await get("/snips"), {}, "snips start unset");
+  await post("/snips", { text: "" });
+  assert.deepStrictEqual(await get("/snips"), { text: "" }, "empty snips are still set");
   await post("/checks", { month: "2026-10", usd: 0.25 });
   assert.deepStrictEqual(await post("/checks", { month: "2026-10", usd: 0.5 }), { month: "2026-10", usd: 0.75, count: 2 }, "check costs add up per month");
   assert.strictEqual((await post("/checks", { month: "Oct", usd: 0.02 })).error !== undefined, true, "a malformed month is refused");

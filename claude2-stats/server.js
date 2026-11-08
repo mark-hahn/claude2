@@ -19,6 +19,8 @@
 //   POST /settings  body: settings       -> replace them (the extension validates)
 //   POST /checks  body: { month, usd }   -> add one Git changes check's API cost -> { usd, count } for the month
 //   GET  /checks                         -> { months: { <YYYY-MM>: { usd, count } } }
+//   GET  /snips                          -> { text } : the Snips tab's text, shared by claude2 and claude3 ({} until first saved)
+//   POST /snips  body: { text }          -> replace it
 //   GET  /speechmatics/<YYYY-MM>[?rescan=1] -> { usd, hrs, at?, error? } : the tv project's Speechmatics spend
 //
 // The quota block is the account's one reading history. Anthropic's usage endpoint rate-limits
@@ -57,10 +59,10 @@ const quotaFreshMs = 4.5 * 60 * 1000;
 const quotaClaimMs = 30 * 1000;
 const emptyQuota = { rows: [], readAt: 0, pausedUntil: 0, claimedAt: 0, state: null };
 
-let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {}, checks: {}, speechmatics: {} };
+let data = { installs: {}, flags: {}, days: {}, quota: { ...emptyQuota }, models: {}, settings: {}, checks: {}, speechmatics: {}, snips: null };
 try {
   const saved = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {}, checks: saved.checks || {}, speechmatics: saved.speechmatics || {} };
+  data = { installs: saved.installs || {}, flags: saved.flags || {}, days: saved.days || {}, quota: { ...emptyQuota, ...(saved.quota || {}) }, models: saved.models || {}, settings: saved.settings || {}, checks: saved.checks || {}, speechmatics: saved.speechmatics || {}, snips: typeof saved.snips === "string" ? saved.snips : null };
 } catch {
   // first run, or an unreadable file: start empty; the next pushes rebuild it
 }
@@ -294,6 +296,18 @@ async function handle(request, response) {
       return json(400, { error: "expected a JSON object" });
     }
     data.settings = body;
+    save();
+    return json(200, { ok: true });
+  }
+  if (request.method === "GET" && url.pathname === "/snips") {
+    return json(200, data.snips === null ? {} : { text: data.snips });
+  }
+  if (request.method === "POST" && url.pathname === "/snips") {
+    const body = JSON.parse((await readBody(request, 2 * 1024 * 1024)) || "{}");
+    if (typeof body.text !== "string") {
+      return json(400, { error: "expected { text: string }" });
+    }
+    data.snips = body.text;
     save();
     return json(200, { ok: true });
   }

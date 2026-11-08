@@ -9,7 +9,7 @@ import { ClaudeCliRunner, copySessionTranscript, effortArgs, sanitizeModel, swap
 import { contextTable } from "./contextStats";
 import { changesMessage, checkCosts, checkPrompt, recordCheckCost, uncommittedChanges } from "./gitCheck";
 import { InstructionsFile } from "./instructionsFile";
-import { modelUsage, PluginStats, speechmaticsCost, type StatsDelta } from "./pluginStats";
+import { httpJson, modelUsage, PluginStats, speechmaticsCost, type StatsDelta } from "./pluginStats";
 import { QuotaService } from "./quota";
 import { SessionStore } from "./sessionStore";
 import { cachedSettings, checkSettings, fetchSettings, saveSettings, type Settings } from "./settings";
@@ -104,6 +104,8 @@ class Claude2Controller implements vscode.Disposable {
   private managementPanel: vscode.WebviewPanel | null = null;
   private managementPane: ManagementPane | null = null;
   private snipsPanel: vscode.WebviewPanel | null = null;
+  // The Snips text typed but not yet sent to the stats server; see loadSnips.
+  private snipsPush: ReturnType<typeof setTimeout> | undefined;
   // The load's `claude update` + model check; runs wait on it (see waitForUpdate).
   private modelsReady: Promise<void> = Promise.resolve();
   // The Settings pane's values as of this window's load; a Save here updates them too.
@@ -1374,6 +1376,10 @@ class Claude2Controller implements vscode.Disposable {
     if (!prompt.trim()) {
       return;
     }
+    // A prompt of just "r" is shorthand for running the project's ./run script.
+    if (prompt.trim() === "r") {
+      prompt = "execute ./run script in project root";
+    }
     const putBack = (): void => {
       if (!keepDraft) {
         this.returnPrompt(sessionId, prompt);
@@ -1884,15 +1890,40 @@ class Claude2Controller implements vscode.Disposable {
     this.snipsPanel.reveal(vscode.ViewColumn.One);
   }
 
+  // The stats server's copy, which every window and claude3 share; the local copy while the server
+  // can't be reached or typing here hasn't reached it yet. The first load after the server had none
+  // hands it the local copy.
+  private async loadSnips(): Promise<string> {
+    const local = this.context.globalState.get<string>(snipsKey, "");
+    const log = (line: string): void => this.channel.appendLine(line);
+    const reply = this.snipsPush ? null : await httpJson("GET", "/snips", undefined, 5000, log);
+    if (reply === null || this.snipsPush) {
+      return local;
+    }
+    if (typeof reply.text !== "string") {
+      await httpJson("POST", "/snips", { text: local }, 5000, log);
+      return local;
+    }
+    await this.context.globalState.update(snipsKey, reply.text);
+    return reply.text;
+  }
+
   private async handleSnipsMessage(message: unknown): Promise<void> {
     const record = recordOf(message);
     const type = stringOf(record?.type);
     if (type === "zoom") {
       await this.noteZoom("snips", record?.zoom);
     } else if (type === "snipsLoad") {
-      void this.snipsPanel?.webview.postMessage({ type: "snips", text: this.context.globalState.get<string>(snipsKey, "") });
+      void this.snipsPanel?.webview.postMessage({ type: "snips", text: await this.loadSnips() });
     } else if (type === "snipsChanged") {
-      await this.context.globalState.update(snipsKey, stringOf(record?.text));
+      const text = stringOf(record?.text);
+      await this.context.globalState.update(snipsKey, text);
+      // Every key posts; the stats server gets the text once the typing settles.
+      clearTimeout(this.snipsPush);
+      this.snipsPush = setTimeout(() => {
+        this.snipsPush = undefined;
+        void httpJson("POST", "/snips", { text }, 5000, (line) => this.channel.appendLine(line));
+      }, 500);
     } else if (type === "closeSnips") {
       this.snipsPanel?.dispose();
     }
@@ -2565,7 +2596,7 @@ const authNeededKey = "authNeeded";
 const draftsKey = "drafts";
 // Retired: an older build parked one draft here when its session went away. Cleared on load.
 const promptTextLostKey = "promptTextLost";
-// The Snips tab's text. globalState lives on the client, so every window -- windows, wsl, ssh -- shares it.
+// The Snips tab's text: the local copy (globalState, on the client) of the stats server's, which claude3 shares (loadSnips).
 const snipsKey = "snips";
 
 // A stray key would send the CLI to API-key auth instead of the subscription OAuth flow.
