@@ -124,6 +124,8 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
 - A trashed session has a pane only as a search result, always a `searchTabs` tab, and its prompt
   box, Cap and File are off until it is restored. `submitPrompt` refuses it too, for the context
   gauge's `/compact`. Anything new that sends from a pane has to respect `session.trashed`.
+- `globalState` is one blob on the Windows client, shared by the Windows, WSL and SSH hosts. Anything
+  true of only one host (`modelInfo.*`, `authNeeded.*`) needs `vscode.env.remoteName` in its key.
 - `--max-turns` is counted by the CLI (`num_turns`), not by `message_start` events.
 - WSL runs in NAT mode: Windows services aren't reachable at `localhost`, and F5 debugging never
   attaches (the launch config is `noDebug`; Ctrl+F5 works).

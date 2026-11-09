@@ -1645,6 +1645,10 @@ class Claude2Controller implements vscode.Disposable {
           queueStream();
         },
       });
+      // A turn that got an answer proves the login works, however it was renewed (a terminal, another window).
+      if (!result.stopped) {
+        this.setAuthNeeded(false);
+      }
       // After /clear this session goes on resuming its own id, so that transcript has to become the
       // cleared conversation. If the swap fails Claude keeps its context, and so does the gauge.
       const cleared = result.clearedInto !== null && swapSessionTranscripts(this.workspacePath(), sessionId, result.clearedInto);
@@ -2591,7 +2595,8 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-const authNeededKey = "authNeeded";
+// globalState is one store on the client, shared by the Windows, WSL and SSH hosts, but each host has its own login.
+const authNeededKey = `authNeeded.${vscode.env.remoteName ?? "local"}`;
 // Unsent prompt text, kept per workspace alongside the sessions it belongs to.
 const draftsKey = "drafts";
 // Retired: an older build parked one draft here when its session went away. Cleared on load.
