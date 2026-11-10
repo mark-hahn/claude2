@@ -49,6 +49,9 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   reserve).
 - `claude2-stats/`: a small node server on hahnca.com:7301 (pm2 `claude2-stats`, deployed to
   `/root/dev/apps/claude2-stats` there). Its endpoints are listed at the top of `server.js`.
+  claude3's backends called it too (quota history and lease, `/checks`, Speechmatics, Snips) until
+  claude3 got its own, `claude-stats` on port 7313, whose first deploy copies this one's
+  `data.json`; see the rule in CLAUDE.md. `./deploy` here copies `server.js` there and restarts it.
 - `esbuild.js`: builds `dist/extension.js` and the Monaco prompt editor
   (`dist/promptEditor.js` plus its worker) that the conversation webview loads.
 

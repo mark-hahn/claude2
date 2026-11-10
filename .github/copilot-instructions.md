@@ -25,6 +25,11 @@
 - when i say to save a rule, add it to CLAUDE.md (and mirror it in .github/copilot-instructions.md)
 - the architecture map is `.claude/architecture.md`: read it when a task needs orientation, and keep it current
 - alt-click in a fenced code block copies that block's text to the clipboard; this overrides any other alt-click rule
+- never change claude2-stats unless i tell you to. That covers the `claude2-stats/` folder here, its
+  deployed copy and pm2 process `claude2-stats` on hahnca.com (port 7301), and its data in
+  `~/.claude2-stats/` there. claude3 (/root/apps/claude3), which replaces claude2, has its own stats
+  server, `claude-stats` (hahnca.com:7313, source in claude3's repo), but its backends call this one
+  until that is deployed, and its first deploy copies `~/.claude2-stats/data.json`
 
 ## Remote server
 
