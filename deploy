@@ -108,4 +108,4 @@ fi
 
 echo "== done: reload VS Code windows to pick up $VSIX =="
 # claude3's page warns before a prompt when a file under these paths is newer than .deployed.
-echo "$VSIX_INPUTS claude2-cap claude2-stats/server.js claude2-stats/test.js" > .deployed
+printf '%s\n' $VSIX_INPUTS claude2-cap claude2-stats/server.js claude2-stats/test.js > .deployed
