@@ -1,0 +1,3 @@
+#!/bin/sh
+# claude3's Run button (and its deploy warning) runs this; claude2 has no dev server.
+exec "$(dirname "$0")/deploy" "$@"

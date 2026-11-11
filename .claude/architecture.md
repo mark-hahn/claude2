@@ -3,7 +3,7 @@
 A VS Code extension that runs Claude Code in a sidebar session list and one editor pane per
 session. It drives the `claude` CLI headless (`-p`, stream-json in and out), never a terminal.
 The same build is installed on three hosts: WSL, Windows, and hahnca.com over Remote-SSH
-(`./deploy`, which the user runs).
+(`./deploy`, which the user runs, from a terminal or claude3's Run button through `./run`).
 
 ## Layout
 
@@ -51,7 +51,7 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   `/root/dev/apps/claude2-stats` there). Its endpoints are listed at the top of `server.js`.
   claude3's backends called it too (quota history and lease, `/checks`, Speechmatics, Snips) until
   claude3 got its own, `claude-stats` on port 7313, whose first deploy copies this one's
-  `data.json`; see the rule in CLAUDE.md. `./deploy` here copies `server.js` there and restarts it.
+  `data.json`; see the rule in CLAUDE.md. `./deploy` here copies `server.js` there and restarts it when it changed.
 - `esbuild.js`: builds `dist/extension.js` and the Monaco prompt editor
   (`dist/promptEditor.js` plus its worker) that the conversation webview loads.
 
@@ -82,6 +82,14 @@ The same build is installed on three hosts: WSL, Windows, and hahnca.com over Re
   and paints the current one with the CSS highlight API. Out of hits, it posts `searchEnd` and the
   sidebar picks the next card, or the same card to wrap. Tabs search opened (`searchTabs`) close
   when the selection moves on or search ends, unless a prompt or a restore kept them.
+- **Deploy.** `./run` (claude3's Run button) just execs `./deploy`. It bumps `.deploy-version`
+  and builds the vsix only when the hash of its inputs (`VSIX_INPUTS`) differs from
+  `.deploy-hash`, installs on each host only when `hahnca.claude2-<version>` isn't already in
+  that host's extensions folder, reinstalls claude2-cap only on a changed `.deploy-cap-hash`, and
+  copies claude2-stats only when `server.js`/`test.js` differ from hahnca.com's. A step that fails
+  prints a `!!` line and exits non-zero; success or not, the last line is `====== ENDED ======`.
+  It ends by writing the paths it depends on into `.deployed`, claude3's stamp for its deploy warning.
+  All four dot-files are untracked.
 - **Shared state across machines.** Settings, plugin stats, the quota-poll lease, and
   per-model hours all go through claude2-stats, plain HTTP on the LAN. A server that is down
   falls back to local copies; it never throws.

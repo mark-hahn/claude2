@@ -51,8 +51,9 @@ npm run watch      # rebuild on change (esbuild + tsc type-check)
 Press `F5` in VS Code to launch an Extension Development Host with the extension loaded.
 Open the Claude2 view in the activity bar and run **Claude2: New Session** to confirm it works.
 
-`./deploy` bumps the patch version, builds the VSIX, and installs it into WSL, Windows,
-and the remote VS Code server, plus the `claude2-cap` VSIX on Windows.
+`./deploy` (or `./run`, which claude3's Run button calls) bumps the patch version, builds the
+VSIX, and installs it into WSL, Windows, and the remote VS Code server, plus the `claude2-cap`
+VSIX on Windows. Each step is skipped when its sources are unchanged and already installed.
 
 ## Scripts
 
@@ -81,5 +82,6 @@ and the remote VS Code server, plus the `claude2-cap` VSIX on Windows.
 - `src/test/` — Mocha tests run by `@vscode/test-cli`
 - `claude2-cap/` — separate `ui`-kind extension providing client-side screen capture
 - `esbuild.js` — bundler config (CommonJS output to `dist/extension.js`)
-- `deploy` — version bump, package, and install to WSL / Windows / remote
+- `deploy` — version bump, package, and install to WSL / Windows / remote (skips what's current)
+- `run` — runs `deploy`; what claude3's Run button calls
 - `.vscode/` — launch and task configs for F5 debugging

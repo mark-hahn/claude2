@@ -1,60 +1,111 @@
 #!/usr/bin/env bash
 # Build the vsix and install it into WSL, Windows, and hahnca.com VS Code.
+# Every step is skipped when what it would deploy is already there, so a re-run redoes only what
+# changed or failed. claude3's Run button runs this (through ./run) with no terminal and no
+# Windows dirs on PATH; its error dialog lists the output lines that start with `!!`.
 set -euo pipefail
 cd "$(dirname "$0")"
+PATH=$PATH:/mnt/c/Windows/System32 # cmd.exe; it finds `code` on Windows' own PATH
+trap 'echo "!! deploy failed at line $LINENO"' ERR # the command's own error is just above
+trap 'echo; echo "====== ENDED ======"' EXIT # the last line printed, success or failure, as claude3's deploy does
+fail() { echo "!! $*"; exit 1; }
+# One hash over the files under the given paths, names and contents (built vsix files left out).
+hash_of() { find "$@" -type f ! -name '*.vsix' -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -c1-40; }
 
 REMOTE=hahnca.com
 WIN_USER=mark
 WIN_HOME=/mnt/c/Users/$WIN_USER
+WIN_EXT=$WIN_HOME/.vscode/extensions
+STATS_DIR=/root/dev/apps/claude2-stats
+# Everything the vsix is built from; .vscodeignore keeps all else out of it (check: npx vsce ls).
+VSIX_INPUTS="src resources package.json package-lock.json esbuild.js tsconfig.json .vscodeignore README.md LICENSE CHANGELOG.md"
 
-echo "== bump version =="
 # The deployed version lives in the untracked .deploy-version, not package.json, so a deploy
-# leaves no git change. vsce stamps it into the vsix only.
+# leaves no git change. vsce stamps it into the vsix only. It is bumped, and the vsix built, only
+# when the hash of VSIX_INPUTS differs from the one in .deploy-hash (or the vsix file is gone).
 [ -f .deploy-version ] || node -p "require('./package.json').version" > .deploy-version
-VERSION=$(node -p "const [a,b,c]=require('fs').readFileSync('.deploy-version','utf8').trim().split('.'); [a,b,+c+1].join('.')")
-echo "$VERSION" > .deploy-version
+VERSION=$(cat .deploy-version)
+HASH=$(hash_of $VSIX_INPUTS)
+[ "$HASH" = "$(cat .deploy-hash 2>/dev/null)" ] ||
+  VERSION=$(node -p "const [a,b,c]='$VERSION'.split('.'); [a,b,+c+1].join('.')")
 VSIX=claude2-$VERSION.vsix
-rm -f claude2-*.vsix
+if [ -f "$VSIX" ]; then
+  echo "== vsix: sources unchanged, keeping $VSIX"
+else
+  echo "== build $VSIX =="
+  rm -f claude2-*.vsix
+  npx vsce package "$VERSION" --no-update-package-json --no-git-tag-version -o "$VSIX" >/dev/null
+  echo "$VERSION" > .deploy-version
+  echo "$HASH" > .deploy-hash
+  ls -la "$VSIX"
+fi
 
-echo "== build $VSIX =="
-npx vsce package "$VERSION" --no-update-package-json --no-git-tag-version -o "$VSIX" >/dev/null
-ls -la "$VSIX"
+if [ -d "$HOME/.vscode-server/extensions/hahnca.claude2-$VERSION" ]; then
+  echo "== WSL: $VERSION already installed"
+else
+  echo "== WSL =="
+  # Call the vscode-server binary directly: `code` is only on PATH (and only works) inside a
+  # VS Code integrated terminal, so it fails when deploy runs from a plain WSL shell.
+  WSL_BIN=$(ls -td ~/.vscode-server/bin/*/bin/code-server ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
+            | grep -v '\.staging/' | head -1 || true)
+  [ -n "$WSL_BIN" ] || fail "no vscode-server found in WSL"
+  "$WSL_BIN" --install-extension "$VSIX" --force
+  [ -d "$HOME/.vscode-server/extensions/hahnca.claude2-$VERSION" ] || fail "WSL: hahnca.claude2-$VERSION did not install"
+fi
 
-echo "== WSL =="
-# Call the vscode-server binary directly: `code` is only on PATH (and only works) inside a
-# VS Code integrated terminal, so it fails when deploy runs from a plain WSL shell.
-WSL_BIN=$(ls -td ~/.vscode-server/bin/*/bin/code-server ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
-          | grep -v '\.staging/' | head -1 || true)
-[ -n "$WSL_BIN" ] || { echo "no vscode-server found in WSL"; exit 1; }
-"$WSL_BIN" --install-extension "$VSIX" --force
+if [ -d "$WIN_EXT/hahnca.claude2-$VERSION" ]; then
+  echo "== Windows: $VERSION already installed"
+else
+  echo "== Windows =="
+  cp "$VSIX" "$WIN_HOME/$VSIX"
+  (cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$VSIX --force" 2>&1 \
+    | tr -d '\r' | sed '/DeprecationWarning/d; /trace-deprecation/d')
+  rm -f "$WIN_HOME/$VSIX"
+  [ -d "$WIN_EXT/hahnca.claude2-$VERSION" ] || fail "Windows: hahnca.claude2-$VERSION did not install"
+fi
 
-echo "== Windows =="
-cp "$VSIX" "$WIN_HOME/$VSIX"
-(cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$VSIX --force" 2>&1 \
-  | tr -d '\r' | grep -v -e DeprecationWarning -e trace-deprecation || true)
-
-echo "== claude2-cap (client-side capture, Windows only) =="
+# claude2-cap keeps its version (in its package.json), so a changed one is force-reinstalled
+# over the same folder; .deploy-cap-hash is written only once that has worked.
 CAP_VERSION=$(node -p "require('./claude2-cap/package.json').version")
 CAP_VSIX=claude2-cap-$CAP_VERSION.vsix
-(cd claude2-cap && rm -f claude2-cap-*.vsix && npx vsce package >/dev/null)
-cp "claude2-cap/$CAP_VSIX" "$WIN_HOME/$CAP_VSIX"
-(cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$CAP_VSIX --force" 2>&1 \
-  | tr -d '\r' | grep -v -e DeprecationWarning -e trace-deprecation || true)
+CAP_HASH=$(hash_of claude2-cap)
+if [ "$CAP_HASH" = "$(cat .deploy-cap-hash 2>/dev/null)" ] && [ -d "$WIN_EXT/hahnca.claude2-cap-$CAP_VERSION" ]; then
+  echo "== claude2-cap: $CAP_VERSION unchanged and installed"
+else
+  echo "== claude2-cap (client-side capture, Windows only) =="
+  (cd claude2-cap && rm -f claude2-cap-*.vsix && npx vsce package >/dev/null)
+  cp "claude2-cap/$CAP_VSIX" "$WIN_HOME/$CAP_VSIX"
+  (cd "$WIN_HOME" && cmd.exe /c "code --install-extension C:\\Users\\$WIN_USER\\$CAP_VSIX --force" 2>&1 \
+    | tr -d '\r' | sed '/DeprecationWarning/d; /trace-deprecation/d')
+  rm -f "$WIN_HOME/$CAP_VSIX"
+  [ -d "$WIN_EXT/hahnca.claude2-cap-$CAP_VERSION" ] || fail "Windows: hahnca.claude2-cap-$CAP_VERSION did not install"
+  echo "$CAP_HASH" > .deploy-cap-hash
+fi
 
-echo "== $REMOTE =="
-scp -q "$VSIX" "$REMOTE:/tmp/$VSIX"
-ssh "$REMOTE" "
-  set -e
-  bin=\$(ls -td ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
-        | grep -v '\.staging/' | head -1)
-  [ -n \"\$bin\" ] || { echo 'no vscode-server found on remote'; exit 1; }
-  \"\$bin\" --install-extension /tmp/$VSIX --force
-  rm -f /tmp/$VSIX
-"
+if ssh "$REMOTE" "test -d ~/.vscode-server/extensions/hahnca.claude2-$VERSION"; then
+  echo "== $REMOTE: $VERSION already installed"
+else
+  echo "== $REMOTE =="
+  scp -q "$VSIX" "$REMOTE:/tmp/$VSIX"
+  ssh "$REMOTE" "
+    set -e
+    bin=\$(ls -td ~/.vscode-server/cli/servers/Stable-*/server/bin/code-server 2>/dev/null \
+          | grep -v '\.staging/' | head -1)
+    [ -n \"\$bin\" ] || { echo '!! no vscode-server found on $REMOTE'; exit 1; }
+    \"\$bin\" --install-extension /tmp/$VSIX --force
+    rm -f /tmp/$VSIX
+    test -d ~/.vscode-server/extensions/hahnca.claude2-$VERSION || { echo '!! $REMOTE: hahnca.claude2-$VERSION did not install'; exit 1; }
+  "
+fi
 
-echo "== claude2-stats server on $REMOTE =="
-scp -q claude2-stats/server.js claude2-stats/test.js "$REMOTE:/root/dev/apps/claude2-stats/"
-ssh "$REMOTE" "pm2 restart claude2-stats >/dev/null && cd /root/dev/apps/claude2-stats && node test.js"
+if [ "$(cd claude2-stats && sha1sum server.js test.js)" = "$(ssh "$REMOTE" "cd $STATS_DIR && sha1sum server.js test.js" 2>/dev/null)" ]; then
+  echo "== claude2-stats on $REMOTE: unchanged"
+else
+  echo "== claude2-stats server on $REMOTE =="
+  scp -q claude2-stats/server.js claude2-stats/test.js "$REMOTE:$STATS_DIR/"
+  ssh "$REMOTE" "pm2 restart claude2-stats >/dev/null && cd $STATS_DIR && node test.js"
+fi
 
 echo "== done: reload VS Code windows to pick up $VSIX =="
-touch .deployed # claude3's page warns before a prompt when files are newer than this
+# claude3's page warns before a prompt when a file under these paths is newer than .deployed.
+echo "$VSIX_INPUTS claude2-cap claude2-stats/server.js claude2-stats/test.js" > .deployed

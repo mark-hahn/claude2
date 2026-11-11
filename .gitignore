@@ -12,3 +12,7 @@ out/
 
 # stamped by ./deploy; claude3 warns before a prompt when files are newer
 .deployed
+
+# deploy's hashes of what it last built (the vsix) and installed (claude2-cap)
+.deploy-hash
+.deploy-cap-hash

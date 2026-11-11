@@ -24,3 +24,10 @@ CLAUDE.md
 .github/**
 *.vsix
 .deploy-version
+.deploy*
+deploy
+run
+claude2-stats/**
+*.md
+!README.md
+!CHANGELOG.md
